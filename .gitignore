@@ -1,0 +1,34 @@
+# Editors and operating systems
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Local environment, credentials, and secrets
+.env
+.env.*
+!.env.example
+.gh-config/
+*.key
+*.pem
+*.p12
+
+# Logs, test output, and coverage
+*.log
+coverage/
+test-results/
+artifacts/
+
+# Common language build outputs
+node_modules/
+dist/
+build/
+target/
+__pycache__/
+*.py[cod]
+
+# Local scratch space
+.tmp/
+tmp/
