@@ -409,9 +409,9 @@ If the control experiment would materially delay the core Phase 1 gates, it may 
 
 ---
 
-## 9. Work packages and indicative sequence
+## 9. Work packages and ordinal sequence
 
-The schedule is illustrative and should be revised after mechanism spikes.
+The work proceeds by exit conditions rather than calendar estimates. A later work package begins only when its prerequisites are satisfied; independent packages may overlap when doing so does not weaken a gate or review boundary.
 
 ### WP0 — Specification freeze and threat model
 
@@ -470,18 +470,19 @@ Exit condition: issue a go/no-go recommendation for Phase 2.
 
 ---
 
-## 10. Indicative schedule and staffing
+## 10. Sequence and staffing
 
-A narrowly scoped prototype is expected to require approximately **6–10 weeks**, subject to host-policy and gateway choices.
+The ordinal sequence is:
 
-| Period | Primary work |
-|---|---|
-| Week 1 | WP0 specification freeze and threat-model review |
-| Weeks 2–3 | WP1 mechanism spikes and substrate decision |
-| Weeks 3–5 | WP2 constructor/supervisor implementation |
-| Weeks 4–6 | WP3 gateway/audit and WP4 runtime integration |
-| Weeks 6–8 | WP5 adversarial tests and fault injection |
-| Weeks 8–10 | WP6 measurement, independent review, microVM control, report |
+1. freeze the bounded specification and threat model;
+2. resolve high-risk mechanism questions with focused spikes;
+3. construct and supervise a fail-closed shell session;
+4. bind one protected remote effect to session identity and audit;
+5. demonstrate runtime replacement without boundary changes;
+6. execute adversarial tests and lifecycle fault injection;
+7. evaluate evidence, conduct independent review, and make the Phase 2 decision.
+
+Progress is assessed against the work-package exit conditions, not elapsed time. Reordering or overlapping work is acceptable only when prerequisite evidence and independent review boundaries remain intact.
 
 Recommended minimum roles:
 
@@ -529,7 +530,7 @@ Reviewers are asked to focus on:
 7. Which tests are missing from the adversarial suite?
 8. Which measurements determine whether process isolation or microVM isolation should be the default?
 9. Are the four gates appropriate go/no-go criteria?
-10. Is the 6–10 week scope realistic, and what should be cut first if it is not?
+10. Is the work-package scope appropriately bounded, and what should be cut first if a gate requires substantially more mechanism or trusted code than proposed?
 
 ---
 
