@@ -114,25 +114,25 @@ Failure of a gate pauses progression to Phase 2 until the architecture is revise
 ### 4.1 Proposed components
 
 ```text
-agent-principald
+agentbound-policy
     unprivileged organizational principal, initiator, task, and policy resolver
 
-agent-session
-    unprivileged CLI/API client that requests and observes sessions
+agentbound
+    user-facing CLI/API client that requests and observes sessions
 
-agent-login
+agentbound-launch
     narrow privileged constructor; performs only validated host setup
 
-agent-supervisor
+agentbound-supervisor
     owns lifecycle, cgroup, process reaping, termination, and cleanup
 
-agent-gateway
+agentbound-gateway
     authenticates session workload identity and mediates approved service operations
 
-agent-audit
+agentbound-audit
     correlates launch, process, gateway, denial, and termination records
 
-agent-runtime
+agentbound-runtime
     replaceable shell or minimal model-driven loop used as untrusted workload
 ```
 
@@ -487,7 +487,7 @@ Recommended minimum roles:
 
 - Linux security/namespace/cgroup engineer;
 - security engineer for policy, gateway, and adversarial testing;
-- agent-runtime integration engineer;
+- agentbound runtime-integration engineer;
 - independent reviewer not responsible for the constructor implementation.
 
 One person may cover multiple implementation roles, but the final security review should be independent.
