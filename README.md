@@ -18,7 +18,7 @@ The project is currently moving from reviewed architecture documents toward a bo
 docs/
   papers/         Position paper and normative technical report
   plans/          Reviewed and proposed project plans
-  architecture/   Future implementation specifications and decisions
+  architecture/   Architecture decision records and future implementation specifications
 implementation/   Future reference implementation components
 tests/            Future adversarial conformance and integration tests
 ```
@@ -30,11 +30,13 @@ tests/            Future adversarial conformance and integration tests
 - The **position paper** owns motivation, thesis, adoption, and conclusions.
 - The **technical report** owns mechanisms, invariants, threats, constraints, and evaluation.
 - The **Phase 1 plan** owns implementation scope, gates, work packages, and expected evidence.
-- Future files under `docs/architecture/` will own concrete schemas, interfaces, lifecycle specifications, and architecture decisions.
+- **Architecture decision records** under `docs/architecture/` record decisions that constrain implementation (currently ADR-0001, per-session execution identity); future files there will own concrete schemas, interfaces, and lifecycle specifications.
 
 ## Current status
 
-The papers are working drafts for external review. The Phase 1 plan is version 0.1 and specifically requests feedback before implementation begins.
+The papers are working drafts for external review (position paper 0.6, technical report 0.5-TR3), revised after three independent reviews. The Phase 1 plan is version 0.2 and specifically requests feedback before implementation begins.
+
+The shortest honest summary of the current claim: the Unix-governed baseline is an isolation, authority, and attribution profile that makes no information-flow claim; integrity provenance is the nearest practical payoff; confidentiality compartments and multilevel release are later, measured profiles.
 
 No security claims should be inferred from the empty implementation layout. Claims become meaningful only when mapped to mechanisms and reproducible test evidence.
 
