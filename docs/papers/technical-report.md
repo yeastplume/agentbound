@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR3  
+**Version:** 0.5-TR4  
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -18,6 +18,7 @@
 - **0.4-TR1** — Split the position paper from the technical architecture and evaluation report; added cumulative-release and concurrency tests.
 - **0.4-TR2** — Restructured this document as a normative companion, removed duplicated thesis and conclusion material, established document ownership, and corrected cross-document attribution.
 - **0.5-TR3** — Incorporated three independent reviews: typed formalism and authorization-derivation relation replacing universal intersection; per-session execution identity made normative; gateway-only egress topology specified; constructor ordering and post-launch privileged TCB stated honestly; invariants profile-scoped and classified as prevention, detection, or assumption; attribution narrowed to mediated effects; model treated as an approved execution binding; structured versus semantic memory promotion separated; foundational confidentiality and integrity models cited.
+- **0.5-TR4** — Added an explicit statement that the formalism is an unproven specification and listed what remains open; made the same caveat part of the conformance definition.
 
 ---
 
@@ -125,6 +126,12 @@ Standard SELinux MLS fields should not be treated as an automatic independent co
 ### Mediation coverage
 
 A profile's confidentiality and integrity claims apply only to edges mediated by a named component. Each profile must publish a **coverage inventory**: the edges it mediates, the component that mediates each, and the edges it leaves unmediated or prohibits. The Unix-governed profile (Section 9.1) mediates authority, execution-world separation, credential use, and specified gateway operations; it does not mediate the content of prompts, tool arguments, pipes between processes of one session, logs, or model responses, and therefore makes no confidentiality- or integrity-propagation claim.
+
+### Status of the formalism
+
+The notation, derivation relation, and admission relation above are a **specification, not a proven model**. They are written in prose and set notation; they have not been expressed as a transition system with a defined state space, mechanized in a proof assistant or model checker, or shown to satisfy noninterference, a Biba-style integrity theorem, or any other formal security property. Several elements are deliberately left open: the concrete lattices `L_C` and `L_T`, the policy-defined body of `derive`, the semantics of label evolution across trusted transitions, and the treatment of channels whose label range changes during a session.
+
+The specification is precise enough to implement and to write conformance tests against, and that is its intended use in Phase 1. Formalizing the state and transition system, proving that the admission relation preserves the stated bounds on every mediated edge, and identifying the assumptions such a proof requires are explicit later deliverables (Phase 2, WP0 of the corresponding plan). Until then, any claim that a deployment "satisfies the model" means only that it passes the tests derived from this specification.
 
 ---
 
@@ -903,7 +910,7 @@ Negative results are valuable. In particular, Agor’s experience suggests testi
 
 ## 11. Conformance and evaluation status
 
-An implementation conforms to a deployment profile only if it identifies that profile, publishes its coverage inventory, satisfies every invariant applicable to that profile in Section 7 with the five-way result classification, documents every unavailable or substituted mechanism, and passes the corresponding Phase 1–3 tests in Section 10. Enabling SELinux, assigning a UID, or launching a container is not by itself evidence of conformance.
+An implementation conforms to a deployment profile only if it identifies that profile, publishes its coverage inventory, satisfies every invariant applicable to that profile in Section 7 with the five-way result classification, documents every unavailable or substituted mechanism, and passes the corresponding Phase 1–3 tests in Section 10. Enabling SELinux, assigning a UID, or launching a container is not by itself evidence of conformance. Nor is conformance a proof: the formal rules in the front matter are an unproven specification, and passing its derived tests shows agreement with the specification on the tested interfaces, not satisfaction of a verified security property.
 
 Conformance claims must be pre-registered with operational thresholds rather than adjectives. At minimum a profile's evaluation states: the covered-interface inventory and the adversary-capability matrix its bypass corpus exercises; kernel, LSM, systemd, and policy versions; the effect ontology against which attribution completeness is measured and the required completeness; the maximum acceptable policy-exception and privileged-repair rate; and, for profiles claiming release or promotion, reviewer throughput, disagreement, correction, and false-release targets. For the multilevel profile, failure to meet the release-economics targets is a conformance failure, not an operational note. Each residual assumption carries an owner, impact, compensating control, acceptance authority, and revalidation trigger.
 
