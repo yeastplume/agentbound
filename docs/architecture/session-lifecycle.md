@@ -8,10 +8,11 @@
 
 ## Revision history
 
-- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. D-state escalation path; LC-2 carried to WP1.
-- **0.3** — Identifier terminology aligned (`authorization_id` pre-binding, `launch_record_digest` post-binding); systemd stated as observation source only.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Replaced the systemd-invoked lifecycle helper with the `agentbound-lifecycle` daemon (D-Bus scope signals plus held pidfds); construction step 1 restated as a `clone3` synchronization barrier; termination protocol reordered so the PID-namespace init reaps before `cgroup.kill`, with a host credential scan and a termination deadline; quiesce redefined as admission denial plus freeze; local-socket topology only; two-stage launch record terminology.
+- **0.3** — Identifier terminology aligned (`authorization_id` pre-binding, `launch_record_digest` post-binding); systemd stated as observation source only.
+- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. D-state escalation path; LC-2 carried to WP1.
+
 
 ---
 

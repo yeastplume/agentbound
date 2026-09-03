@@ -9,10 +9,11 @@
 
 ## Revision history
 
-- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Evaluation-arm manifests: attribution `required`, audit-loss *stop*; `nosuid,nodev` plus image digest; per-key approval sequence; sixth SLOC figure.
-- **0.3** — R-ID-8 restated with the two identifiers; R-GW-1 covers `channel_topology: none` at 1A; pinned versions aligned with ADR-0003 0.3.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Local-socket topology only (ADR-0002 0.2); `agentbound-lifecycle` daemon replaces the systemd-invoked helper; `loginuid` made corroborating evidence with one fail rule; storage bounds restated for tmpfs/images; quiesce redefined; termination deadline; SLOC accounting rules; attribution metric referenced to the test catalogue; bypass-corpus rule made non-tautological; resource-class milestone matrix; comparative decision rule referenced to ADR-0003.
+- **0.3** — R-ID-8 restated with the two identifiers; R-GW-1 covers `channel_topology: none` at 1A; pinned versions aligned with ADR-0003 0.3.
+- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Evaluation-arm manifests: attribution `required`, audit-loss *stop*; `nosuid,nodev` plus image digest; per-key approval sequence; sixth SLOC figure.
+
 
 ---
 

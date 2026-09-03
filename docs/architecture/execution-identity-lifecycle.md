@@ -8,10 +8,11 @@
 
 ## Revision history
 
-- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Reference range 200000–299999; ID-1 carried to WP1.
-- **0.3** — Identifier terminology aligned with manifest schema §4.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Allocator placed inside the `agentbound-lifecycle` daemon; helper references replaced; `loginuid` restated as corroborating evidence with the single R-CON-6 fail rule; host credential scan retained as a reclamation precondition.
+- **0.3** — Identifier terminology aligned with manifest schema §4.
+- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Reference range 200000–299999; ID-1 carried to WP1.
+
 
 ---
 

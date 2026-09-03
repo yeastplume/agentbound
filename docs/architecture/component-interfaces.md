@@ -10,6 +10,7 @@
 - **0.1** — Initial WP0 skeleton.
 - **0.2** — Envelope freshness values fixed; identifier terminology aligned; systemd is an observation source only.
 
+
 ---
 ## 1. Purpose and normative language
 This WP0 skeleton freezes the security-relevant component boundaries, trust

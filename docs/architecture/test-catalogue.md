@@ -10,9 +10,10 @@
 
 ## Revision history
 
-- **0.3** — Control-arm column points to the committed per-ID register as a 1D prerequisite.
 - **0.1** — Initial WP0 pre-registration.
 - **0.2** — Gateway-free 1A form (`channel_topology: none`) applied to 1A tests; load profiles, correlation deadlines, and repetition seeds fixed; T-6.4 rows rewritten for the local-socket corpus; one-connection-per-process rule in T-6.4-007; control-arm column declared to be populated by ADR-0003; identifier terminology aligned.
+- **0.3** — Control-arm column points to the committed per-ID register as a 1D prerequisite.
+
 
 ## 1. Purpose and status
 

@@ -19,6 +19,7 @@
 - **0.8** — Softened "never runs code" to a profile-realized separation of owning and acting identity; execution identity restated as uniquely allocated with verified reclamation.
 - **0.9** — Evaluation path aligned with the staged Phase 1 programme; Phase 3 comparison scoped to high-assurance profiles.
 
+
 ---
 
 ## Abstract

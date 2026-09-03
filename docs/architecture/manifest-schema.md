@@ -14,6 +14,7 @@
 | 0.3 | 28 August 2026 | Gateway-free form `channel_topology: none` (the only form constructible at 1A); two distinct identifiers `authorization_id` (policy-issued) and `launch_record_digest` (pair-derived) with a per-use table in §4; correspondence check 5 extended to topology. |
 | 0.4 | 28 August 2026 | Open questions disposed per the open-question register; answers written into the normative text. `mac_context` null in Profile U; invocation-profile digest recorded. |
 
+
 ---
 
 ## 1. Purpose and normative conventions

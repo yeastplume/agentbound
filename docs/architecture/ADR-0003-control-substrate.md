@@ -8,10 +8,11 @@
 
 ## Revision history
 
-- **0.4** — Unblinding and operator-familiarity recording; per-ID `control-arm-register.md` as a 1D prerequisite; open questions disposed via the register.
 - **0.1** — Initial Firecracker control-arm definition and group-level pre-registration.
-- **0.3** — Status reconciled with the architecture README; version pins, guest init, guest audit source, comparative thresholds, confidence method, operator script, VM instance token format, and SLOC comparability rule filled in; open questions reduced to WP1 verification items.
 - **0.2** — Froze the Linux local-socket and Firecracker/vsock configurations; added vsock CID-lifetime binding, per-atomic-test classification rules, comparative decision rule, per-arm code accounting; configuration values left open for 0.3.
+- **0.3** — Status reconciled with the architecture README; version pins, guest init, guest audit source, comparative thresholds, confidence method, operator script, VM instance token format, and SLOC comparability rule filled in; open questions reduced to WP1 verification items.
+- **0.4** — Unblinding and operator-familiarity recording; per-ID `control-arm-register.md` as a 1D prerequisite; open questions disposed via the register.
+
 
 ## Context
 

@@ -10,8 +10,9 @@
 ## Revision history
 
 - **0.1** — Initial WP0 draft.
-- **0.3** — Requirement-coverage check performed and recorded (§8); R-ID-7 and R-AUD-5 traced; test-catalogue and identifier terminology aligned.
 - **0.2** — Result column renamed to expected mechanism class / pass criterion with observed class unconstrained; Inv 14 and 21 split into detective/assumption and enforced halves; Inv 10/13 rows aligned with ADR-0002 0.2; test references point to the test catalogue.
+- **0.3** — Requirement-coverage check performed and recorded (§8); R-ID-7 and R-AUD-5 traced; test-catalogue and identifier terminology aligned.
+
 
 ## 1. Result vocabulary
 

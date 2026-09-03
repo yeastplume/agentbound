@@ -8,10 +8,11 @@
 
 ## Revision history
 
-- **0.4** — Decision 1 heading names both legal topology values; attribution policy `required` for the evaluation arm; open questions closed via the register.
 - **0.1** — Proposed two mutually exclusive Linux-arm topologies (network Candidate N with mTLS/broker; local-socket Candidate L) and deferred selection to WP1.
-- **0.3** — One connection per process: every packet's credential PID must equal the establishing PID; inherited or passed descriptors close the connection. Identifier terminology aligned with manifest schema §4 (`authorization_id` / `launch_record_digest`).
 - **0.2** — Selected Candidate L for Phase 1. Candidate N withdrawn from Phase 1 because it cannot satisfy the per-operation process leg of Invariant 13; deferred to a future multi-host ADR. Socket type fixed as `SOCK_SEQPACKET`; per-packet `SCM_CREDENTIALS`; descriptor transfer prohibited; `SO_PEERCRED` wording corrected; vsock CID lifetime rules added; WP1 scope narrowed to kernel-baseline verification.
+- **0.3** — One connection per process: every packet's credential PID must equal the establishing PID; inherited or passed descriptors close the connection. Identifier terminology aligned with manifest schema §4 (`authorization_id` / `launch_record_digest`).
+- **0.4** — Decision 1 heading names both legal topology values; attribution policy `required` for the evaluation arm; open questions closed via the register.
+
 
 ## Context
 

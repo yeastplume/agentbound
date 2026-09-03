@@ -22,9 +22,10 @@
 - **0.5-TR5** — Execution identity restated as uniquely allocated with verified reclamation and reuse quarantine; ownership/execution separation stated as an invariant with profile-specific realizations rather than a universal "never executes".
 - **0.5-TR6** — Aligned the phase description with the Phase 1 plan: the microVM control arm is a Phase 1 (milestone 1D) comparison for the Unix-governed profile, and Phase 3 extends it to high-assurance profiles; reclamation condition bounded to a managed domain.
 - **0.5-TR7** — Replaced the pre-plan component sketch with the Agentbound decomposition; Phase 2 restated as extending the Phase 1 baseline mechanisms rather than introducing them.
-- **0.5-TR10** — Manifest discussion restated as the two-stage policy-resolver/constructor flow with distinct authority; egress section labels the network topology as the general multi-host form and the local-socket topology as the Phase 1 realization.
-- **0.5-TR9** — Construction step 1 restated as a `clone3` synchronization barrier (no kernel facility creates a stopped child); the two egress topologies are retained as general mechanisms with a note that Phase 1 selects the local-socket topology because network transports do not identify the operation-issuing process; Phase 1 decomposition names the `agentbound-lifecycle` daemon.
 - **0.5-TR8** — WP0 consistency: execution-binding audit fields include inference pool; Phase 1 manifest flow clarified as policy authorization plus allocation-bound launch binding.
+- **0.5-TR9** — Construction step 1 restated as a `clone3` synchronization barrier (no kernel facility creates a stopped child); the two egress topologies are retained as general mechanisms with a note that Phase 1 selects the local-socket topology because network transports do not identify the operation-issuing process; Phase 1 decomposition names the `agentbound-lifecycle` daemon.
+- **0.5-TR10** — Manifest discussion restated as the two-stage policy-resolver/constructor flow with distinct authority; egress section labels the network topology as the general multi-host form and the local-socket topology as the Phase 1 realization.
+
 
 ---
 
