@@ -1,0 +1,31 @@
+# spike: frozen-peer
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: b509ce8
+# date: 2026-09-03T14:03:50Z
+# args: 
+
+warning: value assigned to `revoked` is never read
+   --> src/main.rs:111:23
+    |
+111 |     let mut revoked = false; // gateway's live grant state
+    |                       ^^^^^ this value is reassigned later and never used
+112 |     // commit revocation, then release the peer
+113 |     revoked = true; let t_commit = Instant::now();
+    |     -------------- `revoked` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+spike frozen-peer (LC-2 + D7-5 mechanism half)
+gateway: accepted pid=10150 first op="op-1"
+peer frozen=true in 2 ms; peer state=S
+RESULT LC2-1.gateway-send-to-frozen-peer-does-not-block PASS send returned 7 in 7 µs (kernel buffers; peer need not run)
+RESULT LC2-2.gateway-close-while-peer-frozen-immediate PASS shutdown+close rc=0/0 in 10 µs while peer frozen
+RESULT LC2-3.zero-connections-ack-independent-of-peer-state PASS gateway holds no accepted descriptors for the session; listen backlog empty=true; acknowledgement does not wait on the frozen peer
+RESULT LC2-4.frozen-peer-opens-no-new-connection PASS no new connection arrived during 300 ms while frozen
+RESULT LC2-5.thawed-peer-cannot-use-closed-connection PASS peer exited 2 ms after thaw with code 13 (13: buffered pre-close reply was delivered, next send → EPIPE; 10/11: EOF/error on recv)
+REV peer: denied=true latency_us=2232 then_eof=true next_send_errno=32
+RESULT D7-5a.next-operation-after-revocation-denied PASS op after commit="op-2" denied and connection closed 2161 µs after commit; peer observed denial, EOF, then EPIPE (exit code 30)
+RESULT D7-5b.termination-closes-connections-before-release PASS cgroup empty 2 ms after cgroup.kill; gateway saw POLLHUP/RDHUP (revents=0x2011) and closed its descriptor; zero connections before identity release
+done
+
+# exit: 0

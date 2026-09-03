@@ -14,7 +14,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | 2 pidfd from credential PID | **PASS + FINDING F-1** | [seqpacket-creds](seqpacket-creds.md) D7-2a–d | ADR-0002 Decision 2: comparison key should be the pidfs inode, start time corroborating only |
 | 3 Descriptor transfer | **PASS** | [seqpacket-creds](seqpacket-creds.md) D7-3a–b, X-1 | ADR-0002 Decision 2 |
 | 4 Abstract socket isolation | **PASS** | [netns-seccomp](netns-seccomp.md) D7-4a–c | ADR-0002 Decision 1; requirements R-GW |
-| 5 Revocation latency | pending (mechanism portion); operation denial is WP2 | — | ADR-0002 Decision 4 |
+| 5 Revocation latency | **PASS** (mechanism half); typed-operation half is WP2 | [frozen-peer](frozen-peer.md) D7-5a–b | ADR-0002 Decision 4 |
 | 6 Bypass corpus | WP2 (needs gateway) | — | ADR-0002 |
 | 7 TCB accounting | WP2 (needs gateway code); SLOC tool pinned under VM-2 | — | requirements §12 |
 | 8 Failure behaviour | WP2 (needs components) | — | session lifecycle §6 |
@@ -29,7 +29,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | Namespace/mount/procfs construction in §2.1 order; mount-descriptor resolution | pending | — | session lifecycle §3 |
 | Descriptor closure and runtime launch ordering | pending | — | session lifecycle §3 |
 | Socket-family seccomp and abstract-socket isolation in an empty netns | **PASS + FINDING F-2** | [netns-seccomp](netns-seccomp.md) NS-*, SC-* | requirements R-CON; ADR-0002 D7-4 |
-| ADR-0002 Decision 7 verification | in progress (items 1–4 done) | above | ADR-0002 |
+| ADR-0002 Decision 7 verification | in progress (items 1–5 done; 6–9 are WP2) | above | ADR-0002 |
 | `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | **PASS + FINDINGS F-4, F-5** | [scope-kill](scope-kill.md) C-* | session lifecycle §4; component interfaces |
 | Git staging-ref adapter and protected-branch behaviour | pending | — | plan §3.3 |
 | `loginuid` and audit correlation, loss behaviour under load | pending | — | requirements R-CON-6; identity lifecycle §6 |
@@ -42,7 +42,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | VM-1 vsock peer-CID reporting | pending | — | ADR-0002 Decision 6 (binding via VMM connection table) |
 | VM-2 cross-arm SLOC comparability | pending | — | ADR-0003 (per-arm disclosure only) |
 | LC-1 allocator/constructor implementation spike | pending | — | identity lifecycle §3 |
-| LC-2 frozen cgroup holding a `SOCK_SEQPACKET` connection | pending | — | session lifecycle §6 |
+| LC-2 frozen cgroup holding a `SOCK_SEQPACKET` connection | **PASS** — no delay; §6 stands | [frozen-peer](frozen-peer.md) LC2-1–5 | session lifecycle §6 |
 | ID-1 allocator-store crash consistency | pending | — | identity lifecycle §3 |
 
 ## Findings requiring document amendments before WP2
