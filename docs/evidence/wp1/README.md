@@ -40,7 +40,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | Item | Status | Evidence | Reopens on failure |
 |---|---|---|---|
 | VM-1 vsock peer-CID reporting | **PASS + FINDING F-7** — no host `AF_VSOCK` endpoint with Firecracker; CID derived via VMM `SO_PEERCRED`/pidfd | [vsock-cid](vsock-cid.md) | ADR-0003 (wording) |
-| VM-2 cross-arm SLOC comparability | pending | — | ADR-0003 (per-arm disclosure only) |
+| VM-2 cross-arm SLOC comparability | **PASS + FINDING F-8** — attribution consistent; three accounting rules and tool pin needed | [sloc-arms](sloc-arms.md) | ADR-0003 (accounting) |
 | LC-1 allocator/constructor implementation spike | **PASS** — allocator: [identity-store](identity-store.md); constructor/freeze/kill/pidfd/scope: [scope-kill](scope-kill.md), [mount-construct](mount-construct.md) | — | identity lifecycle §3 |
 | LC-2 frozen cgroup holding a `SOCK_SEQPACKET` connection | **PASS** — no delay; §6 stands | [frozen-peer](frozen-peer.md) LC2-1–5 | session lifecycle §6 |
 | ID-1 allocator-store crash consistency | **PASS** — candidate design holds; §3 not reopened | [identity-store](identity-store.md) ID-9–11 | identity lifecycle §3 |
@@ -56,3 +56,4 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | F-5 | `UnitRemoved` is emitted at unit GC (~1.5 s later); `PropertiesChanged`/`ActiveState` and the held pidfd are the prompt triggers. | session lifecycle §4 (guidance only) | recorded; no obligation change |
 | F-6 | Pinned kernel lacks `CONFIG_AUDIT_LOGINUID_IMMUTABLE`: `loginuid` is re-settable by `CAP_AUDIT_CONTROL` (never held by sessions). Replace "write-once" with the capability-conditional statement; note the host-global `lost` counter. | R-CON-6; identity lifecycle §6; technical report §5; ADR-0003 kernel row | recorded; amendment pending |
 | F-7 | Firecracker's vsock is a Unix-socket bridge; the host sees the VMM process as peer, not a guest CID. Bind via `SO_PEERCRED`→VMM pidfd→configured `guest_cid`; daemon must own the bridge socket path. | ADR-0003 "VM identity, CID lifetime, and vsock admission" | recorded; wording amendment pending |
+| F-8 | Firecracker v1.16.1 closure: direct 77 904 + 3 494; transitive 2.82 M (1.29 M C/C++/asm from AWS-LC via `aws-lc-rs`, used only for randomness). Pin tokei; state present-vs-compiled rule; generated-code allowlist; feature pins. | ADR-0003 "Trusted-code size"; requirements §12 accounting | recorded; accounting amendment pending |

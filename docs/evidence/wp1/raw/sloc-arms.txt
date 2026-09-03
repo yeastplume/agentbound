@@ -1,0 +1,63 @@
+# spike: sloc-arms
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: f993863
+# date: 2026-09-03T14:32:21Z
+# args: 
+
+tool: tokei 13.0.0-alpha.8 compiled with serialization support: json
+firecracker source: v1.16.1 2038188
+cargo: cargo 1.98.1 (797e8a9bc 2026-08-05); upstream rust-toolchain: channel = "1.95.0"
+
+== Figure 1 (direct): workspace crates that link into the two shipped binaries ==
+firecracker: workspace crates: acpi_tables firecracker utils vmm 
+  direct SLOC (src/ only, excludes tests/ benches/): 77904  [Rust=77861, Shell=43]
+jailer: workspace crates: jailer utils 
+  direct SLOC (src/ only, excludes tests/ benches/): 3494  [Rust=3494]
+  note: firecracker and jailer are separate binaries; the VM arm ships BOTH per session, so figures are summed for the arm.
+
+== Figure 3 (transitive): third-party crates resolved for each binary from Cargo.lock ==
+firecracker: 67 third-party crates: acpi_tables aws-lc-rs aws-lc-sys base64 bitcode bitcode_derive bitflags bitvec bytemuck byteorder cfg-if chacha20 convert_case cpufeatures crc64 derive_more derive_more-impl displaydoc event-manager firecracker funty getrandom itoa kvm-bindings kvm-ioctls libc linux-loader linux-raw-sys log memchr memfd micro_http nix proc-macro2 quote radium rand rand_core rustix semver serde serde_core serde_derive serde_json slab syn tap thiserror thiserror-impl unicode-ident unicode-segmentation unicode-xid untrusted userfaultfd userfaultfd-sys utils uuid vhost vm-allocator vm-memory …
+jailer: 14 third-party crates: bitflags displaydoc jailer libc proc-macro2 quote regex regex-automata regex-syntax syn thiserror thiserror-impl unicode-ident utils vmm-sys-util …
+firecracker transitive third-party SLOC (whole crate dirs): 2819798 (unresolved: 4)
+  languages: Rust=1429364, GNU Style Assembly=881671, C++=109294, C=109205, C Header=108335, Perl=82449, Assembly=79471, Bitbake=8323, TOML=5348, CMake=3425, Shell=686, CSS=666, F*=446, Autoconf=424, Go=198, Python=112, Batch=75, Makefile=55, JSON=47, LD Script=46, Pan=45, SVG=34, Nix=33, BASH=27, Just=19
+  unsafe-by-default languages: Assembly=79471, GNU Style Assembly=881671, C=109205, C Header=108335, C++=109294
+  top crates:
+    1798731 aws-lc-sys-0.41.0
+    478956 linux-raw-sys-0.12.1
+    112662 libc-0.2.186
+    56574 syn-2.0.117
+    49783 rustix-1.1.4
+    31437 nix-0.27.1
+    22715 aws-lc-rs-1.17.0
+    21880 derive_more-2.1.1
+jailer transitive third-party SLOC (whole crate dirs): 279790 (unresolved: 1)
+  languages: Rust=272013, TOML=6676, CSS=627, F*=446, Pan=15, JSON=10, Shell=3
+  unsafe-by-default languages: none
+  top crates:
+    112662 libc-0.2.186
+    56574 syn-2.0.117
+    50620 regex-syntax-0.8.10
+    29638 regex-automata-0.4.14
+    8579 regex-1.12.3
+    6092 proc-macro2-1.0.106
+    4272 vmm-sys-util-0.15.0
+    2266 thiserror-impl-2.0.18
+  aws-lc-sys is pulled in via: 0aws-lc-sys v0.41.0;1aws-lc-rs v1.17.0;2vmm v0.1.0 (/root/fc/src/src/vmm);3firecracker v1.16.1 (/root/fc/src/src/firecracker);
+
+== Figure 5 (unsafe-by-default language) and Figure 4 (configuration) in the VM arm ==
+C/asm in firecracker+jailer workspace src: [none]
+unsafe blocks in workspace src (grep, not a SLOC figure): 411
+seccomp filters shipped (resources/seccomp): JSON=2831
+
+== Same procedure on a Linux-arm stand-in (this repo's spikes, Rust with libc/rusqlite/sha2) ==
+identity-store: direct SLOC: 182  third-party crates: 20
+  attribution method identical: cargo tree -e normal → per-crate registry src/ → tokei; the only arm-specific input is the Cargo.lock
+
+== Comparability verdict inputs ==
+1. Same tool, same version, same 'src/ of each resolved crate' rule on both arms: yes.
+2. Firecracker vendors no C; rust-vmm crates (kvm-bindings, vm-memory, linux-loader…) are ordinary registry crates → attributable.
+3. kvm-bindings contains generated bindings (bindgen output committed upstream) → counted as transitive here; the 'generated' figure (Figure 2) cannot be separated by tool alone for third-party crates — it requires a manual allowlist of generated files. Same limitation applies to any Linux-arm crate with committed bindgen output (e.g. libc's generated modules).
+4. Upstream toolchain pin (1.95.0) differs from this VM's cargo; cargo tree resolution uses Cargo.lock so results are toolchain-independent.
+RESULT VM2-1.pinned-tool-attributes-both-arms-consistently PASS same procedure yields direct/transitive split per binary on both arms; Figure 2 (generated) needs a manual file allowlist on either arm — an accounting rule, not a comparability failure
+
+# exit: 0
