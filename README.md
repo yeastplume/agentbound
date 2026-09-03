@@ -34,7 +34,7 @@ tests/            Future adversarial conformance and integration tests
 
 ## Current status
 
-The papers are working drafts for external review (position paper 0.7, technical report 0.5-TR4), revised after three independent reviews. The Phase 1 plan is version 0.2 and specifically requests feedback before implementation begins.
+The papers are working drafts for external review (position paper 0.8, technical report 0.5-TR5), revised after three independent reviews. The Phase 1 plan is version 0.3 and specifically requests feedback before implementation begins.
 
 The shortest honest summary of the current claim: the Unix-governed baseline is an isolation, authority, and attribution profile that makes no information-flow claim; integrity provenance is the nearest practical payoff; confidentiality compartments and multilevel release are later, measured profiles. The formal rules are a specification to implement and test against, not a proven model.
 

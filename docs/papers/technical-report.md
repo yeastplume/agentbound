@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR4  
+**Version:** 0.5-TR5  
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -19,6 +19,7 @@
 - **0.4-TR2** — Restructured this document as a normative companion, removed duplicated thesis and conclusion material, established document ownership, and corrected cross-document attribution.
 - **0.5-TR3** — Incorporated three independent reviews: typed formalism and authorization-derivation relation replacing universal intersection; per-session execution identity made normative; gateway-only egress topology specified; constructor ordering and post-launch privileged TCB stated honestly; invariants profile-scoped and classified as prevention, detection, or assumption; attribution narrowed to mediated effects; model treated as an approved execution binding; structured versus semantic memory promotion separated; foundational confidentiality and integrity models cited.
 - **0.5-TR4** — Added an explicit statement that the formalism is an unproven specification and listed what remains open; made the same caveat part of the conformance definition.
+- **0.5-TR5** — Execution identity restated as uniquely allocated with verified reclamation and reuse quarantine; ownership/execution separation stated as an invariant with profile-specific realizations rather than a universal "never executes".
 
 ---
 
@@ -30,8 +31,8 @@ The report remains self-contained at the level needed to implement and test the 
 
 ### Normative terminology
 
-- **Agent principal:** a durable organizational security principal with a stable global identity, an accountable owner, potential authority and clearance, partitioned durable state, credential/model/tool policy, delegation constraints, retention rules, and lifecycle policy. The durable principal is a policy, ownership, and audit identity. A host UID that owns durable state is a local projection of it; the durable principal's UID is **not** the identity under which session processes run.
-- **Execution identity:** the non-reusable local credential (UID, supplementary groups, and where applicable MAC type) under which one session's processes execute. It is allocated per session, never shared between concurrent sessions, and never reused while any object or record bound to the previous session remains ambiguous. Durable state is reached through per-session grants (bind mounts, ACLs, descriptors, or a storage broker), not by running as the owner.
+- **Agent principal:** a durable organizational security principal with a stable global identity, an accountable owner, potential authority and clearance, partitioned durable state, credential/model/tool policy, delegation constraints, retention rules, and lifecycle policy. The durable principal is a policy, ownership, and audit identity. A host UID that owns durable state is a local projection of it. The identity that owns durable state and the identity under which a session acts must be distinguishable to whatever enforces the session boundary; in the Unix-governed profile the owning UID does not run session processes.
+- **Execution identity:** the uniquely allocated local credential (UID, supplementary groups, and where applicable MAC type) under which one session's processes execute. It is allocated per session, never shared between concurrent sessions, and reclaimed only under a verified condition (no live process, no owned object, no audit record that depends on the numeric identity alone) followed by a reuse quarantine; audit records pair it with launch, boot, and session identifiers so that finite UIDs can be reclaimed without ambiguity. Durable state is reached through per-session grants (bind mounts, ACLs, descriptors, or a storage broker), not by running as the owner.
 - **Session:** a task-scoped realization of one agent principal, bound to an authenticated initiator, purpose, approvals, activated authority, confidentiality and integrity state, visible world, execution identity, credentials, budgets, process tree, outputs, and audit identity.
 - **Execution:** an ordinary process within a session. A cognitive runtime, shell, compiler, retrieval command, or model client is an execution, not an independent security principal unless separately provisioned as one.
 - **Model and execution binding:** a model is a cognitive implementation invoked by an execution. The session identity is stable across model replacement, but the model, endpoint, provider tenant, adapters or fine-tuned weights, retention mode, and inference pool together form an **approved execution binding**. Changing any element of the binding is a policy-controlled, auditable event that requires a compatibility decision, because it changes the session's information sources, sinks, and trusted computing base.
@@ -142,7 +143,7 @@ The proposal uses existing mechanisms wherever their semantics fit.
 | Agent-system concept | Unix/Linux mechanism |
 |---|---|
 | Durable local agent principal (ownership) | Stable UID / system account, or storage service |
-| Session execution identity | Per-session, non-reusable UID and groups |
+| Session execution identity | Per-session UID and groups, uniquely allocated with verified reclamation |
 | Organizational memberships | GIDs, supplementary groups, POSIX ACLs |
 | Mandatory identity and authorization range | SELinux user, role, types, MLS range |
 | Agent private state | Home directory, ownership, quotas, labeled storage |
@@ -204,8 +205,8 @@ The exact category allocation and dominance rules are policy decisions, not univ
 
 The durable agent principal has two distinct local roles that must not be collapsed:
 
-- **Ownership projection.** A stable UID (or a storage service acting for the principal) owns durable state so that ordinary DAC, backup, quota, and audit tooling attribute objects to the agent. This identity never executes session code.
-- **Execution identity.** Each session runs under a **per-session, non-reusable UID** with its own supplementary groups and, in MAC profiles, its own type or category set. Durable partitions activated for the session are exposed through per-session bind mounts, ACL grants, inherited descriptors, or a broker operating on the session's behalf.
+- **Ownership projection.** A stable UID (or a storage service acting for the principal) owns durable state so that ordinary DAC, backup, quota, and audit tooling attribute objects to the agent. In the Unix-governed profile this identity does not execute session code.
+- **Execution identity.** Each session runs under a **per-session, uniquely allocated UID with verified reclamation and reuse quarantine** with its own supplementary groups and, in MAC profiles, its own type or category set. Durable partitions activated for the session are exposed through per-session bind mounts, ACL grants, inherited descriptors, or a broker operating on the session's behalf.
 
 This split is normative because two processes sharing one UID pass ordinary DAC and signal checks against one another; `hidepid`, PID namespaces, and Yama `ptrace_scope` distinguish UIDs or hide identifiers but do not create an authorization boundary between same-UID processes. Same-principal session isolation (Invariant 17) is therefore achievable only with distinct execution identities or a rigorously allocated per-session MAC type; the baseline profile uses distinct execution identities. The architectural decision is recorded in ADR-0001.
 
@@ -914,7 +915,7 @@ An implementation conforms to a deployment profile only if it identifies that pr
 
 Conformance claims must be pre-registered with operational thresholds rather than adjectives. At minimum a profile's evaluation states: the covered-interface inventory and the adversary-capability matrix its bypass corpus exercises; kernel, LSM, systemd, and policy versions; the effect ontology against which attribution completeness is measured and the required completeness; the maximum acceptable policy-exception and privileged-repair rate; and, for profiles claiming release or promotion, reviewer throughput, disagreement, correction, and false-release targets. For the multilevel profile, failure to meet the release-economics targets is a conformance failure, not an operational note. Each residual assumption carries an owner, impact, compensating control, acceptance authority, and revalidation trigger.
 
-A control arm is a required part of any evaluation: the same workload and the same abstract manifest run through a hardened container or microVM with per-session workload identity, egress gateway, and audit. "Same manifest" is meaningful only for the substrate-independent fields (identity, derivation inputs, authority, budgets, gateway policy, audit requirements); substrate-specific refinements must be listed separately and equivalent assurance must not be inferred from shared fields.
+A control arm is a required part of any evaluation: the same workload and the same abstract manifest run through a microVM (a stronger boundary; a container tests packaging rather than shared-kernel risk) with per-session workload identity, egress gateway, and audit. "Same manifest" is meaningful only for the substrate-independent fields (identity, derivation inputs, authority, budgets, gateway policy, audit requirements); substrate-specific refinements must be listed separately and equivalent assurance must not be inferred from shared fields.
 
 The architecture remains experimentally falsifiable. Evaluation must determine whether the constructor and surrounding control plane prevent cross-session access, authority expansion, gateway bypass, unpromoted mutation of protected objects, incomplete descendant termination, and unattributed mediated effects; whether, in profiles that claim it, confidentiality and integrity laundering is prevented on mediated edges; and whether administrators can preserve labels and provenance through real storage and collaboration workflows at a sustainable policy-maintenance and review cost.
 

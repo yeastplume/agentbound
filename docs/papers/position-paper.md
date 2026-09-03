@@ -2,7 +2,7 @@
 
 ## A Security Ontology for Governed Agent Sessions
 
-**Version:** 0.7  
+**Version:** 0.8  
 **Date:** 28 August 2026  
 **Status:** Working position paper for external review  
 **Companion:** [`technical-report.md`](technical-report.md)  
@@ -16,6 +16,7 @@
 - **0.5** — Restored the framework-responsibility boundary and governed Unix-composition implications; aligned provenance practice with the companion report.
 - **0.6** — Incorporated three independent reviews: durable principal identity separated from per-session execution identity; the information-admission claim scoped to mediated edges and the Unix-governed profile stated as a non-information-flow profile; intersection presented as the common case of a derivation relation; model treated as an approved execution binding; attribution scoped to mediated effects; integrity provenance foregrounded as the near-term payoff; the hostile-reviewer objection stated and answered.
 - **0.7** — Trimming pass: removed mechanism detail owned by the companion report and consolidated the rules; added an explicit statement that the formalism is an unproven specification.
+- **0.8** — Softened "never runs code" to a profile-realized separation of owning and acting identity; execution identity restated as uniquely allocated with verified reclamation.
 
 ---
 
@@ -23,7 +24,7 @@
 
 Most AI-agent systems represent an agent as an application object, conversation, coroutine, or process owned by a shared service account. The framework must then reconstruct identity, lifecycle, authorization, isolation, resource accounting, and audit above the operating system, even when the agent ultimately acts by launching ordinary Unix programs.
 
-This paper proposes a different foundation: **an organizational agent is a durable, accountable security principal; a session is a task-scoped shell and process tree instantiated under its own execution identity with a bounded subset of that principal's authority; an execution is an ordinary process; and a model is a replaceable cognitive component whose binding to the session is itself governed.** The durable identity owns state and carries accountability; it never runs code. Each session runs under a per-session Unix execution identity. Neither is reducible to a PID, model instance, API token, or database row.
+This paper proposes a different foundation: **an organizational agent is a durable, accountable security principal; a session is a task-scoped shell and process tree instantiated under its own execution identity with a bounded subset of that principal's authority; an execution is an ordinary process; and a model is a replaceable cognitive component whose binding to the session is itself governed.** The durable identity owns state and carries accountability; each session acts under a distinct, per-session execution identity that the enforcing substrate can tell apart from the owner. Neither is reducible to a PID, model instance, API token, or database row.
 
 Linux already supplies much of the local enforcement substrate: credentials and access controls, namespaces, cgroups, capabilities, `no_new_privs`, Landlock, seccomp, audit, and optional mandatory-access-control profiles. Organizational policy should compute the permissible session, while the operating system enforces its local realization. Gateways and remote services remain responsible for effects beyond the host.
 
@@ -91,7 +92,7 @@ The daemon should not need to mediate every `open(2)` call for its authorization
 
 An **agent** is a durable organizational security principal with a stable global identity and accountable owner; potential authority and clearance; partitioned durable state; credential, model, and tool eligibility policy; delegation, retention, and audit policy; and a provisioning-to-retirement lifecycle.
 
-Across a fleet, a directory or workload-identity system remains authoritative. On one host, the durable identity may be projected into a stable UID (or a storage service) that **owns** durable state so that ordinary ownership, quota, backup, and audit tooling attribute objects to the agent. That identity never executes session code; sessions run under separate execution identities (Section 2.2) and reach the principal's state only through per-session grants.
+Across a fleet, a directory or workload-identity system remains authoritative. On one host, the durable identity may be projected into a stable UID (or a storage service) that **owns** durable state so that ordinary ownership, quota, backup, and audit tooling attribute objects to the agent. In the baseline profile that identity does not execute session code; sessions run under separate execution identities (Section 2.2) and reach the principal's state only through per-session grants.
 
 The cognitive software is not the principal. A model or runtime may plan and act, but it does so within authority assigned to the governed identity.
 
@@ -99,7 +100,7 @@ The cognitive software is not the principal. A model or runtime may plan and act
 
 A **session** is a temporary, task-scoped realization of an agent principal. It binds the authenticated initiator; task, purpose, and approvals; activated authority; confidentiality and integrity state; filesystem, process, IPC, device, and network views; brokered credentials; budgets; and the process tree, streams, outputs, and audit identifiers. It is the natural cognitive security boundary because information read during one task may enter prompts, caches, memory, outputs, or child messages; a task requiring incompatible compartments should receive another session.
 
-Two sessions of one agent are not isolated merely by having different session IDs or cgroups: a shared UID passes ordinary access and signal checks between its own processes, and namespaces hide identifiers without changing authorization. Each session therefore runs under a **per-session, non-reusable execution identity**—its own UID and groups, and in MAC profiles its own type—with private runtime directories, storage, descriptors, PTYs, and sockets. The durable identity owns state; the session identity acts.
+Two sessions of one agent are not isolated merely by having different session IDs or cgroups: a shared UID passes ordinary access and signal checks between its own processes, and namespaces hide identifiers without changing authorization. Each session therefore runs under a **per-session, uniquely allocated execution identity** with verified reclamation before any reuse—its own UID and groups, and in MAC profiles its own type—with private runtime directories, storage, descriptors, PTYs, and sockets. The durable identity owns state; the session identity acts.
 
 ### 2.3 Execution and model
 
@@ -214,7 +215,7 @@ Linux mechanisms answer different questions:
 
 | Mechanism | Role |
 |---|---|
-| Global identity projected to an owning UID or storage service | Durable ownership of state; never executes |
+| Global identity projected to an owning UID or storage service | Durable ownership of state; distinct from the acting identity |
 | Per-session execution identity (UID, groups, optional MAC type) | Session boundary between processes, including sessions of one agent |
 | SID, cgroup, immutable launch record | Task-scoped session grouping and provenance |
 | PID | Current execution identity |
@@ -263,7 +264,7 @@ Adds full MLS sensitivities, declared flow rules, analyzed policy, labeled persi
 
 ### Profile 4: Strong workload isolation
 
-A container, VM, microVM, or dedicated node can surround any profile. A microVM gives a simpler, stronger boundary against cross-workload kernel and device interference at a cost in latency, memory, and observability; it does not determine where information may flow after entering the VM. A likely high-assurance design is organizational identity and task policy → microVM session boundary → partitioned storage, gateways, promotion, and release. The choice should be empirical: the evaluation programme treats a hardened container or microVM with per-session workload identity, gateway, and audit as a required control arm, and the process-session design must show a measured advantage or cost, not an assumed one.
+A container, VM, microVM, or dedicated node can surround any profile. A microVM gives a simpler, stronger boundary against cross-workload kernel and device interference at a cost in latency, memory, and observability; it does not determine where information may flow after entering the VM. A likely high-assurance design is organizational identity and task policy → microVM session boundary → partitioned storage, gateways, promotion, and release. The choice should be empirical: the evaluation programme treats a microVM with per-session workload identity, gateway, and audit as a required control arm for its comparative claim, and the process-session design must show a measured advantage or cost, not an assumed one.
 
 ---
 
@@ -315,7 +316,7 @@ Each endpoint, inherited descriptor, and process must belong to a compatible con
 
 The companion technical report defines a three-phase evaluation:
 
-- **Phase 1:** Unix-governed identity, construction, same-principal isolation, resources, credential confinement, gateway-only egress, termination, attribution of mediated effects, one thin integrity slice, and a required container/microVM control arm. Phase 1 makes no information-flow claim.
+- **Phase 1:** Unix-governed identity, construction, same-principal isolation, resources, credential confinement, gateway-only egress, termination, attribution of mediated effects, one thin integrity slice, and a microVM control arm for the comparative claim, in four milestones with stop points. Phase 1 makes no information-flow claim.
 - **Phase 2:** integrity provenance and partitioned/versioned memory first; then compartments, contamination-safe communication on mediated edges, revocation, and external budgets.
 - **Phase 3:** full MLS, declassification throughput, storage continuity, shared inference, and comparison with microVM-per-session.
 
@@ -323,7 +324,7 @@ The most important falsification questions are:
 
 - Does the host prevent cross-principal and same-principal cross-session interference?
 - Can narrower delegation launder confidentiality or integrity across a mediated edge?
-- Does the process-session design show a measured advantage over a hardened container or microVM control arm?
+- Does the process-session design show a measured advantage over a microVM control arm?
 - Can a session bypass the model/service gateway or steal reusable credentials?
 - Can untrusted input modify trusted memory or production artifacts without promotion?
 - Can labels and provenance survive the actual Git, archive, backup, and remote-service workflows an organization uses?
@@ -345,7 +346,7 @@ Multi-user agent systems need durable answers to five questions:
 
 A coherent division is available:
 
-- **agent:** durable, accountable organizational principal that owns partitioned state and never executes;
+- **agent:** durable, accountable organizational principal that owns partitioned state and is distinct from the identity that acts;
 - **session:** task-scoped process world under its own execution identity, with activated authority, information state, provenance, credentials, and budgets;
 - **execution:** ordinary process;
 - **model:** replaceable cognitive component whose binding to the session is governed and, when shared or remote, a governed service boundary;
