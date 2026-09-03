@@ -1,6 +1,6 @@
 # Phase 1 Test Catalogue
 
-**Version:** 0.5  
+**Version:** 0.6  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** Agentbound milestones 1A–1D  
@@ -15,6 +15,7 @@
 - **0.3** — Control-arm column points to the committed per-ID register as a 1D prerequisite.
 - **0.4** — T-6.8-006 narrowed to policy-service outage; T-6.8-011–013 added (audit degradation, lifecycle-daemon outage, forbidden degraded mapping).
 - **0.5** — Post-freeze editorial maintenance (no normative change): T-6.4 coverage accounting corrected (014 from bullets; 015 is the control-arm projection); GR/GU privilege labels; pinning ownership cited; §7.3 fault-point wording.
+- **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Control-arm prose points to ADR-0003; Oxford spelling.
 
 
 ## 1. Purpose and status
@@ -27,7 +28,7 @@ normative requirements and lifecycle specification.
 
 This catalogue is a test definition, not a fixture or command specification.
 Fixtures, harness commands, workload implementations, test runners, and CI
-wiring are explicitly out of scope here; they are WP1 outputs. A later test
+wiring are out of scope here; they are WP1 outputs. A later test
 implementation MUST preserve the IDs and assertions in this catalogue, or a
 recorded WP0 revision MUST explain the change.
 
@@ -56,7 +57,7 @@ MUST subscribe to systemd D-Bus signals and retain session pidfds. Systemd MAY
 report scope state but MUST NOT bypass the daemon's serialized lifecycle
 interface. Milestones are only **1A**, **1B**, **1C**, and **1D**.
 
-Every table's **Control arm** field is intentionally blank. ADR-0003 MUST fill
+Every table's **Control arm** field is blank. ADR-0003 MUST fill
 it before control-arm results exist with exactly `identical`,
 `substrate-equivalent`, or `not directly comparable`; this catalogue MUST NOT
 prejudge the classification.
@@ -100,18 +101,18 @@ named by the row. No diagnostic MAY disclose another session's identifiers.
 Each enumerated bypass attempt in §§6.1–6.7 and the local-socket-relevant
 §6.4 inventory MUST reach its stated preventive outcome in **100%** of pinned
 repetitions. A reproducible bypass fails its gate. Unexplained nondeterminism
-is a failure pending investigation; it MUST NOT be labeled flaky or removed by
+is a failure pending investigation; it MUST NOT be labelled flaky or removed by
 retry. Every attempt, including retry, failure, and infrastructure abort, MUST
 be retained and linked by test ID, run ID, input digest, and idempotency key.
 
 Repetition counts and test seeds are fixed here; kernel/systemd/LSM versions are
 pinned in ADR-0003 and requirements §12, and the interface inventory in
-requirements §12 and the traceability matrix §2: bypass and fault tests run 10 repetitions each; the seed for each repetition is `SHA-256(test_id || repetition_index)` truncated to 64 bits. Each row executes its pinned count; where a
+requirements §12 and the traceability matrix §2. Bypass and fault tests run 10 repetitions each. The seed for each repetition is `SHA-256(test_id || repetition_index)` truncated to 64 bits. Each row executes its pinned count; where a
 row participates in the nominal profile it MUST execute at least `N` times.
 An attempt is passing only if its preventive result, required audit event, and
 all required evidence are present. A missing required audit record is a failed
 attempt unless the manifest declares and records its fail-closed audit-loss
-behavior.
+behaviour.
 
 **Gate 1** passes only if all applicable request, derivation, construction, and
 `F-C-*` tests pass, no partial session/grant/resource survives, and the
@@ -308,7 +309,7 @@ change the denominator.
 | T-6.8-006 | 1A | 21 | R-LC-2..4 | ANI | policy service unavailable | declared terminate/quiesce, or `continue-degraded` with no fresh-policy operation admitted and no new authority | LC,DR,AR | |
 | T-6.8-007 | 1A | 21 | R-LC-3 | ANI | U reclassification request | fail closed, unchanged projection, policy audit | LR,DR,AR | |
 | T-6.8-008 | 1B | 21 | R-LC-3 | ANI | Git grant withdrawn | new Git operation denied | GA,LC,DR | |
-| T-6.8-009 | 1B | 21 | R-LC-3 | RR | gateway unavailable | declared behavior plus availability event | GA,LC,AR | |
+| T-6.8-009 | 1B | 21 | R-LC-3 | RR | gateway unavailable | declared behaviour plus availability event | GA,LC,AR | |
 | T-6.8-010 | 1C | 21,22 | R-LC-3,R-GW-8 | ANI | inference grant/binding revoked | new inference denied; declared action | GA,LC,DR | |
 | T-6.8-011 | 1A | 21 | R-LC-2..4 | ANI | audit pipeline degraded below stop threshold | declared terminate/quiesce, or `continue-degraded` with loss counters exposed and attribution-requiring effects denied | LC,DR,AR | |
 | T-6.8-012 | 1A | 21 | R-LC-1,R-LC-4..5 | ANI | lifecycle daemon unavailable (daemon killed while session active) | containment holds; no new authority; no transition until restart; §7 reconciliation completes | LC,KA,LR | |
@@ -324,7 +325,7 @@ change the denominator.
 | T-6.9-004 | 1A | 20 | R-RES-1..2 | USP | disk bytes/inodes | bounded/denied; class recorded | KA,AR | |
 | T-6.9-005 | 1B | 20 | R-GW-7 | USP | I/O/network bandwidth | bounded at gateway; class recorded | GA,AR | |
 | T-6.9-006 | 1B | 20 | R-GW-7 | USP | connection count | bounded/denied | GA,AR | |
-| T-6.9-007 | 1A | 20,13 | R-RES-2,R-AUD-3 | USP | audit-event volume | declared loss behavior; counters retained | AR,LC | |
+| T-6.9-007 | 1A | 20,13 | R-RES-2,R-AUD-3 | USP | audit-event volume | declared loss behaviour; counters retained | AR,LC | |
 | T-6.9-008 | 1B/1C | 20 | R-GW-7,R-GW-9 | USP | requests/rate/tokens/spend | all present classes bounded; absent listed | GA,AR | |
 
 ## 8. Fault-injection inventory (plan §7.3)
@@ -404,12 +405,12 @@ profile/version set. The result MUST preserve negative results and every
 attempt. A test MAY be rerun to diagnose a result, but no later pass erases an
 earlier failure.
 
-The **Control arm** column in every table above is intentionally empty in this
-document: the authoritative, populated classification of each test ID is the
-per-test register in [ADR-0003](ADR-0003-control-substrate.md), which MUST be
-expanded into the committed per-ID `control-arm-register.md` before any microVM
-result is recorded (ADR-0003 execution prerequisite). WP0 review MUST confirm that
-every applicable invariant has a named test and that the finite local-socket
-gateway corpus includes every row in §7.4. Load-profile constants and
+The **Control arm** column in every table above is empty. The authoritative,
+populated classification of each test ID is the per-test register in
+[ADR-0003](ADR-0003-control-substrate.md). ADR-0003 MUST expand the register
+into the committed per-ID `control-arm-register.md` before any microVM result
+is recorded. WP0 review MUST confirm that every applicable invariant has a
+named test and that the finite local-socket gateway corpus includes every row
+in §7.4. Load-profile constants and
 correlation deadlines in §5 are frozen by this version; changing them
 requires a revision-history entry before any run.

@@ -1,5 +1,5 @@
 # Agentbound Component Interfaces
-**Version:** 0.2  
+**Version:** 0.3  
 **Status:** Frozen (WP0) — skeleton; wire formats are WP1 outputs  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed reference implementation  
@@ -9,6 +9,7 @@
 
 - **0.1** — Initial WP0 skeleton.
 - **0.2** — Envelope freshness values fixed; identifier terminology aligned; systemd is an observation source only.
+- **0.3** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Oxford spelling.
 
 
 ---
@@ -124,7 +125,7 @@ grant confirmation failure blocks identity reclamation.
 Audit MUST verify event IDs are unique and MUST deduplicate at-least-once
 delivery by stable event ID. It MUST retain duplicate counters and MAY retain
 the duplicate envelope for forensics. Sender retry continues until the event is
-accepted or the manifest's audit-loss behavior requires stop, quarantine, or
+accepted or the manifest's audit-loss behaviour requires stop, quarantine, or
 continue-with-loss-counter.
 ### 3.6 systemd to lifecycle
 | Property | Contract |
@@ -143,7 +144,7 @@ alone decides, serializes, and records the resulting transition.
 | Property | Contract |
 |---|---|
 | Transport | Dedicated local `AF_UNIX` `SOCK_SEQPACKET`; adapter verifies `SO_PEERCRED`; adapters MUST NOT accept a public listener. |
-| Peer identity | An adapter MUST accept only the configured gateway service identity. Gateway MUST bind each adapter instance to an approved catalogue identity and artifact digest. |
+| Peer identity | An adapter MUST accept only the configured gateway service identity. Gateway MUST bind each adapter instance to an approved catalogue identity and artefact digest. |
 | Permitted operations | Execute only a named, typed, schema-validated operation whose scope, destination, tenant, budgets, and trace binding were approved in the active manifest. |
 | Not trusted | Raw request bytes as an authority grant, destination URL, arbitrary method, caller trace ID, session UID, or claimed budget consumption. |
 Adapters MUST NOT expose generic HTTP, CONNECT, shell, filesystem, or arbitrary
@@ -191,7 +192,7 @@ administrator-configured host time service; envelopes and audit events MUST
 record the named clock source, wall-clock time, and monotonic time where
 available. A detected clock rollback, unacceptable skew, or unavailable trusted
 clock MUST reject new authorization/launch work and follow the manifest's
-existing-session degradation behavior.
+existing-session degradation behaviour.
 ### 4.2 Launch-record store
 The launch-record store MUST be host-local, append-only, integrity protected,
 and writable only by the configured constructor/lifecycle store authority. A
@@ -221,7 +222,7 @@ A launch record cannot have two bindings or two active allocations. A duplicate
 launch binding, allocation reuse, state-sequence conflict, or UID-to-record
 conflict MUST fail closed, block implicated activation, and generate a
 high-severity audit event.
-### 4.4 Storage failure behavior
+### 4.4 Storage failure behaviour
 On launch-record-store or allocator-store outage, write failure, unavailable
 commit acknowledgement, integrity-chain failure, corruption, or host-binding
 mismatch, the system MUST fail closed for new authorization-dependent work:
@@ -277,8 +278,8 @@ other-session identifiers, and unredacted policy or gateway payloads.
 | `reject` | Authentication, derivation, signature, freshness, schema, or authorization failed before construction. | Safe rule/input-class code; no session capability. | Emit denial audit; retain no privileged partial side effect. |
 | `construction-failed` | Required constructor step, binding, audit prerequisite, boundary, privilege drop, or exec failed. | Failing phase and rollback/hold status, redacted as needed. | Reverse rollback; retain identity on uncertainty; seal failure when safe. |
 | `degraded` | A declared dependency loss leaves only policy-approved reduced authority. | Affected operations, reevaluation condition, and correlation IDs. | Enforce reduced grant set and audit the transition. |
-| `unavailable` | Required service/store/clock/systemd evidence cannot be safely used. | Retry guidance only where retry cannot broaden authority. | Fail closed for new authority; apply manifest behavior to existing sessions. |
-| `audit-loss` | Required audit event/evidence could not be accepted or correlated. | Loss class and counter, without event payload secrets. | Apply manifest `stop`, `quarantine`, or `continue-with-loss-counter` behavior. |
+| `unavailable` | Required service/store/clock/systemd evidence cannot be safely used. | Retry guidance only where retry cannot broaden authority. | Fail closed for new authority; apply manifest behaviour to existing sessions. |
+| `audit-loss` | Required audit event/evidence could not be accepted or correlated. | Loss class and counter, without event payload secrets. | Apply manifest `stop`, `quarantine`, or `continue-with-loss-counter` behaviour. |
 An adapter MAY expose a typed operation error nested within these classes, but
 it MUST NOT reveal upstream credentials, internal authorization rules, or data
 belonging to another session. `termination-incomplete` is reported as a safe
@@ -354,7 +355,7 @@ The following are intentionally not specified by this WP0 skeleton:
 1. **Message schemas** for every request, response, event, and D-Bus mapping.
 2. **Field-level wire formats**, bounds, encodings, and error payload shapes.
 3. **Versioning negotiation**, compatibility rules, and upgrade/downgrade
-   protocol behavior.
+   protocol behaviour.
 WP1 MUST define these without weakening the component identities, transports,
 authorization boundaries, signing rules, durability points, or fail-closed
 reconciliation decisions frozen here.

@@ -1,6 +1,6 @@
 # Session Lifecycle Specification
 
-**Version:** 0.5  
+**Version:** 0.6  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -13,6 +13,7 @@
 - **0.3** — Identifier terminology aligned (`authorization_id` pre-binding, `launch_record_digest` post-binding); systemd stated as observation source only.
 - **0.4** — Open questions disposed per the open-question register; answers written into the normative text. D-state escalation path; LC-2 carried to WP1.
 - **0.5** — §6: `continue-degraded` restricted to `policy_service_unavailable` and `audit_pipeline_degraded_below_stop_threshold`; trigger table rewritten; generic control-plane trigger split into policy-service, audit-pipeline, and lifecycle-daemon outages (the last not manifest-selectable).
+- **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. §5 deadline paragraph split; Oxford spelling.
 
 
 ---
@@ -66,7 +67,7 @@ A session status API MUST expose the current state, the latest transition event,
 | `constructing` → `active` | `agentbound-launch` | `session.activated` | Commit is once-only; retry observes committed launch record rather than execing twice. | If acknowledgment is uncertain, recovery treats session as constructing until scope and record reconcile. | `active`. |
 | `constructing` → `construction-failed` | `agentbound-launch` or fault injector | `session.construction_failed` | Rollback actions are individually idempotent and may be retried. | Execute reverse-order rollback; retain identity if safe release cannot be proven. | `construction-failed`. |
 | `active` → `quiescing` | `agentbound-lifecycle` after policy decision, systemd, or authorized CLI action | `session.quiesce_started` | Repeated request preserves earliest reason and tightest bound. | If freeze/quiesce fails, escalate to termination when policy requires it. | `quiescing`. |
-| `active` → `degraded` | `agentbound-lifecycle` applying manifest-declared behavior | `session.degraded` | Same cause updates one degradation record; recovery re-evaluates policy. | Revoke affected grants and reject affected operations. | `degraded`. |
+| `active` → `degraded` | `agentbound-lifecycle` applying manifest-declared behaviour | `session.degraded` | Same cause updates one degradation record; recovery re-evaluates policy. | Revoke affected grants and reject affected operations. | `degraded`. |
 | `degraded` → `quiescing`/`terminated` | `agentbound-lifecycle` | `session.degradation_escalated` | Idempotent escalation. | Apply termination ordering. | `quiescing` or `terminated`. |
 | `active`/`quiescing`/`degraded` → `terminated` or `termination-incomplete` | `agentbound-lifecycle` (triggered by request, revocation, or systemd scope signal) | `session.terminated` | Repeated termination is successful only after no live process is confirmed. | Hold identity and mark incomplete if proof cannot be obtained. | `terminated` or `termination-incomplete`. |
 | `termination-incomplete` → `terminated` | `agentbound-lifecycle` after retry/recovery proves no live process | `session.termination_completed` | Repeated proof is idempotent. | Keep identity and containment state on uncertainty. | `terminated` only after proof. |
@@ -101,9 +102,9 @@ Credentials, `agentbound-gateway` authority, and broker access MUST become usabl
 
 ## 4. Post-launch privileged lifecycle daemon
 
-`agentbound-lifecycle` is one privileged, long-running daemon, separately authorized and reviewable, and counted in the privileged-code accounting. It MUST be separate from `agentbound-launch`; the constructor hands each session's pidfds, scope name, and allocation record to the daemon before exit and MUST NOT retain a post-launch control channel.
+`agentbound-lifecycle` is one privileged, long-running daemon, separately authorized and reviewable, and counted in the privileged-code accounting. It MUST be separate from `agentbound-launch`. The constructor hands each session's pidfds, scope name, and allocation record to the daemon before exit. It MUST NOT retain a post-launch control channel.
 
-Rationale: a transient systemd scope has no `ExecStop=`; systemd can only stop or kill its cgroup and cannot invoke a helper. The ordered termination protocol in §5 therefore needs an actor that outlives the constructor, holds pidfds durably, and survives restarts. That actor is the daemon.
+A transient systemd scope has no `ExecStop=`. It can only stop or kill its cgroup and cannot invoke a helper. The ordered termination protocol in §5 needs an actor that outlives the constructor, holds pidfds durably, and survives restarts. That actor is the daemon.
 
 Its enumerated privileged operations are:
 
@@ -114,7 +115,7 @@ Its enumerated privileged operations are:
 5. allocate, reclaim, quarantine, and release execution identities (ADR-0001); and
 6. reconcile persisted state after restart (§7).
 
-The daemon subscribes to systemd's D-Bus `UnitRemoved` and `PropertiesChanged` signals for session scopes and holds the PID-namespace-init pidfd as an independent liveness source; either signal triggers the §5 protocol. If systemd kills a scope before the daemon acts, the daemon MUST still execute the full protocol and MUST record `session.ordering_deviation` with the systemd event that pre-empted it. The daemon accepts requests from the `agentbound` CLI only through a policy-authorized request, and from authenticated revocation triggers; it MUST record the invoking actor and delegated authority and MUST NOT accept arbitrary cgroup paths, mount paths, UIDs, or shell commands from any caller. Peer identity and authorization for each caller are specified in [component interfaces](component-interfaces.md).
+The daemon subscribes to systemd's D-Bus `UnitRemoved` and `PropertiesChanged` signals for session scopes and holds the PID-namespace-init pidfd as an independent liveness source; either signal triggers the §5 protocol. If systemd kills a scope before the daemon acts, the daemon MUST still execute the full protocol. It MUST record `session.ordering_deviation` with the systemd event that pre-empted it. The daemon accepts requests from the `agentbound` CLI only through a policy-authorized request and from authenticated revocation triggers. It MUST record the invoking actor and delegated authority. It MUST NOT accept arbitrary cgroup paths, mount paths, UIDs, or shell commands from any caller. Peer identity and authorization for each caller are specified in [component interfaces](component-interfaces.md).
 
 ---
 
@@ -142,13 +143,13 @@ Denying new operation admission is mandatory on entry and is distinct from relea
 
 ## 6. Active revocation and degradation
 
-A manifest MUST declare one behavior for each applicable trigger: `terminate`, `quiesce`, or `continue-degraded`. The declaration is a policy choice, but the implementation MUST execute it deterministically and audit the trigger, decision, affected grants, and result.
+A manifest MUST declare one behaviour for each applicable trigger: `terminate`, `quiesce`, or `continue-degraded`. The declaration is a policy choice, but the implementation MUST execute it deterministically and audit the trigger, decision, affected grants, and result.
 
 **Quiesce** means: `agentbound-lifecycle` instructs the gateway to deny admission of new operations, denies new attachments and grants, and then **freezes** the session cgroup for the manifest-declared bound; the frozen session can create no new gateway operation and no new process. At bound expiry `agentbound-lifecycle` MUST terminate the session. Quiesce does not promise that thawed processes could not fork: no-new-child semantics are provided only by the freeze, so a quiesced session is never thawed except by the termination protocol. Quiesce is not a promise that already-read information is forgotten.
 
 **Restriction on `continue-degraded`.** In Phase 1, `continue-degraded` is valid only for the triggers `policy_service_unavailable` and `audit_pipeline_degraded_below_stop_threshold`, and only when predeclared in the manifest. Every other trigger MUST resolve to `terminate` or `quiesce`; `agentbound-policy` MUST reject a manifest that declares `continue-degraded` for any other trigger. An `agentbound-lifecycle` outage (`lifecycle_daemon_unavailable`) is not a manifest-selectable trigger and never enters `continue-degraded`: installed containment remains in force, no new authority is issued, and every transition waits for daemon recovery, after which §7 reconciliation runs.
 
-| Milestone | Trigger | Declared behavior requirements |
+| Milestone | Trigger | Declared behaviour requirements |
 |---|---|---|
 | 1A | Initiator disabled | Terminate or quiesce as declared. |
 | 1A | Approval expired | Terminate or quiesce as declared; revoke approval-dependent future operations. |
@@ -159,11 +160,11 @@ A manifest MUST declare one behavior for each applicable trigger: `terminate`, `
 | 1A | Audit pipeline degraded below stop threshold | Terminate, quiesce, or `continue-degraded` as declared; under `continue-degraded` loss counters are exposed and effects requiring attribution are denied. |
 | 1A | Lifecycle daemon unavailable | Not manifest-selectable: containment holds, no new authority, transitions wait for recovery. |
 | 1B | Git gateway grant withdrawn | `agentbound-gateway` MUST deny new Git operations; terminate or quiesce as declared. |
-| 1B | Gateway unavailable | `agentbound-gateway` failure MUST produce the declared terminate or quiesce behavior and a distinct availability event. |
+| 1B | Gateway unavailable | `agentbound-gateway` failure MUST produce the declared terminate or quiesce behaviour and a distinct availability event. |
 | 1C | Inference grant revoked | Gateway MUST deny new inference operations; terminate or quiesce as declared. |
 | 1C | Approved execution binding revoked | Deny the binding; terminate or quiesce as declared; record binding identity. |
 
-At each milestone, only cases for components that exist are testable. The evidence table MUST identify demonstrated cases; it MUST NOT claim later gateway or inference cases before the relevant component exists.
+At each milestone, only cases for components that exist are testable. The evidence table MUST identify demonstrated cases. It MUST NOT claim later gateway or inference cases before the relevant component exists.
 
 ---
 
@@ -171,7 +172,7 @@ At each milestone, only cases for components that exist are testable. The eviden
 
 On restart, the control plane MUST treat persisted launch records, systemd scope state, cgroup contents, PID-namespace init status, pidfds where recoverable, grant stores, and identity allocator state as evidence to reconcile rather than assuming in-memory state was durable.
 
-| Persisted state | Restart behavior |
+| Persisted state | Restart behaviour |
 |---|---|
 | `requested` | Revalidate request idempotency and either resume authorization or reject stale/incomplete request per retention policy. |
 | `authorized` | Resume construction only through a new serialized constructor ownership lease; otherwise abort safely. |
@@ -202,7 +203,7 @@ Every event below MUST include: `host_id`, `boot_id`, `authorization_id`, `launc
 | `session.activated` | runtime digest, exec result, privilege-disposal result. |
 | `session.quiesce_started` / `session.quiesce_completed` | trigger, configured bound, child/gateway admission state. |
 | `session.degraded` | trigger, remaining authority, compensating control. |
-| `session.revocation_received` | source, trigger class, manifest behavior selected. |
+| `session.revocation_received` | source, trigger class, manifest behaviour selected. |
 | `session.termination_started` | reason, cgroup/scope identity, ordering deviations. |
 | `session.terminated` | `cgroup.kill` result, pidfd/PID-init reaping result, no-live-process proof. |
 | `session.termination_incomplete` | remaining process evidence, configured bound, identity hold. |
@@ -211,7 +212,7 @@ Every event below MUST include: `host_id`, `boot_id`, `authorization_id`, `launc
 | `session.sealed` | final state, termination reason, seal sequence/hash. |
 | `session.recovery_reconciled` / `session.orphan_detected` | discovered scope/store evidence and resulting action. |
 
-`agentbound-audit` MUST preserve audit-loss counters and MUST make required-evidence loss observable. A launch or continued active session MUST follow the manifest's declared fail-closed behavior when required audit evidence cannot be produced.
+`agentbound-audit` MUST preserve audit-loss counters and MUST make required-evidence loss observable. A launch or continued active session MUST follow the manifest's declared fail-closed behaviour when required audit evidence cannot be produced.
 
 ---
 
@@ -225,7 +226,7 @@ Every event below MUST include: `host_id`, `boot_id`, `authorization_id`, `launc
 4. Only `agentbound-lifecycle` MAY advance an active session toward quiescing, termination, cleanup, or identity release. systemd supplies scope observations only; the `agentbound` CLI and revocation triggers request action through its authorized interface; `agentbound-lifecycle` alone decides, serializes, and performs the transition.
 5. A failed transition MUST be fail closed with respect to new authority. In particular, a failed revocation check MUST NOT enable a new `agentbound-gateway` operation.
 6. A state transition MUST preserve a causal link to the initiating request, policy decision, revocation signal, systemd event, or recovery observation that caused it.
-7. An observer MAY see a lagging status replica, but the status API MUST label its observation sequence and MUST offer an authoritative record reference for privileged observers.
+7. An observer MAY see a lagging status replica. The status API MUST label its observation sequence. It MUST offer an authoritative record reference for privileged observers.
 8. A session MUST NOT transition from `quiescing`, `terminated`, `construction-failed`, or `aborted` back to `active`. A resumed task is a new session with a new authorization ID and execution identity.
 9. A session whose authority is narrowed during `continue-degraded` MUST record a replacement effective grant set. It MUST NOT retain the superseded grant merely because existing processes hold it.
 10. A manual operator override MAY select a more restrictive action than the manifest, including termination. It MUST NOT select a less restrictive action unless an independently authorized policy decision is recorded.
@@ -266,7 +267,7 @@ Rollback MUST proceed in reverse dependency order where doing so preserves conta
 
 A policy-governed attachment is not an implicit lifecycle transition. `agentbound` MAY request observe, inject, approve, interrupt, or control rights, but each is separately authorized and audited. During quiescing, no new attachment MAY be admitted. Existing observers MAY remain only if the manifest allows them; existing injectors and controllers MUST lose authority to initiate new child or gateway activity.
 
-An attachment event MUST carry the session authorization ID, attaching actor, attachment mode, trace identity, and outcome. A terminal stream or PTY descriptor MUST be treated as a capability: it MUST be closed on termination and MUST NOT be inherited by a later session that reuses a UID.
+An attachment event MUST carry the session authorization ID, attaching actor, attachment mode, trace identity, and outcome. A terminal stream or PTY descriptor MUST be treated as a capability. It MUST be closed on termination. It MUST NOT be inherited by a later session that reuses a UID.
 
 ### 9.5 Lifecycle evidence retention
 
@@ -297,7 +298,7 @@ Tests SHOULD run these checks against both normal operations and fault-injected 
 
 The `agentbound-lifecycle` relies on systemd scope control, cgroup v2, a PID-namespace init or subreaper, a trusted launch-record store, the identity allocator, and any configured broker or `agentbound-gateway` grant authority. Each dependency MUST expose an authenticated status interface or a durable record sufficient for recovery.
 
-A dependency failure does not automatically authorize termination completion. For example, a missing gateway confirmation blocks identity reclamation even if the cgroup is empty; a lost audit collector triggers the manifest's audit-loss behavior; and a missing systemd response requires corroboration from cgroup and process evidence. Implementations MUST state which source is authoritative for each check and MUST treat contradictory sources as an unsafe condition.
+A dependency failure does not automatically authorize termination completion. For example, a missing gateway confirmation blocks identity reclamation even if the cgroup is empty; a lost audit collector triggers the manifest's audit-loss behaviour; and a missing systemd response requires corroboration from cgroup and process evidence. Implementations MUST state which source is authoritative for each check and MUST treat contradictory sources as an unsafe condition.
 
 A configuration that omits a required dependency for a claimed property MUST mark the property unavailable before launch. It MUST NOT silently downgrade an `active` session into a mode that still advertises the absent property.
 

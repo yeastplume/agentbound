@@ -1,7 +1,7 @@
 # Phase 1 Reference Implementation Plan
 
 **Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record)  
-**Plan version:** 0.11  
+**Plan version:** 0.12  
 **Date:** 28 August 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
@@ -22,17 +22,18 @@
 - **0.9** — WP1 spike list extended with the open-question register items VM-1, VM-2, LC-2, ID-1.
 - **0.10** — §6.8 1A case list uses the split outage-trigger vocabulary and the `continue-degraded` restriction.
 - **0.11** — Post-freeze maintenance: status reflects the WP0 freeze; WP0 section marked complete and in past tense; fault-point list uses the empty-network-namespace/gateway-socket wording.
+- **0.12** — Editorial pass under docs/STYLE.md: demonstration 16 split by milestone; control-arm rationale consolidated in §8; review narrative removed; Oxford spelling. No milestone, gate, deliverable, or criterion changed.
 
 
 ---
 
 ## 1. Purpose
 
-This plan defines the next project stage after review of the *Agents as Unix Principals* position paper and technical report. It proposes a bounded Phase 1 implementation intended to test the smallest important architectural claim:
+This document defines the next project stage after the *Agents as Unix Principals* position paper and technical report. Phase 1 is a bounded implementation that tests the smallest architectural claim:
 
 > An existing agent runtime can execute inside a task-scoped Unix session whose identity, authority, descendants, resources, credentials, and mediated effects are enforced and attributed independently of the model and harness.
 
-Phase 1 is a security experiment, not a production platform. It focuses on the **Unix-governed session** profile, which the technical report defines as an **isolation, authority, and attribution profile, not an information-flow profile**. Phase 1 therefore does not test the confidentiality- or integrity-propagation thesis; that belongs to the compartmented profile and Phase 2. It deliberately postpones full SELinux MLS, dynamic category allocation, semantic declassification, distributed workflow orchestration, durable-memory promotion, and shared-accelerator isolation.
+Phase 1 is a security experiment, not a production platform. It focuses on the **Unix-governed session** profile, which the technical report defines as an **isolation, authority, and attribution profile, not an information-flow profile**. Phase 1 therefore does not test the confidentiality- or integrity-propagation thesis; that belongs to the compartmented profile and Phase 2. It postpones full SELinux MLS, dynamic category allocation, semantic declassification, distributed workflow orchestration, durable-memory promotion, and shared-accelerator isolation.
 
 The expected outcome is evidence: a reference implementation, adversarial conformance suite, measured evaluation, and a list of failed or residual assumptions mapped to the technical report's invariants.
 
@@ -122,7 +123,7 @@ initiator + agent principal + session + task/purpose + delegated scope
 
 The gateway exposes **named, typed operations**, not a generic HTTP or CONNECT proxy, and propagates a session trace identity to the protected service.
 
-Gateway authentication is a high-risk mechanism, not an implementation detail. ADR-0002 (version 0.2) selects the **local-socket topology** for Phase 1: the session has **no network interface**; the gateway is reached through exactly one bind-mounted, single-purpose `AF_UNIX SOCK_SEQPACKET` socket; the connection is authenticated by `SO_PEERCRED` plus a peer pidfd, and **every operation** is attributed to a live process by kernel-supplied per-packet `SCM_CREDENTIALS`. `SCM_RIGHTS` is rejected and each connection is bound to one process: a packet from any other PID, however the descriptor was acquired, closes the connection. The "empty inherited-socket" and "no host Unix sockets" rules have this one named exception, recorded in the manifest.
+Gateway authentication is a high-risk mechanism. ADR-0002 (version 0.2) selects the **local-socket topology** for Phase 1. The session has **no network interface**. The gateway is reached through exactly one bind-mounted, single-purpose `AF_UNIX SOCK_SEQPACKET` socket. The connection is authenticated by `SO_PEERCRED` plus a peer pidfd. **Every operation** is attributed to a live process by kernel-supplied per-packet `SCM_CREDENTIALS`. `SCM_RIGHTS` is rejected. Each connection is bound to one process: a packet from any other PID, however the descriptor was acquired, closes the connection. The "empty inherited-socket" and "no host Unix sockets" rules have this one named exception, recorded in the manifest.
 
 The network topology (veth, mTLS/proof-of-possession, or host broker) is **withdrawn from Phase 1** because none of its mechanisms identifies the operation-issuing process, so it cannot satisfy the process leg of Invariant 13; it is deferred to a future multi-host ADR. Gate 3 is therefore no longer provisional: it can fail only on evidence. WP1 verifies the kernel-baseline assumptions listed in ADR-0002 Decision 7 (`SOCK_SEQPACKET` credential semantics, pidfd availability, abstract-socket isolation); a failed verification reopens the ADR.
 
@@ -130,14 +131,14 @@ The network topology (veth, mTLS/proof-of-possession, or host broker) is **withd
 
 The prototype must produce:
 
-- deterministic launch and cleanup behavior: N repeated launches of one authorization manifest (N per test catalogue) produce launch bindings identical modulo the catalogue's listed nondeterministic fields, and every termination reaches `sealed` within the manifest deadline;
+- deterministic launch and cleanup behaviour: N repeated launches of one authorization manifest (N per test catalogue) produce launch bindings identical modulo the catalogue's listed nondeterministic fields; every termination reaches `sealed` within the manifest deadline;
 - denial and failure diagnostics that carry the requirement ID, authorization ID, launch-record digest, and trace ID, and leak no other session's identifiers (assertions per test catalogue);
 - correlated local and gateway audit keyed by launch record and trace identity, with audit-loss counters;
 - measurements of latency, resource overhead, policy complexity, and privileged code size;
 - an invariant-by-invariant result table using the technical report's five result classes, including failures, N/A entries, and residual assumptions with owner and revalidation trigger;
 - for the **comparative claim** and the Phase 2 decision only: the same measurements and demonstrations on the microVM control arm (milestone 1D), evaluated by the pre-registered decision rule in ADR-0003.
 
-The control arm blocks architectural conclusions, not publication: milestone 1A–1C results may be published as intermediate or negative findings, explicitly labeled as lacking the comparative arm.
+The control arm blocks architectural conclusions. It does not block publication: milestone 1A–1C results may be published as intermediate or negative findings labelled as lacking the comparative arm. For the control-arm rationale and decision rule, see Section 8 and ADR-0003.
 
 A gate passes only when every test the catalogue assigns to it reaches its expected outcome; any reproducible bypass fails it, and unexplained nondeterminism is a failure pending investigation. Failure of a gate pauses progression to Phase 2 until the architecture is revised or the failed property is explicitly removed from the claimed profile.
 
@@ -160,7 +161,7 @@ A stop at 1A is a result about the architecture and is published as such. A stop
 
 ### 4.1 Proposed components
 
-Phase 1 builds five components and a CLI. Review of plan 0.1 found that a bespoke supervisor duplicates systemd scopes plus a PID-namespace init, that audit is a pipeline rather than a daemon, and that a custom runtime is unnecessary when the point is to run *existing* runtimes.
+Phase 1 builds five components and a CLI. A bespoke supervisor would duplicate systemd scopes plus a PID-namespace init. Audit is a pipeline rather than a daemon. Existing runtimes run without a custom runtime.
 
 ```text
 agentbound
@@ -204,7 +205,7 @@ The Linux implementation should evaluate:
 - systemd-managed cgroup v2 scope plus in-session PID-namespace init; pidfd-based supervision;
 - mount, PID, IPC, UTS, and network namespaces, with the constructor ordering in technical-report §2.1;
 - private runtime directory, `/tmp`, workspace, home view, and procfs;
-- immutable/read-only base filesystem where practical;
+- immutable/read-only base filesystem where feasible;
 - minimal device view;
 - capability bounding and ambient-capability removal;
 - `no_new_privs`;
@@ -218,7 +219,7 @@ The Linux implementation should evaluate:
 - Git credential hidden from the session; pushes brokered by the gateway to a staging ref only;
 - cgroup-wide termination and deterministic cleanup.
 
-A mechanism is included because it enforces a defined property, not merely because it is available.
+A mechanism is included only when it enforces a defined property.
 
 ### 4.3 Policy request and effective manifest
 
@@ -256,7 +257,7 @@ termination and retention policy
 
 Fields are tagged **substrate-independent** (identity, derivation inputs, authority, budgets, gateway policy, audit requirements) or **substrate-specific** (namespaces, mounts, descriptors, seccomp). Only the former are shared with the control arm.
 
-The schema and canonical serialization are frozen project artifacts (manifest schema 0.5) and precede the privileged constructor.
+The schema and canonical serialization are frozen project artefacts (manifest schema 0.5) and precede the privileged constructor.
 
 ### 4.4 Session lifecycle
 
@@ -276,7 +277,7 @@ Every transition must have:
 
 - an authorized actor;
 - an audit event;
-- defined retry/idempotency behavior;
+- defined retry/idempotency behaviour;
 - failure cleanup;
 - externally observable status.
 
@@ -331,7 +332,10 @@ The initial demonstration uses:
 13. A session pushes a patch to its staging ref; a direct push to `main`, a push to another session's staging ref, and a push with a forged trace identity all fail at the gateway.
 14. (1C) Mutate or revoke each execution-binding member—model, endpoint, tenant, adapters or weights, inference pool, and retention mode. Each unapproved change is refused; every approved or refused change creates an audit event and compatibility decision; a changed binding is unusable until reauthorized.
 15. (1A) A child session or process delegated from a running session receives fewer mounts, a reduced descriptor set, no or narrower gateway grant, and lower resource limits, and cannot recover the parent's authority.
-16. (1A) A running session is terminated or quiesced, per policy, when its initiator is disabled, an approval expires, or its policy version is withdrawn; when the policy service is unavailable or the audit pipeline degrades below its stop threshold, the behaviour is the manifest's declared choice (the only two triggers for which `continue-degraded` may be declared); when `agentbound-lifecycle` is unavailable, installed containment holds, no new authority is issued, and transitions wait for its recovery. (1B) Withdrawal of the Git gateway grant and gateway unavailability produce the declared behaviour. (1C) Revocation of the inference grant or binding produces the declared behaviour.
+16. Lifecycle and revocation cases produce the declared behaviour:
+    - **1A:** A running session is terminated or quiesced, per policy, when its initiator is disabled, an approval expires, authority is revoked, a policy or catalogue version is withdrawn, or an approver cancels the task. When the policy service is unavailable or the audit pipeline degrades below its stop threshold, the manifest's declared response applies; only these two triggers may declare `continue-degraded`. If `agentbound-lifecycle` stops, installed containment remains in place, no new authority is issued, and reconciliation completes after restart. A reclassification request is rejected fail closed.
+    - **1B:** Withdrawal of the Git gateway grant and gateway unavailability produce the declared behaviour.
+    - **1C:** Revocation of the inference grant or execution binding produces the declared behaviour.
 17. (1D) The demonstrations and suites that ADR-0003 pre-registers as **must run identically** are repeated on the control arm unchanged; those pre-registered as **substrate-equivalent** are run through their registered equivalent test; only those pre-registered as **inapplicable to a microVM**, with a stated reason, are omitted. No demonstration may be reclassified after control-arm results are seen. Demonstration 14 is in the identical set because the control arm shares the policy and gateway components.
 
 ---
@@ -470,7 +474,7 @@ Measure at minimum:
 - descendant-termination latency;
 - steady-state memory and process overhead;
 - representative syscall/workload overhead;
-- audit-event volume and loss behavior;
+- audit-event volume and loss behaviour;
 - trusted code size and privileged code size;
 - number and breadth of retained capabilities;
 - seccomp/Landlock/policy rule count where used;
@@ -536,11 +540,15 @@ The implementation must either fail closed or document why the property cannot b
 
 ## 8. Control arm: microVM
 
-Phase 1 **requires** a control arm for its comparative claim; without it the evaluation cannot show whether the Linux-process design offers anything a stronger substrate with per-session workload identity, egress gateway, and audit does not. Because the central question is whether host-process isolation is justified against a *stronger* boundary, the control arm is a **microVM**, not a container: a container repackages the same shared-kernel mechanisms and would test packaging, not boundary strength. The specific implementation and configuration (Firecracker with a minimal guest and one vsock path to the gateway, configuration pinned) are fixed in **ADR-0003** during WP0, together with the **pre-registered comparative decision rule** that states what result justifies the Linux design as default, what selects the microVM, and how ties and partial outcomes are reported. A hardened-container arm may be added as a third, explicitly labeled arm to measure operability only.
+Phase 1 **requires** a control arm for its comparative claim. Without it, the evaluation cannot show whether the Linux-process design offers anything that a stronger substrate with per-session workload identity, egress gateway, and audit does not.
 
-The control arm is not a second full implementation: it reuses `agentbound-policy`, `agentbound-gateway`, and `agentbound-audit`, and substitutes a minimal microVM launcher for `agentbound-launch`. Held constant across arms: policy and derivation inputs, gateway and its adapters, trace identity, audit pipeline, workloads, adversary capabilities inside the session, and the substrate-independent manifest fields. Varied: the execution boundary and everything substrate-specific.
+The control arm is a **microVM**, not a container. A container repackages the same shared-kernel mechanisms and would test packaging rather than boundary strength. A hardened-container arm may be added as a third, labelled arm to measure operability only.
 
-ADR-0003 also **pre-registers test equivalence** before any control-arm result is seen. Every demonstration and suite item is classified as: *must run identically*; *substrate-equivalent*, with the named equivalent test that preserves the property when the attack mechanics differ (for example, same-UID sibling attacks inside one host do not map literally to two VMs, but cross-session process and state isolation does and is tested through the VM's shared-host surfaces—virtio devices, vsock, shared storage, and the launcher); or *inapplicable to a microVM*, with the reason. The ADR also states any difference in the adversary's host access or privileges between arms. Reclassification after results are seen is prohibited. The substrate-independent manifest fields and workload are launched through:
+ADR-0003 fixes the implementation and configuration: Firecracker with a minimal guest and one vsock path to the gateway, with configuration pinned. It also fixes the **pre-registered comparative decision rule**: what result justifies the Linux design as default, what selects the microVM, and how ties and partial outcomes are reported.
+
+The control arm reuses `agentbound-policy`, `agentbound-gateway`, and `agentbound-audit`, and substitutes a minimal microVM launcher for `agentbound-launch`. Held constant across arms are policy and derivation inputs, the gateway and its adapters, trace identity, the audit pipeline, workloads, adversary capabilities inside the session, and the substrate-independent manifest fields. The execution boundary and everything substrate-specific vary.
+
+ADR-0003 **pre-registers test equivalence** before any control-arm result is seen. Each demonstration and suite item is classified as *must run identically*, *substrate-equivalent*, or *inapplicable to a microVM*, with the reason. A substrate-equivalent item names the equivalent test that preserves the property when attack mechanics differ (worked example in ADR-0003). The ADR states any difference in the adversary's host access or privileges between arms. Reclassification after results are seen is prohibited. The substrate-independent manifest fields and workload are launched through:
 
 ```text
 policy decision
@@ -559,9 +567,9 @@ Compare:
 - audit correlation;
 - patching and operator complexity.
 
-The goal is to identify when host-process isolation is sufficient, when a microVM materially improves assurance, which identity, gateway, storage, and audit abstractions remain substrate-independent, and what the process-session design costs or saves. Equivalent assurance must not be inferred from shared manifest fields; substrate-specific refinements are listed separately for each arm.
+The comparison identifies when host-process isolation is sufficient and when a microVM materially improves assurance. It identifies which identity, gateway, storage, and audit abstractions remain substrate-independent, and what the process-session design costs or saves. Equivalent assurance must not be inferred from shared manifest fields. Substrate-specific refinements are listed separately for each arm.
 
-The control arm is milestone 1D. It may lag the Linux arm, and 1A–1C results may be published without it, but the comparative claim in Gate 4 and the Phase 2 decision require its results.
+The control arm is milestone 1D. It may lag the Linux arm, and 1A–1C results may be published without it. The comparative claim in Gate 4 and the Phase 2 decision require its results.
 
 ---
 
@@ -571,7 +579,7 @@ The work proceeds by exit conditions rather than calendar estimates. A later wor
 
 ### WP0 — Specification freeze and threat model (complete)
 
-WP0 is complete; the frozen set is indexed in the [architecture README](../architecture/README.md), whose freeze record names the commit at which the exit condition was met. Deliverables (as frozen):
+WP0 is complete. The [architecture README](../architecture/README.md) indexes the frozen set, and its freeze record names the commit at which the exit condition was met. Deliverables (as frozen):
 
 - Phase 1 normative requirement list using MUST/SHOULD/MAY;
 - scoped threat model and non-goals;
@@ -581,7 +589,7 @@ WP0 is complete; the frozen set is indexed in the [architecture README](../archi
 - **ADR-0002** gateway authentication: the local-socket topology and its mechanism (`SOCK_SEQPACKET`, `SO_PEERCRED` plus pidfd at connection, per-packet `SCM_CREDENTIALS` per operation), binding of that evidence to the immutable launch record, connection-lifetime behaviour (before/after revocation, caller exit, descriptor passing prohibited, stale-connection invalidation at termination), and the WP1 kernel-baseline verification list;
 - **component-interface skeleton**: per component pair, transport, peer identity, authorization matrix, trust anchors and key custody, launch-record and allocator store commit models, idempotency and replay rules, error classes, and restart-reconciliation precedence (wire formats deferred to WP1);
 - **test catalogue**: every demonstration, suite bullet, and fault point as an atomic test with ID, adversary privilege, interface, expected outcome, and evidence artefact; the attribution-completeness metric with denominator, dedup, and correlation deadline; nominal and overload load profiles; gate pass rules (fixtures and commands deferred to WP1);
-- **ADR-0003** control substrate: pinned microVM implementation and configuration, the held-constant list, the per-test equivalence classification keyed to the test catalogue with separate guest-root and guest-unprivileged corpora, cross-arm SLOC accounting, and the pre-registered comparative decision rule;
+- **ADR-0003** control substrate: pinned microVM implementation and configuration; the held-constant list; the per-test equivalence classification keyed to the test catalogue with separate guest-root and guest-unprivileged corpora; cross-arm SLOC accounting; and the pre-registered comparative decision rule;
 - pre-registered thresholds: interface inventory, adversary-capability matrix, attribution completeness by the catalogue metric, maximum policy-exception rate, privileged-code reviewability bound with SLOC accounting rules, pinned kernel/systemd/LSM versions;
 - invariant-to-test traceability matrix covering every profile U invariant.
 
@@ -592,15 +600,15 @@ Exit condition (met): every profile U invariant maps to at least one catalogue t
 Prototype high-risk mechanisms independently:
 
 - per-session execution identity allocation and the durable-ownership projection (ADR-0001);
-- systemd scope + PID-namespace init containment and `cgroup.kill` behavior, including D-state tasks;
+- systemd scope + PID-namespace init containment and `cgroup.kill` behaviour, including D-state tasks;
 - namespace, mount, and procfs construction in the §2.1 ordering, with mount-descriptor resolution;
 - descriptor closure and runtime launch ordering;
 - socket-family seccomp and abstract-socket isolation in an empty network namespace;
 - ADR-0002 Decision 7 verification: `SOCK_SEQPACKET` credential semantics, pidfd from credential PID, descriptor-transfer rejection, revocation latency;
 - `agentbound-lifecycle` D-Bus scope-signal subscription and pidfd-watch fallback, including the systemd-kills-first race;
 - the four register items of the WP0 [open-question register](../architecture/open-question-register.md): VM-1 vsock peer-CID reporting, VM-2 cross-arm SLOC comparability, LC-2 frozen-cgroup connection behaviour, ID-1 allocator-store crash consistency;
-- Git staging-ref adapter and protected-branch behavior;
-- `loginuid` and audit correlation, including loss behavior under load;
+- Git staging-ref adapter and protected-branch behaviour;
+- `loginuid` and audit correlation, including loss behaviour under load;
 - minimal control-arm launcher.
 
 Exit condition: every ADR-0002 Decision 7 item and every WP1 spike above records pass with evidence on the pinned baseline; any fail reopens the relevant ADR before WP2 begins.
@@ -625,7 +633,7 @@ Exit condition: the harness runs without grants that void a Gate 1–3 property;
 
 ### WP4b — Control arm (milestone 1D)
 
-Build the ADR-0003 microVM launcher and run every supported demonstration and suite on it.
+Build the ADR-0003 microVM launcher and run every supported demonstration and suite on it. Section 8 and ADR-0003 define the rationale and decision rule.
 
 Exit condition: the comparative measurements of Section 8 exist for both arms.
 
@@ -637,7 +645,7 @@ Exit condition: every profile U invariant has evidence, a recorded failure, or a
 
 ### WP6 — Evaluation and security review
 
-Produce measurements for both arms, review privileged code (launch path, `agentbound-lifecycle` including the allocator, gateway authentication path) line by line under the SLOC accounting rules, apply the ADR-0003 decision rule, conduct an independent architecture review, and publish the Linux-arm versus microVM-arm delta.
+Produce measurements for both arms. Review privileged code—the launch path, `agentbound-lifecycle` including the allocator, and the gateway authentication path—line by line under the SLOC accounting rules. Apply the ADR-0003 decision rule, conduct an independent architecture review, and publish the Linux-arm versus microVM-arm delta.
 
 Exit condition: issue a go/no-go recommendation for Phase 2.
 
@@ -647,7 +655,7 @@ Exit condition: issue a go/no-go recommendation for Phase 2.
 
 The ordinal sequence is:
 
-1. freeze the bounded specification, threat model, and ADRs 0002–0003 (WP0 — complete);
+1. froze the bounded specification, threat model, and ADRs 0002–0003 (WP0 — complete);
 2. resolve high-risk mechanism questions with focused spikes (WP1);
 3. **1A** — construct, isolate, delegate, revoke, and terminate a fail-closed shell session (WP2); stop point;
 4. **1B** — bind one protected remote effect to session identity and audit (WP3); stop point;
@@ -678,7 +686,7 @@ This is the default branch if the Phase 1 gates pass. Practical agent risk is do
 
 ### Branch B — Compartmented MCS sessions
 
-Prioritize for real project, customer, legal-matter, or tenant separation. Add category allocation, labeled storage, compartment-aware gateways, and controlled peer import.
+Prioritize for real project, customer, legal-matter, or tenant separation. Add category allocation, labelled storage, compartment-aware gateways, and controlled peer import.
 
 ### Branch C — VM-backed sessions
 

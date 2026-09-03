@@ -1,6 +1,6 @@
 # Execution-Identity Lifecycle Specification
 
-**Version:** 0.5  
+**Version:** 0.6  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -13,6 +13,7 @@
 - **0.3** — Identifier terminology aligned with manifest schema §4.
 - **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Reference range 200000–299999; ID-1 carried to WP1.
 - **0.5** — Normative text now states the 24 h quarantine floor (§4.2, administrator may only increase) and the closed five-path registered host domain (§4.1).
+- **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. loginuid paragraph split; Oxford spelling.
 
 
 ---
@@ -23,7 +24,7 @@ This specification makes the allocator and reclamation consequences of [ADR-0001
 
 The terms **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are normative. An execution identity comprises a UID, one allocated primary GID, its explicitly allocated supplementary groups, and, where a profile requires one, an associated MAC type or category allocation. It is unique among concurrent sessions on the allocation host.
 
-This specification satisfies the ADR's requirement for a declared managed reclamation domain, a condition rather than a mere elapsed time before reuse, an export rule, audit disambiguation, crash recovery, exhaustion behavior, and backup/persistent-file treatment.
+This specification satisfies the ADR's requirement for a declared managed reclamation domain, a condition rather than a mere elapsed time before reuse, an export rule, audit disambiguation, crash recovery, exhaustion behaviour, and backup/persistent-file treatment.
 
 ---
 
@@ -41,11 +42,11 @@ Fleet-wide audit disambiguation MUST use this tuple:
 (host ID, boot ID, authorization ID)
 ```
 
-Every record that reports an execution UID MUST pair it with that tuple. The durable principal ID and session trace identity MUST also be present where the event schema permits. A numeric UID without these values is insufficient evidence of a particular historical session.
+Every record that reports an execution UID MUST pair it with that tuple. The durable principal ID and session trace identity MUST be present where the event schema permits. A numeric UID without these values is insufficient evidence of a particular historical session.
 
 ### 2.2 Later fleet-wide allocation
 
-A later fleet-wide numeric allocation design MUST replace or supplement the local allocator with a strongly consistent, auditable allocation authority; define partition behavior, leases, revocation, cross-host recovery, and collision detection; and retain the export rule. It MUST NOT claim that a fleet-wide UID alone is a durable principal or remote authorization identity.
+A later fleet-wide numeric allocation design MUST replace or supplement the local allocator with a strongly consistent, auditable allocation authority; define partition behaviour, leases, revocation, cross-host recovery, and collision detection; and retain the export rule. It MUST NOT claim that a fleet-wide UID alone is a durable principal or remote authorization identity.
 
 Fleet-wide allocation MAY assign globally unique numeric values, allocate non-overlapping host blocks, or use a different substrate identity. In every case it MUST preserve per-session uniqueness, verified reclamation, reuse quarantine, and audit pairing. This specification does not authorize that extension without a reviewed revision.
 
@@ -91,7 +92,7 @@ An allocation record MUST contain at least:
 | managed-domain manifest | Registered host paths (Phase 1: the closed five-path set of §4.1), mounts, stores, grants, IPC/cgroup references. |
 | reclamation and quarantine evidence | Filled on transition from `in-use` onward. |
 
-The per-session primary GID and every supplementary group MUST be allocated with the UID. The session MUST NOT inherit a durable principal's owning group or an unreviewed host group. Phase 1 SHOULD use no supplementary groups unless a manifest-required, per-session group is necessary; each such group MUST be unique to the session and recorded.
+The per-session primary GID and every supplementary group MUST be allocated with the UID. The session MUST NOT inherit a durable principal's owning group or an unreviewed host group. Phase 1 SHOULD use no supplementary groups unless a manifest-required, per-session group is necessary. Each such group MUST be unique to the session and recorded.
 
 ---
 
@@ -136,19 +137,19 @@ If any check cannot be completed, has contradictory evidence, or finds a live pr
 
 After the reclamation condition passes, the allocator MUST place the identity in `quarantined`. The quarantine's purpose is to expose late-arriving audit, kernel, gateway, and storage-correlation records before the UID is reused.
 
-The ordinal minimum is: **do not leave quarantine until `agentbound-audit` has sealed all records referencing the authorization ID.** In addition, a quarantine floor applies: for the Phase 1 reference deployment the floor is **24 hours after `cleaned/sealed`**; an administrator MAY increase it but MUST NOT reduce it in a conforming deployment. The allocator MUST enforce whichever condition completes later. The floor MAY be increased but MUST NOT be shortened automatically under allocation pressure.
+The ordinal minimum is: **do not leave quarantine until `agentbound-audit` has sealed all records referencing the authorization ID.** In addition, a quarantine floor applies. For the Phase 1 reference deployment, the floor is **24 hours after `cleaned/sealed`**. An administrator MAY increase it. An administrator MUST NOT reduce it in a conforming deployment. The allocator MUST enforce whichever condition completes later. The floor MAY be increased. It MUST NOT be shortened automatically under allocation pressure.
 
 ---
 
 ## 5. Export rule and durable authorization
 
-Anything that leaves the declared managed reclamation domain—backups, snapshots, archives, artifacts pushed through a gateway, exported files, replicated storage, and restore media—MUST carry the global durable principal ID and session identifiers, including the authorization ID and trace identity where applicable. It MUST NOT rely on the numeric execution UID for durable authorization or attribution.
+Anything that leaves the declared managed reclamation domain—backups, snapshots, archives, artefacts pushed through a gateway, exported files, replicated storage, and restore media—MUST carry the global durable principal ID and session identifiers, including the authorization ID and trace identity where applicable. It MUST NOT rely on the numeric execution UID for durable authorization or attribution.
 
-The export metadata SHOULD also carry the host ID, boot ID, manifest digest, object digest, classification/provenance metadata where applicable, and a reference to the sealed launch record. Numeric owner fields MAY be retained as forensic observations but MUST be treated as non-authoritative after export.
+The export metadata SHOULD also carry the host ID, boot ID, manifest digest, object digest, classification/provenance metadata where applicable, and a reference to the sealed launch record. Numeric owner fields MAY be retained as forensic observations. They MUST be treated as non-authoritative after export.
 
-`agentbound-gateway` MUST attach the durable principal ID, authorization ID, trace identity, approved operation identity, and any required provenance metadata to gateway-mediated artifacts and remote operations. It MUST authorize the operation against the session grant, not against the source process's numeric UID alone.
+`agentbound-gateway` MUST attach the durable principal ID, authorization ID, trace identity, approved operation identity, and any required provenance metadata to gateway-mediated artefacts and remote operations. It MUST authorize the operation against the session grant, not against the source process's numeric UID alone.
 
-A storage broker MUST translate an authorized per-session grant into durable storage access and persist global principal/session metadata with created or exported objects. It MUST NOT create a durable ACL whose continuing authorization depends on the reclaimed execution UID. Restore tooling MUST map historical numeric ownership only through exported metadata and a reviewed restoration policy; it MUST NOT reactivate the old UID as authorization.
+A storage broker MUST translate an authorized per-session grant into durable storage access and persist global principal/session metadata with created or exported objects. It MUST NOT create a durable ACL whose continuing authorization depends on the reclaimed execution UID. Restore tooling MUST map historical numeric ownership only through exported metadata and a reviewed restoration policy. It MUST NOT reactivate the old UID as authorization.
 
 ---
 
@@ -158,7 +159,7 @@ Every `agentbound-audit` record about a session MUST pair `execution_uid` with `
 
 Kernel PID/PPID values are not durable process identities because PIDs are reused. Records SHOULD include a PID namespace identifier plus process start time or pidfd-derived identity where available. The systemd scope/cgroup is useful corroboration but is not a portable standalone audit key.
 
-Per technical-report §5, `loginuid` is useful for preserving the account that originally gained access and is inherited by descendants, but it is write-once, inherited across `clone`, and governed by host audit policy; it is therefore **corroborating** evidence only. The authoritative session attribution key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). `agentbound-launch` MUST attempt to set `loginuid` in the barrier-blocked child before exec when the pinned baseline permits it and the child's value is unset, and MUST record the result (set, immutable, already-set, denied) in the launch binding. The single fail rule is R-CON-6 of the requirements: construction fails only when the manifest attribution policy is `required` and the value cannot be set; otherwise the condition is a recorded residual assumption. It MUST NOT silently attribute an inherited value to another actor.
+Per technical-report §5, `loginuid` is useful for preserving the account that originally gained access and is inherited by descendants, but it is write-once, inherited across `clone`, and governed by host audit policy; it is therefore **corroborating** evidence only. The authoritative session attribution key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). `agentbound-launch` MUST attempt to set `loginuid` in the barrier-blocked child before exec when the pinned baseline permits it and the child's value is unset. It MUST record the result (set, immutable, already-set, denied) in the launch binding. The single fail rule is R-CON-6 of the requirements: construction fails only when the manifest attribution policy is `required` and the value cannot be set; otherwise the condition is a recorded residual assumption. It MUST NOT silently attribute an inherited value to another actor.
 
 The effective UID records the execution identity, not the durable principal. The signed/append-only launch record is the authoritative mapping between them.
 
@@ -173,7 +174,7 @@ At boot and allocator-service restart, the allocator MUST reconcile each non-`fr
 - Any identity with a live scope but missing, conflicting, or unsealed launch-record evidence MUST be treated as an orphan: deny new grants, preserve the identity hold, and request `agentbound-lifecycle` containment/termination.
 - Any same-UID concurrent scope, duplicate active allocation record, or mismatched UID-to-launch-record mapping is double allocation. The allocator MUST fail closed, block new sessions, emit a high-severity audit event, and require reconciliation.
 
-If the append-only allocator store is corrupt, its integrity chain fails, its durable sequence cannot be determined, or its host binding is unavailable, the allocator MUST fail closed: it MUST admit **no new sessions** and MUST not reuse any identity. Existing sessions MAY be observed and terminated through `agentbound-lifecycle`, but their identities MUST remain held until a trusted recovery procedure repairs or replaces the allocator state and records the decision.
+If the append-only allocator store is corrupt, its integrity chain fails, its durable sequence cannot be determined, or its host binding is unavailable, the allocator MUST fail closed. It MUST admit **no new sessions**. It MUST not reuse any identity. Existing sessions MAY be observed and terminated through `agentbound-lifecycle`. Their identities MUST remain held until a trusted recovery procedure repairs or replaces the allocator state and records the decision.
 
 ---
 
@@ -196,7 +197,7 @@ The host MUST expose monitoring for at least:
 - allocation rate and high-water mark; and
 - double-allocation and store-integrity failures.
 
-Provisioning MUST configure warning and critical thresholds before use. The recommended initial thresholds are warning below 20% free and critical below 5% free; deployments MAY choose stricter values but MUST document them. Capacity response is to extend the reserved range through reviewed host provisioning or reduce demand, never to weaken lifecycle rules.
+Provisioning MUST configure warning and critical thresholds before use. The recommended initial thresholds are warning below 20% free and critical below 5% free. Deployments MAY choose stricter values. They MUST document them. Capacity response is to extend the reserved range through reviewed host provisioning or reduce demand, never to weaken lifecycle rules.
 
 ---
 

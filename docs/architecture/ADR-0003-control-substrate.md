@@ -1,6 +1,6 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Version:** 0.6
+**Version:** 0.7
 **Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built
 **Date:** 28 August 2026
 **Applies to:** Phase 1 milestone 1D control arm
@@ -14,6 +14,7 @@
 - **0.4** — Unblinding and operator-familiarity recording; per-ID `control-arm-register.md` as a 1D prerequisite; open questions disposed via the register.
 - **0.5** — T-6.8 register row extended to 013.
 - **0.6** — Post-freeze editorial maintenance (no normative change): catalogue described as frozen; typo.
+- **0.7** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Configuration and comparability rules split; owns the microVM, VM-attribution, and register rationale.
 
 
 ## Context
@@ -71,10 +72,7 @@ creates one microVM per session. The pinned set is:
 | vCPU / memory | 1 vCPU, 512 MiB, no balloon |
 | Snapshot/restore | disabled |
 
-Before the first 1D run the per-ID expanded classification register (one row per test-catalogue ID) MUST be generated from the group rules in this ADR and committed as `control-arm-register.md`; it is an execution prerequisite of milestone 1D, and no reclassification is permitted after it is committed. Every value MUST be written to `pinned-configuration.json` (schema: item,
-value, digest, source) before the first control-arm run, and the file's own
-digest MUST be cited by every control-arm evidence record. A change to any
-item starts a new, separately labelled run set.
+Before the first 1D run, the per-ID expanded classification register (one row per test-catalogue ID) MUST be generated from the group rules in this ADR and committed as `control-arm-register.md`. It is an execution prerequisite of milestone 1D. No reclassification is permitted after it is committed. Every value MUST be written to `pinned-configuration.json` (schema: item, value, digest, source) before the first control-arm run. Every control-arm evidence record MUST cite the file's own digest. A change to any item starts a new, separately labelled run set.
 
 The VM device inventory is closed:
 
@@ -89,9 +87,7 @@ accelerator, balloon device, debug channel, device passthrough, or another
 listener. The workspace MUST NOT be concurrently shared except through an
 explicitly authorized and separately recorded channel.
 
-The guest init and guest audit source are those in the pinned-set table
-above; both MUST be included in the pinned configuration and evidence record. Guest root is not host root and MUST have no host
-credential, capability, management endpoint, device, or host identity.
+The guest init and guest audit source are those in the pinned-set table above. Both MUST be included in the pinned configuration and evidence record. Guest root is not host root. It MUST have no host credential, capability, management endpoint, device, or host identity.
 
 The VM exposes exactly one vsock path to `agentbound-gateway`. This vsock path
 is the **non-network microVM projection of the single-channel property**. It is
@@ -119,10 +115,7 @@ The host endpoint MUST bind every accepted vsock connection to all of:
 - the Firecracker configuration digest and pinned-version set.
 
 A guest-supplied CID, trace identifier, or authorization ID MUST NOT be
-authentication evidence. The binding record MUST be created before admission of
-the first typed operation and MUST be immutable while the launch record is
-active. The gateway MUST re-check active launch-record and grant state on every
-typed operation, as ADR-0002 requires.
+authentication evidence. The binding record MUST be created before admission of the first typed operation. It MUST be immutable while the launch record is active. The gateway MUST re-check active launch-record and grant state on every typed operation, as ADR-0002 requires.
 
 Mappings and indexed connections MUST be invalidated before a CID can be
 reassigned. Termination MUST mark the launch record terminating, deny new and
@@ -134,16 +127,14 @@ MUST fail closed and leave the CID unavailable for reassignment.
 Vsock has no host-kernel counterpart to the Linux `SCM_CREDENTIALS` witness.
 Therefore the VM arm claims **session-level attribution for the process leg**
 over vsock, not per-process attribution, unless a guest-side witness is added
-and pre-registered. This is a pre-registered difference. Guest process audit
-MAY correlate a guest process to a request, but it MUST NOT upgrade the
-cross-boundary claim without that witness and its validation test.
+and pre-registered. This is a pre-registered difference. Guest process audit MAY correlate a guest process to a request. It MUST NOT upgrade the cross-boundary claim without that witness and its validation test.
 
 ### Held constant and varied
 
 Both arms MUST hold constant policy and derivation inputs; authorization
 manifest and launch-record semantics; gateway and typed adapters; trace
 identity; audit ontology and correlation rules; workloads and workload
-artifacts; test data and assertions; hostile-workload objective; and all
+artefacts; test data and assertions; hostile-workload objective; and all
 substrate-independent manifest fields.
 
 Only the execution boundary and substrate-specific projection may vary. Linux
@@ -156,9 +147,7 @@ list its substrate-specific refinements and residual assumptions.
 
 The Linux attacker is an unprivileged session process. The VM arm MUST run two
 separate corpora: one with guest root and one with a guest unprivileged process.
-Guest root is stronger inside the guest but has no host authority. Results from
-the two VM corpora MUST NOT be merged; each evidence record MUST state the
-corpus and privilege class.
+Guest root is stronger inside the guest but has no host authority. Results from the two VM corpora MUST NOT be merged. Each evidence record MUST state the corpus and privilege class.
 
 A test is **identical** only when its test, inputs, expected outcome, attacker
 privilege class, policy, gateway, and audit expectation run unchanged. A test
@@ -201,7 +190,7 @@ outcome, or observation may cause reclassification.
 For D-01, D-02, D-05, D-13 through D-17, the VM workload corpus is separately
 run as guest root and guest unprivileged; “identical” identifies the common
 logical test, not a claim that guest and Linux credentials are the same kernel
-artifact. D-10 and D-12 MUST label Linux per-process evidence and VM
+artefact. D-10 and D-12 MUST label Linux per-process evidence and VM
 session-level process-leg evidence separately.
 
 ### Suite register
@@ -220,7 +209,7 @@ entry MUST be executed separately as guest root and guest unprivileged.
 | T-6.5-001…010: encoding; size; path/TOCTOU; replay; policy/catalogue change; version downgrade; smuggled fields; signatures; allocation; caller identity | I for each catalogue-expanded bullet | authenticated initiator attacks common resolver/constructor / same common resolver and VM launcher binding | constructor validation and provenance |
 | T-6.6-001…008: principal/task; approval; quorum; owner; excessive grant; catalogue; rollback; ambiguity | I for each catalogue-expanded bullet | authenticated initiator attacks common derivation / same common derivation | bounded derivation |
 | T-6.7-001: narrowed mounts, descriptors, grants, limits, and recovery paths | I | parent session derives child / both corpora derive same authority subset | monotonic delegation |
-| T-6.8-001…013: initiator; approval; authority; policy/catalogue; cancellation; policy-service loss; reclassification; Git grant; gateway loss; inference binding; audit degradation; lifecycle-daemon loss; forbidden degraded mapping | I for each milestone bullet (T-6.8-012: VM arm kills the same host daemon; identical) | hostile session during common revocation / both VM corpora during same revocation | declared lifecycle and revocation behavior |
+| T-6.8-001…013: initiator; approval; authority; policy/catalogue; cancellation; policy-service loss; reclassification; Git grant; gateway loss; inference binding; audit degradation; lifecycle-daemon loss; forbidden degraded mapping | I for each milestone bullet (T-6.8-012: VM arm kills the same host daemon; identical) | hostile session during common revocation / both VM corpora during same revocation | declared lifecycle and revocation behaviour |
 | T-6.9-001…008: PIDs; FDs; memory/CPU; disk; I/O/network; connections; audit; gateway budgets | SE, SE, SE, SE, SE, SE, SE, I | session process exhausts applicable limits / both corpora exhaust guest limits; guest RSS plus VMM RSS recorded | enforced present resource classes and absent-class disclosure |
 | F-C-01…09: pipe/eventfd barrier; mount namespace; source resolution; root; proc; descriptor closure; UID/LSM/cap/seccomp; record/grant/socket; exec | SE for each point | evaluator fault-injects Linux construction / evaluator fault-injects Firecracker/jailer/guest construction | no runnable partial session, credential, or ambiguous audit record |
 | F-T-01…11: admission; freeze; kill; reap; no-live proof; grant close; broker close; unmount; socket unmount; identity reclaim; record seal | SE for each point | evaluator interrupts Linux teardown / evaluator interrupts termination, CID invalidation, and cleanup | ordered termination, invalidation, and cleanup |
@@ -240,9 +229,7 @@ and measurement tooling before any result is collected. The Linux pinned kernel
 and its selected local-socket configuration MUST be recorded in the same form.
 
 Memory accounting is fixed: steady-state RAM per session is **guest RSS plus VMM
-RSS**, reported separately and summed for the VM arm. The report MUST state the
-Linux process/cgroup RSS method separately and MUST NOT conceal VMM overhead in
-a host-only aggregate. Snapshot/restore is disabled and therefore MUST NOT be
+RSS**, reported separately and summed for the VM arm. The report MUST state the Linux process/cgroup RSS method separately. It MUST NOT conceal VMM overhead in a host-only aggregate. Snapshot/restore is disabled and therefore MUST NOT be
 measured as a supported lifecycle capability.
 
 Trusted-code size MUST be reported per arm under identical, tool-pinned SLOC
@@ -295,7 +282,7 @@ published with the evidence set.
   evaluation; it MUST NOT be treated as a minor implementation variation.
 - VM assurance includes VMM, jailer, host kernel, guest kernel, image, guest
   init, audit source, and host lifecycle assumptions.
-- The control arm accepts the cost of a second launcher, guest artifacts,
+- The control arm accepts the cost of a second launcher, guest artefacts,
   Firecracker/jailer configuration, and paired corpora.
 - A hardened-container measurement MAY be useful, but MUST be a separately
   labelled arm and cannot replace this microVM control.
@@ -310,9 +297,7 @@ comparison.
 
 ### Fallback VMM
 
-Rejected as a fallback within this arm. Cloud Hypervisor, Kata, or another
-KVM-based implementation MAY be evaluated only as a separate labelled arm;
-results MUST NEVER be pooled with the Firecracker arm.
+Rejected as a fallback within this arm. Cloud Hypervisor, Kata, or another KVM-based implementation MAY be evaluated only as a separate labelled arm. Results MUST NEVER be pooled with the Firecracker arm.
 
 ### Hardened container (`gVisor`/`runsc`)
 

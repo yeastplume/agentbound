@@ -5,25 +5,35 @@
 **Applies to:** all deployment profiles; normative for the Unix-governed profile  
 **Related:** technical report §1.2, §4.1, Invariant 17; Phase 1 plan Gate 2
 
+## Revision history
+
+- **Accepted (revised)** — Decision as frozen at WP0.
+- **Editorial** — Decision 2 restructured into sub-bullets under docs/STYLE.md; no content change.
+
 ## Context
 
-The architecture identifies an organizational agent with a durable security principal and states that concurrent sessions of the same agent must not interfere with each other (Invariant 17). Early drafts allowed the durable principal's host UID to be the identity under which session processes run, and listed PID/IPC namespaces, private procfs, `hidepid`, and Yama `ptrace_scope` as possible ways to isolate same-UID sessions.
+The architecture identifies an organizational agent with a durable security principal. Concurrent sessions of the same agent must not interfere with each other (Invariant 17). Early drafts allowed the durable principal's host UID to be the identity under which session processes run. They listed PID/IPC namespaces, private procfs, `hidepid`, and Yama `ptrace_scope` as possible ways to isolate same-UID sessions.
 
-Independent mechanism review established that this does not work. Two processes with the same UID pass ordinary discretionary access checks and signal permission checks against each other. PID namespaces hide identifiers but do not change authorization for a process that obtains a usable PID or pidfd. `hidepid` and `ptrace_scope` distinguish UIDs, not sessions, and are configurable mitigations rather than boundaries. A single leaked descriptor, shared `/run` path, host PID, broker socket, or supplementary-group permission defeats same-UID "isolation."
+That approach does not work. Two processes with the same UID pass ordinary discretionary access checks and signal permission checks against each other. PID namespaces hide identifiers but do not change authorization for a process that obtains a usable PID or pidfd. `hidepid` and `ptrace_scope` distinguish UIDs, not sessions. They are configurable mitigations rather than boundaries. A single leaked descriptor, shared `/run` path, host PID, broker socket, or supplementary-group permission defeats same-UID isolation.
 
-Separately, practitioner review observed that host UIDs carry little meaning in fleet deployments: remote services authorize workload identity and gateway policy, not UIDs, and stable per-agent host accounts add provisioning, reconciliation, collision, and reuse burden without providing the isolation the design needs.
+Host UIDs carry little meaning in fleet deployments. Remote services authorize workload identity and gateway policy, not UIDs. Stable per-agent host accounts add provisioning, reconciliation, collision, and reuse burden without providing the required isolation.
 
 ## Decision
 
-1. The **durable agent principal** is a policy, ownership, and audit identity with a stable global identifier and an accountable owner. It may be projected into a stable host UID (or represented by a storage service) for the purpose of owning durable state. In the Unix-governed profile that identity **does not execute session code**. Higher-assurance profiles may realize the same separation differently (item 5); the invariant is that the identity which owns durable state and the identity under which a session acts are distinguishable to the kernel or substrate that enforces the session boundary.
+1. The **durable agent principal** is a policy, ownership, and audit identity with a stable global identifier and an accountable owner. It may be projected into a stable host UID or represented by a storage service for the purpose of owning durable state. In the Unix-governed profile, that identity **does not execute session code**. Higher-assurance profiles may realize the same separation differently (item 5). The invariant is that the kernel or substrate enforcing the session boundary distinguishes the identity that owns durable state from the identity under which a session acts.
 
-2. Every session runs under a **per-session, uniquely allocated execution identity with verified reclamation and reuse quarantine**: a local UID with its own supplementary groups and, in MAC profiles, its own type or category set. Linux UIDs are finite, so "non-reusable" is shorthand: an identity is never shared between concurrent sessions and is reclaimed only when a verifiable condition holds across a **declared managed reclamation domain**: all session namespaces and mounted filesystems; host paths registered in the manifest; session runtime and workspace stores; broker and storage-service grants; and known IPC namespaces and cgroup state. Within that domain there must be no live process, no owned file or IPC object, and no outstanding grant. The condition is deliberately not "every reachable filesystem": detached mounts, removable volumes, backups, snapshots, and restored files can carry numeric ownership outside the allocator's view. Anything exported beyond the managed domain therefore **must not rely on the numeric UID for durable authorization**; persistent records and exported objects use the global principal and session identifiers. Audit records disambiguate reuse by pairing the execution UID with launch-record, boot, and session identifiers, so retention of audit history does not by itself block reclamation.
+2. Every session runs under a **per-session, uniquely allocated execution identity with verified reclamation and reuse quarantine**: a local UID with its own supplementary groups and, in MAC profiles, its own type or category set.
+   - *Uniqueness and concurrency.* An identity is never shared between concurrent sessions. Linux UIDs are finite, so "non-reusable" is shorthand for reclamation followed by quarantine.
+   - *Reclamation condition.* An identity is reclaimed only when a verifiable condition holds across a **declared managed reclamation domain**: no live process, no owned file or IPC object, and no outstanding grant within that domain.
+   - *Managed-domain boundary.* The domain is all session namespaces and mounted filesystems; host paths registered in the manifest; session runtime and workspace stores; broker and storage-service grants; and known IPC namespaces and cgroup state. It is not "every reachable filesystem": detached mounts, removable volumes, backups, snapshots, and restored files can carry numeric ownership outside the allocator's view.
+   - *Export rule.* Anything exported beyond the managed domain **must not rely on the numeric UID for durable authorization**. Persistent records and exported objects use the global principal and session identifiers.
+   - *Audit disambiguation.* Audit records disambiguate reuse by pairing the execution UID with launch-record, boot, and session identifiers. Retention of audit history does not by itself block reclamation.
 
 3. Durable state activated for a session is reached through **per-session grants**—bind mounts, ACL entries, inherited descriptors, or a storage broker operating on the session's behalf—not by running as the owner.
 
-4. Mount, PID, IPC, and network namespaces, private procfs and runtime directories, private sockets and PTYs, and descriptor allowlisting remain **required supporting controls**, but none substitutes for the identity split.
+4. Mount, PID, IPC, and network namespaces, private procfs and runtime directories, private sockets and PTYs, and descriptor allowlisting remain **required supporting controls**. None substitutes for the identity split.
 
-5. A compartmented or multilevel profile **may** use a rigorously allocated per-session SELinux type as the primary boundary instead of a distinct UID, and a VM-backed profile may use the VM boundary as the execution identity, provided the allocator, reuse policy, and policy analysis are part of that profile's conformance evidence. Neither is a baseline option.
+5. A compartmented or multilevel profile **may** use an allocated per-session SELinux type as the primary boundary instead of a distinct UID. A VM-backed profile may use the VM boundary as the execution identity, provided the allocator, reuse policy, and policy analysis are part of that profile's conformance evidence. Neither is a baseline option.
 
 ## Consequences
 
@@ -36,7 +46,7 @@ Separately, practitioner review observed that host UIDs carry little meaning in 
 
 ## Revision note
 
-A second review observed that "never executes" overstated the decision for VM-backed and MAC-separated profiles, and that "non-reusable" is not implementable literally. Items 1, 2, and 5 and the consequences were revised accordingly; the baseline decision is unchanged. A third review noted that "any reachable filesystem" is not verifiable; the condition was bounded to a declared managed domain with an export rule.
+VM-backed and MAC-separated profiles follow items 1, 2, and 5. Reuse is bounded by a declared managed domain and its export rule, rather than by every reachable filesystem.
 
 ## Alternatives considered
 
