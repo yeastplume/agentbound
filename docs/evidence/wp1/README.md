@@ -25,12 +25,12 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | Spike | Status | Evidence | Reopens on failure |
 |---|---|---|---|
 | Per-session execution identity allocation and durable-ownership projection | pending | — | ADR-0001; identity lifecycle |
-| systemd scope + PID-namespace init containment; `cgroup.kill`, D-state tasks | pending | — | session lifecycle §5 |
+| systemd scope + PID-namespace init containment; `cgroup.kill`, D-state tasks | **PASS + FINDINGS F-3, F-4** | [scope-kill](scope-kill.md) A-*, B-* | session lifecycle §5 |
 | Namespace/mount/procfs construction in §2.1 order; mount-descriptor resolution | pending | — | session lifecycle §3 |
 | Descriptor closure and runtime launch ordering | pending | — | session lifecycle §3 |
 | Socket-family seccomp and abstract-socket isolation in an empty netns | **PASS + FINDING F-2** | [netns-seccomp](netns-seccomp.md) NS-*, SC-* | requirements R-CON; ADR-0002 D7-4 |
 | ADR-0002 Decision 7 verification | in progress (items 1–4 done) | above | ADR-0002 |
-| `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | pending | — | session lifecycle §4; component interfaces |
+| `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | **PASS + FINDINGS F-4, F-5** | [scope-kill](scope-kill.md) C-* | session lifecycle §4; component interfaces |
 | Git staging-ref adapter and protected-branch behaviour | pending | — | plan §3.3 |
 | `loginuid` and audit correlation, loss behaviour under load | pending | — | requirements R-CON-6; identity lifecycle §6 |
 | Minimal control-arm launcher | pending (boot check only in WP1) | — | ADR-0003 |
@@ -51,3 +51,6 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 |---|---|---|---|
 | F-1 | `/proc` start time has 10 ms granularity; a PID recycled within one tick has an identical start time. The pidfs inode / held pidfd is the reliable instance key. | ADR-0002 Decision 2 | recorded; amendment pending |
 | F-2 | An inherited sysfs mount shows the host's network interfaces inside an empty netns. R-CON-2 covers `/proc` only. Add: no inherited sysfs in the session root; mount sysfs, if at all, after the netns exists. | requirements R-CON-2; session lifecycle §3 step 5; test catalogue T-6.1 | recorded; amendment pending |
+| F-3 | `cgroup.freeze` never reaches `frozen 1` while a D-state member exists; §5 step 4 must not wait for the frozen state before `cgroup.kill`. | session lifecycle §5 step 4 | recorded; amendment pending |
+| F-4 | PID-namespace init ignores external `SIGTERM`; `systemctl stop` stalls for `DefaultTimeoutStopSec` (90 s) unless `TimeoutStopUSec` is set at `StartTransientUnit` (cannot be set later on a scope). | session lifecycle §3 scope prerequisites, §4 | recorded; amendment pending |
+| F-5 | `UnitRemoved` is emitted at unit GC (~1.5 s later); `PropertiesChanged`/`ActiveState` and the held pidfd are the prompt triggers. | session lifecycle §4 (guidance only) | recorded; no obligation change |

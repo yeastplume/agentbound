@@ -1,0 +1,48 @@
+# spike: scope-kill
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: f6bccc6
+# date: 2026-09-03T13:58:39Z
+# args: 
+
+warning: variable `cgA` should have a snake case name
+  --> src/main.rs:81:9
+   |
+81 |     let cgA = make_scope("ab-spike-a");
+   |         ^^^ help: convert the identifier to snake case: `cg_a`
+   |
+   = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: variable `cgB` should have a snake case name
+   --> src/main.rs:119:9
+    |
+119 |     let cgB = make_scope("ab-spike-b");
+    |         ^^^ help: convert the identifier to snake case: `cg_b`
+
+warning: variable `cgC` should have a snake case name
+   --> src/main.rs:156:9
+    |
+156 |     let cgC = make_scope("ab-spike-c");
+    |         ^^^ help: convert the identifier to snake case: `cg_c`
+
+spike scope-kill; systemd systemd 257 (257.13-1~deb13u1)
+scope A cgroup: system.slice/ab-spike-a.scope delegate: subtree_control=""
+RESULT A-1.clone3-into-cgroup-with-barrier PASS init pid=9236 pidfd=6 in scope cgroup before barrier release=true
+RESULT A-2.workload-populates-scope PASS cgroup.procs count=7 (init, sh, forker, spinner, sleepers)
+RESULT A-3.freeze-stops-forking PASS frozen after 5 ms; procs stable at 7 over 300 ms (forker loop stopped)
+RESULT A-4.sigterm-ignored-workload-survives-thaw PASS init state=S procs=7 (workload traps TERM; init has no handler and is not killed by TERM from outside? see detail)
+RESULT A-5.cgroup-kill-empties-frozen-cgroup PASS init pidfd readable after 0 ms; cgroup.procs empty after 0 ms; events after kill: "populated 0 frozen 1"
+RESULT A-6.init-reaped-and-populated-empty PASS cgroup.events="populated 0 frozen 1"
+RESULT A-7.scope-removed-when-empty PASS scope cgroup directory removed by systemd 5 ms after cgroup.kill emptied it (frozen at the time); unit=success/inactive/dead
+RESULT B-1.d-state-task-created PASS dd pid=9275 state=D (blocked on suspended dm device)
+freeze with D-state member: frozen=false events="populated 1 frozen 0"
+RESULT B-2.cgroup-kill-does-not-terminate-d-state PASS after cgroup.kill + 3503 ms: dd state=D (SIGKILL pending, uninterruptible); remaining procs=[9275]; init pidfd readable=false, init state=S (PID-ns init cannot complete exit while a namespace member lives); frozen never reached (events="populated 1 frozen 0")
+RESULT B-3.scope-persists-while-d-task-live PASS scope cgroup still present=true; unit state=active/running; membership evidence retained for escalation
+RESULT B-4.pidfd-holds-d-task PASS pidfd_open(dd)=5, not readable (live) — held pidfd is what session.escalation_required names
+RESULT B-5.d-task-dies-when-io-completes PASS after dm resume: cgroup empty in 0 ms (total 8 ms); dd pidfd readable; systemd removed the scope
+busctl monitor captured 7 signal lines; UnitRemoved=false PropertiesChanged=true
+RESULT C-1.pidfd-watch-fires-on-systemd-stop PASS init pidfd readable 90090 ms after systemctl stop (independent liveness source, no D-Bus needed; ~90 s = DefaultTimeoutStopSec because PID-ns init ignores SIGTERM — see finding)
+RESULT C-2.dbus-signals-observable PASS UnitRemoved=false PropertiesChanged=true (either triggers §5; scope dir removed after 0 ms, holder gone=true)
+RESULT C-3.systemd-kills-first-daemon-can-still-verify PASS init reaped via held pid/pidfd=true; cgroup control files gone=true → §5 steps 2–4 are no-ops, step 5 host credential scan and steps 6–11 still executable; must record session.ordering_deviation
+done
+
+# exit: 0
