@@ -1,280 +1,315 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Status:** Proposed for WP0 review  
-**Date:** 28 August 2026  
-**Applies to:** Phase 1 milestone 1D control arm  
-**Related:** [Phase 1 plan §3.3, §4.3, §5–§8, WP0, and WP4b](../plans/phase-1-reference-implementation.md); [technical report §7, §9.2, and §11](../papers/technical-report.md); [ADR-0001](ADR-0001-execution-identity.md)
+**Version:** 0.2
+**Status:** Proposed for WP0 review
+**Date:** 28 August 2026
+**Applies to:** Phase 1 milestone 1D control arm
+**Related:** [Phase 1 plan §3.3, §4.3, §5–§8, WP0, and WP4b](../plans/phase-1-reference-implementation.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0002](ADR-0002-gateway-authentication.md); [traceability matrix](traceability-matrix.md); [test catalogue](test-catalogue.md)
+
+## Revision history
+
+- **0.1** — Initial Firecracker control-arm definition and group-level pre-registration.
+- **0.2** — Froze the Linux local-socket and Firecracker/vsock configurations; added vsock CID-lifetime binding, per-atomic-test classification rules, comparative decision rule, per-arm code accounting, and WP0 placeholders.
 
 ## Context
 
-Phase 1 evaluates a Unix-governed session: an agent principal and task-scoped
-session whose policy, identity, authority, descendants, credentials, mediated
-effects, and audit identity are independently enforced and attributed. The
-Linux arm is deliberately composed from ordinary host mechanisms: an
-execution identity, namespaces, cgroups, descriptor discipline, a gateway, and
-lifecycle services.
+Phase 1 evaluates a Unix-governed session whose identity, authority,
+descendants, credentials, mediated effects, and audit identity are independently
+enforced and attributed. The Linux arm deliberately uses ordinary host
+mechanisms: a per-session execution identity, namespaces, cgroups, descriptor
+discipline, lifecycle services, and a gateway.
 
-That design needs a control arm. Without one, a passing Linux-arm suite cannot
-answer the architectural question: whether the additional host-process
-isolation machinery is justified when the same policy and workload are placed
-behind a stronger workload boundary. A container is not an adequate control for
-that question. A container repackages shared-kernel mechanisms; it usefully
-measures packaging or operability, but does not test the shared-kernel boundary
-against a stronger alternative.
+A passing Linux-only suite cannot answer whether that shared-kernel design is
+justified when the same policy and workload are behind a stronger workload
+boundary. A container is not an adequate control: it repackages shared-kernel
+mechanisms and measures packaging or operability, rather than the boundary
+question.
 
-The control must be defined before outcomes are known. Otherwise a failed test
-could be removed, weakened, or called non-comparable after observing the
-microVM result. This ADR therefore fixes the substrate, the comparison surface,
-and the classification of every Phase 1 demonstration, adversarial-suite group,
-and fault-injection corpus before either arm's control-arm result is seen.
-
-The control arm is an evaluation substrate, not a claim that virtualization
+This control arm is an evaluation substrate, not a claim that virtualization
 solves policy derivation, information flow, credential use, remote-service
-authorization, or attribution. Those controls remain necessary on both arms.
+authorization, or attribution. Those controls remain necessary in both arms.
+The comparison MUST be fixed before results are examined; otherwise a failed
+test could be weakened, removed, or retrospectively called non-comparable.
 
-## Decision: substrate
+## Decision: frozen substrate configurations
 
-Use **Firecracker** as the default microVM implementation for one session per
-microVM. Firecracker is selected because its minimal device model, jailer,
-snapshot support, and wide use as a per-tenant boundary make its trusted and
-operational surface appropriate to this comparison. If Firecracker is
-unavailable on the evaluation host, Cloud Hypervisor or another KVM-based
-microVM implementation may be used as a documented fallback. A fallback must
-preserve every requirement below and identify the substituted VMM and jailer
-semantics in the evaluation record.
+### Linux arm
 
-The microVM launcher replaces `agentbound-launch`; it consumes the same
-resolved, substrate-independent manifest and creates this configuration:
+The Linux arm MUST use only the ADR-0002 Candidate L local-socket topology.
+It has no network interface or route and exposes exactly one explicitly mounted,
+single-purpose `AF_UNIX SOCK_SEQPACKET` gateway endpoint. The gateway MUST use
+the authoritative per-operation Linux process witness required by ADR-0002:
+`SO_PASSCRED`/`SCM_CREDENTIALS`, bound to a pidfd (start time read through it), UID,
+GID, PID namespace, scope, boot ID, active allocation, and active launch
+record. It MUST reject `SCM_RIGHTS` and fail closed when that witness cannot be
+obtained or verified.
 
-- A minimal guest kernel and minimal root filesystem are used. The rootfs block
-  device is read-only.
-- The VM has one vCPU. Its memory bound is the memory limit in the effective
-  manifest; the launcher records any host reservation or VMM overhead
-  separately from the guest-visible limit.
-- The only writable block device is a per-session workspace block device. It is
-  never shared concurrently with another session except through an explicitly
-  authorized, separately recorded channel.
-- The VM exposes exactly one path to `agentbound-gateway`, selected by the
-  gateway topology chosen in ADR-0002. Under the **network topology**, that
-  path is one veth path: guest virtio-net ↔ host veth/policy ↔ gateway. Under
-  the **non-network microVM projection** of the abstract single-channel policy,
-  that path is one vsock path: guest `AF_VSOCK` ↔ host gateway endpoint. This is
-  substrate-equivalent to the Linux local-socket property, not the Linux
-  `AF_UNIX` topology; ADR-0002 Decision 6 defines its authoritative VM/session
-  evidence and explicit exemption from Linux `AF_UNIX` mechanics. The VM
-  has no second network interface, no additional vsock service, and no route
-  or listener beyond that selected path.
-- No other devices are exposed except the read-only rootfs block device and the
-  per-session workspace block device. In particular, no host filesystem share,
-  console/management service, device passthrough, entropy service, accelerator,
-  balloon device, or debug channel is in the workload device inventory unless a
-  future ADR changes this decision and runs both arms' added tests.
-- Firecracker runs through its jailer with a per-VM host UID. The microVM host
-  process itself runs under a per-session execution identity as required by
-  ADR-0001. The VM boundary and the identity split therefore compose; neither
-  substitutes for documenting the other's lifecycle and reuse rules.
-- Host-side firewall policy is identical in intent to the Linux arm: it permits
-  only the selected gateway path (and a constructor-operated resolver only
-  when the selected topology permits one), and denies host, peer-session,
-  metadata, link-local, alternate-family, and direct protected-service paths.
+No Linux veth, network-topology, resolver, or network alternative is part of
+this evaluation arm. The candidate remains documented in ADR-0002, but MUST NOT
+appear in an effective manifest or result labelled as this ADR's Linux arm.
 
-Guest root is not host root. The guest contains no credential, capability,
-management endpoint, device, or host identity that gives it host authority.
-The VMM, jailer, host firewall, gateway, host kernel, and host lifecycle
-services remain part of the trusted computing base and are counted as such.
+### VM arm
 
-Snapshots are permitted only as launcher-managed lifecycle artifacts. Snapshot
-files, restore paths, and metadata are session-private host surfaces and are
-included in the interference and persistence equivalent tests. Snapshot/restore
-is not a claim of secure checkpoint/restore or transparent session migration.
+The VM arm MUST use **Firecracker**, pinned at the WP0 freeze to one exact
+version. It creates one microVM per session. Firecracker, the host kernel, the
+guest kernel, rootfs image digest, jailer settings, and complete VMM
+configuration MUST be recorded in the pinned-version set before testing.
 
-## Decision: what is held constant and what varies
+The VM device inventory is closed:
 
-The following are held constant across the Linux and microVM arms:
+- one read-only `virtio-blk` rootfs;
+- one per-session writable `virtio-blk` workspace;
+- one `AF_VSOCK` device and exactly one guest-to-host vsock service; and
+- nothing else.
 
-- policy and every derivation input, including agent, initiator, task,
-  approvals, policy and catalogue versions, and the immutable launch record;
-- `agentbound-policy` and its policy results;
-- `agentbound-gateway`, its selected authentication mechanism and typed
-  adapters, its external authorization, and its gateway-policy decisions;
-- session trace identity and the identity fields propagated to protected
-  services;
-- `agentbound-audit`, its effect ontology, correlation rules, loss counters,
-  retention behavior, and result classification;
-- workloads, workload artifacts, test data, test assertions, and the hostile
-  in-session adversary's intended capabilities;
-- all substrate-independent manifest fields: identity, derivation inputs,
-  authority, budgets, gateway policy, and audit requirements.
+In particular, the VM MUST NOT expose virtio-net, a second vsock service, a
+host filesystem share, console or management service, entropy device,
+accelerator, balloon device, debug channel, device passthrough, or another
+listener. The workspace MUST NOT be concurrently shared except through an
+explicitly authorized and separately recorded channel.
 
-The following vary:
+The guest init is **[fixed at WP0 freeze: named init, version, and digest]**.
+The guest audit source is **[fixed at WP0 freeze: named source, version, and
+collection configuration]**. Both MUST be included in the pinned configuration
+and evidence record. Guest root is not host root and MUST have no host
+credential, capability, management endpoint, device, or host identity.
 
-- `agentbound-launch` is replaced by a minimal microVM launcher and its
-  lifecycle helper;
-- the execution boundary and all substrate-specific manifest fields, including
-  namespaces, mounts, descriptor realization, seccomp, cgroup/VMM limits,
-  device inventory, guest kernel/rootfs, firewall attachment, and the chosen
-  veth or vsock realization;
-- operating evidence specific to a substrate, such as Linux kernel audit events
-  versus VMM/jailer/guest audit events, while preserving the common audit
-  correlation contract.
+The VM exposes exactly one vsock path to `agentbound-gateway`. This vsock path
+is the **non-network microVM projection of the single-channel property**. It is
+substrate-equivalent to Linux `AF_UNIX`; it is never identical to Linux
+`AF_UNIX`. `AF_VSOCK` does not transfer Unix peer credentials or the Linux
+per-operation process witness.
 
-The adversary differs in one intentional respect. In the Linux arm it is a host
-process running under the session UID. In the microVM arm it runs as guest root.
-Guest root is strictly more capable *inside the guest* than the Linux-arm
-workload identity is inside its session, but it has no host UID, host process
-identity, host capabilities, host mount view, or host-management endpoint.
-This makes guest-to-host containment an explicit control-arm property rather
-than silently granting the guest the Linux arm's host-process position.
+Snapshot and restore are disabled. No snapshot image, restore path, or
+checkpoint lifecycle is in scope for this arm. A fallback VMM is a separate,
+explicitly labelled arm with its own frozen configuration and test register;
+its results MUST NEVER be pooled with Firecracker results.
 
-## Decision: pre-registered test-equivalence classification
+### VM identity, CID lifetime, and vsock admission
 
-The classifications below are fixed before control-arm results are examined.
-**Identical** means the same workload-level test, inputs, assertion, policy,
-gateway, and audit expectation run unchanged. **Substrate-equivalent** means
-that the security property and success criterion are unchanged, but the attack
-mechanism is replaced by the named VM-host-surface test. **Inapplicable** is
-allowed only where a mechanism has no bearing on the host boundary; the omitted
-mechanism is still measured for guest operability where relevant.
+The host endpoint MUST bind every accepted vsock connection to all of:
 
-| Item | Classification | Equivalent test or reason | Property preserved |
+- the host-observed guest CID;
+- a non-reusable VM instance token;
+- the VMM pidfd and VMM process start time;
+- the jailer identity;
+- the active immutable launch record; and
+- the Firecracker configuration digest and pinned-version set.
+
+A guest-supplied CID, trace identifier, or launch-record identifier MUST NOT be
+authentication evidence. The binding record MUST be created before admission of
+the first typed operation and MUST be immutable while the launch record is
+active. The gateway MUST re-check active launch-record and grant state on every
+typed operation, as ADR-0002 requires.
+
+Mappings and indexed connections MUST be invalidated before a CID can be
+reassigned. Termination MUST mark the launch record terminating, deny new and
+next-operation admission, close indexed vsock connections, terminate the VM,
+verify VMM/jailer exit and guest teardown evidence, invalidate the CID mapping,
+and only then permit CID reuse. Failure to establish or invalidate any binding
+MUST fail closed and leave the CID unavailable for reassignment.
+
+Vsock has no host-kernel counterpart to the Linux `SCM_CREDENTIALS` witness.
+Therefore the VM arm claims **session-level attribution for the process leg**
+over vsock, not per-process attribution, unless a guest-side witness is added
+and pre-registered. This is a pre-registered difference. Guest process audit
+MAY correlate a guest process to a request, but it MUST NOT upgrade the
+cross-boundary claim without that witness and its validation test.
+
+### Held constant and varied
+
+Both arms MUST hold constant policy and derivation inputs; authorization
+manifest and launch-record semantics; gateway and typed adapters; trace
+identity; audit ontology and correlation rules; workloads and workload
+artifacts; test data and assertions; hostile-workload objective; and all
+substrate-independent manifest fields.
+
+Only the execution boundary and substrate-specific projection may vary. Linux
+uses namespaces, mounts, cgroups, descriptor realization, and `AF_UNIX` process
+evidence. The VM uses Firecracker, jailer, guest kernel/init/audit, closed
+virtio inventory, versus mapping, and VM lifecycle evidence. Each result MUST
+list its substrate-specific refinements and residual assumptions.
+
+## Decision: adversary corpora and comparability
+
+The Linux attacker is an unprivileged session process. The VM arm MUST run two
+separate corpora: one with guest root and one with a guest unprivileged process.
+Guest root is stronger inside the guest but has no host authority. Results from
+the two VM corpora MUST NOT be merged; each evidence record MUST state the
+corpus and privilege class.
+
+A test is **identical** only when its test, inputs, expected outcome, attacker
+privilege class, policy, gateway, and audit expectation run unchanged. A test
+is **substrate-equivalent** only when it preserves the SAME property against the
+SAME attacker privilege class, while replacing a substrate mechanic with its
+named VM realization. If an attack mechanic has no VM counterpart, it is **not
+directly comparable**. It remains arm-specific evidence but MUST be excluded
+from the common boundary-strength score.
+
+The authoritative complete list and final numeric suffixes are in
+[test-catalogue.md](test-catalogue.md), which is concurrently being frozen. IDs
+use `T-<suite>-<nnn>` for §6.x bullets, `D-<nn>` for demonstrations 1–17, and
+`F-C-<n>`/`F-T-<n>` for construction/termination fault points. The register
+below fixes classifications at the plan-bullet granularity now. Once the
+catalogue freezes, a per-ID row MUST be completed mechanically by expanding
+this register; no result, outcome, or observation may cause reclassification.
+
+### Demonstration register
+
+| ID | Class | Linux attacker / realization | VM attacker / realization | Preserved property |
+|---|---|---|---|---|
+| D-01 | identical | unprivileged; same authorized request | guest root; guest unprivileged; same request | durable identity and bounded derivation |
+| D-02 | identical | unprivileged; observation/attach grant | both corpora; same grant | explicit initiator and authorized control |
+| D-03 | substrate-equivalent | unprivileged; private state probes | both; workspace, vsock, VMM/jailer probes | cross-principal state isolation |
+| D-04 | substrate-equivalent | unprivileged; sibling UID/process probes | both; cross-VM state and host-surface probes | same-principal session isolation |
+| D-05 | identical | unprivileged; runtime replacement | both; same replacement | stable identity and attribution |
+| D-06 | substrate-equivalent | unprivileged; child/grandchild escape | both; guest descendants to host boundary | descendant containment |
+| D-07 | substrate-equivalent | unprivileged; daemonization | both; guest init/VMM teardown | supervision coverage |
+| D-08 | substrate-equivalent | unprivileged; terminate/revoke | both; VM terminate/revoke | ordered control and revocation |
+| D-09 | substrate-equivalent | unprivileged; `AF_UNIX` bypass corpus | both; sole-vsock-path bypass corpus | gateway-only egress |
+| D-10 | substrate-equivalent | unprivileged; process-witness attribution | both; session-level process-leg attribution | mediated-effect attribution, at stated granularity |
+| D-11 | substrate-equivalent | evaluator; constructor faults | evaluator; VM construction faults | fail-closed construction |
+| D-12 | substrate-equivalent | unprivileged; local/gateway audit reconstruction | both; guest/VMM/jailer/gateway correlation | audit fidelity at stated attribution scope |
+| D-13 | identical | unprivileged; Git gateway corpus | both; same typed requests | protected-object promotion boundary |
+| D-14 | identical | unprivileged; binding mutations | both; same mutations | execution-binding control |
+| D-15 | identical | unprivileged; narrowed child manifest | both; same authority derivation | monotonic delegation |
+| D-16 | identical | unprivileged; live revocation cases | both; same cases | lifecycle and revocation |
+| D-17 | identical | unprivileged; register execution | both; registered execution | pre-registered comparison discipline |
+
+For D-01, D-02, D-05, D-13 through D-17, the VM workload corpus is separately
+run as guest root and guest unprivileged; “identical” identifies the common
+logical test, not a claim that guest and Linux credentials are the same kernel
+artifact. D-10 and D-12 MUST label Linux per-process evidence and VM
+session-level process-leg evidence separately.
+
+### Suite register
+
+Every row below represents the plan bullet(s) named in the final catalogue.
+`I` means identical, `SE` substrate-equivalent, and `NDC` not directly
+comparable. All Linux entries use the unprivileged session process; every VM
+entry MUST be executed separately as guest root and guest unprivileged.
+
+| Catalogue keys / plan bullets | Class, in plan-bullet order | Linux realization / VM realization | Preserved property |
 |---|---|---|---|
-| Demo 1 — authorized start | identical | Same request, derivation, launch record, and policy decision. | Durable identity and bounded derivation. |
-| Demo 2 — unauthorized observation/attachment | identical | Same grant and attachment authorization test. | Explicit initiator and authorized control. |
-| Demo 3 — cross-principal private state | substrate-equivalent | Test guest/host surfaces: workspace blocks, vsock/veth, exposed devices, snapshot files, and launcher/jailer state. | Cross-principal state isolation. |
-| Demo 4 — same-principal sibling isolation | substrate-equivalent | Replace same-host-UID probes with cross-VM probes of virtio devices, vsock, shared storage, snapshot files, and launcher/jailer surfaces. | Invariant 17 session isolation. |
-| Demo 5 — runtime replacement | identical | Run the same replacement and compare identity, gateway scope, and audit chain. | Stable session identity and attribution. |
-| Demo 6 — child/grandchild boundary | substrate-equivalent | Exercise guest descendants and verify they cannot reach VMM/jailer or escape guest limits. | Descendant containment. |
-| Demo 7 — double-fork/daemonization | substrate-equivalent | Verify guest init/supervision, VMM lifecycle, and teardown account for daemonized guest descendants. | Supervision and termination coverage. |
-| Demo 8 — terminate then revoke | substrate-equivalent | Terminate VM/guest workload, verify descendants stop, then verify gateway authority closes. | Ordering of descendant control and revocation. |
-| Demo 9 — no direct protected-service access | identical | Run the same in-workload bypass corpus through the selected single path. | Gateway-only egress. |
-| Demo 10 — allowed operation attribution | identical | Same typed gateway operation and trace/audit reconstruction assertion. | Attribution of mediated effects. |
-| Demo 11 — constructor failure | substrate-equivalent | Inject failures into VM allocation, jailer, devices, path/firewall, audit bind, guest boot, and cleanup. | Fail-closed construction. |
-| Demo 12 — audit reconstruction | identical | Same effect ontology and completeness calculation; substrate evidence is correlated by the same pipeline. | Audit fidelity and attributable effects. |
-| Demo 13 — staging-ref restrictions | identical | Same gateway requests, trace forgery attempt, and protected Git service. | Protected-object promotion boundary. |
-| Demo 14 — execution-binding change | identical | Mutate model, endpoint, tenant, adapter/weights, inference pool, and retention mode independently; require compatibility decision and audit for each. | Execution-binding control. |
-| Demo 15 — delegated child narrowing | identical | Same derived child manifest, authority subset, gateway grant, and audit assertions. | Monotonic delegation. |
-| Demo 16 — active revocation | identical | Same initiator, approval, policy, catalogue, reclassification, gateway, and binding withdrawal cases; Profile U reclassification fails closed and audits no labeled target. | Explicit lifecycle and revocation. |
-| Demo 17 — control-arm repetition | identical | This row governs all rows classified identical; equivalent rows use their stated replacement. | Pre-registered comparability. |
-| §6.1 interference | substrate-equivalent | Replace `/proc`, ptrace, host-PID, Unix-socket, and sibling-UID attacks with enumeration and attacks on virtio devices, vsock, workspace/shared storage, snapshots, and launcher/jailer state. | Cross-session process, IPC, descriptor, and state isolation. |
-| §6.2 escape/persistence | substrate-equivalent | Replace cgroup/namespace escape with guest-to-host escape attempts; test VMM-process confinement, jailer confinement, guest resource limits, guest persistence, and snapshot/restore artifacts. | No escape or persistence beyond session boundary. |
-| §6.3 credential recovery | identical | Same inspection of environment, files, processes, logs, crash output, post-termination use, and replay against gateway credentials. | Credential confinement and non-exportability statement. |
-| §6.4 network/gateway bypass | substrate-equivalent | Preserve the bypass properties and corpus; replace Linux `AF_UNIX` peer/process mechanics with the ADR-0002 vsock VM/session mapping and guest-process evidence tests. | Gateway-only egress and typed-operation confinement. |
-| §6.5 constructor inputs | identical | Same malformed request, canonicalization, replay, TOCTOU, policy-version, identity, and signature corpus against the common resolver/manifest contract. | Constructor input validation and provenance. |
-| §6.6 bounded derivation | identical | Same unauthorized, expired, quorum, owner, catalogue, rollback, and ambiguity cases. | Invariant 3 bounded derivation. |
-| §6.7 monotonic delegation | identical | Same child authority and resource assertions, including no recovery through grants or credentials. | Invariant 6 monotonic delegation. |
-| §6.8 revocation | identical | Same declared behavior and audit checks for each component milestone. | Invariant 21 lifecycle and revocation. |
-| §6.9 resource exhaustion | substrate-equivalent | Map cgroup tests to guest limits plus VMM/jailer confinement; retain identical gateway-budget tests. Account for guest and VMM memory separately. | Enforced present resource classes and explicit absent classes. |
-| §7.3 fault injection | substrate-equivalent | Fault VM lifecycle stages in addition to common derivation, grant, audit, privilege, supervision, termination, and cleanup paths. | No runnable partial session, usable credential, or ambiguous audit record. |
+| T-6.1-001…013: `/proc`; ptrace/process-vm/signals; PTY; Unix/abstract sockets; shared IPC; temp races; runtime/workspace; environment injection; inherited/`SCM_RIGHTS` FDs; pidfd; process-vm; abstract netns; broker reuse | NDC, NDC, SE, NDC, SE, SE, SE, I, SE, NDC, NDC, NDC, NDC | session process probes each Linux interface / both VM corpora probe guest state, workspace, vsock, VMM, jailer, and exposed host surfaces | cross-session process, IPC, descriptor, and state isolation; NDC excluded |
+| T-6.2-001…008: cgroup; namespace; set-ID/file-cap; capability; daemon/orphan; mount/procfs; persistence; interpreter/loader | NDC, NDC, SE, SE, SE, SE, SE, SE | session process attacks / both corpora attack guest controls and guest-to-host boundary | no escape, persistence, or lifecycle escape |
+| T-6.3-001…008: environment; files/procfs; descriptors; children; brokers; logs; post-termination; replay | I, I, I, I, SE, I, I, I | session-visible secret probes / both corpora run same probes; vsock broker replaces Unix broker | credential confinement and stated exportability |
+| T-6.4-001…015: socket families; interfaces/routes; host Unix sockets; abstract sockets; inherited descriptors; `SCM_RIGHTS`; cross-session descriptor; credential-message count/forgery; PID reuse; stream/dgram connect; SSRF/tenant; redirect/TLS; identity replay; post-revocation; vsock realization | SE, SE, NDC, NDC, I, NDC, NDC, NDC, NDC, NDC, I, I, SE, I, VM-arm only | session process exercises `AF_UNIX` gateway and prohibited families / both corpora exercise sole-vsock-path admission, typed adapter, no-device surface, and CID reuse | gateway-only egress, per-operation process attribution (Linux only), and typed-operation confinement |
+| T-6.5-001…010: encoding; size; path/TOCTOU; replay; policy/catalogue change; version downgrade; smuggled fields; signatures; allocation; caller identity | I for each catalogue-expanded bullet | authenticated initiator attacks common resolver/constructor / same common resolver and VM launcher binding | constructor validation and provenance |
+| T-6.6-001…008: principal/task; approval; quorum; owner; excessive grant; catalogue; rollback; ambiguity | I for each catalogue-expanded bullet | authenticated initiator attacks common derivation / same common derivation | bounded derivation |
+| T-6.7-001: narrowed mounts, descriptors, grants, limits, and recovery paths | I | parent session derives child / both corpora derive same authority subset | monotonic delegation |
+| T-6.8-001…010: initiator; approval; authority; policy/catalogue; cancellation; control-plane loss; reclassification; Git grant; gateway loss; inference binding | I for each milestone bullet | hostile session during common revocation / both VM corpora during same revocation | declared lifecycle and revocation behavior |
+| T-6.9-001…008: PIDs; FDs; memory/CPU; disk; I/O/network; connections; audit; gateway budgets | SE, SE, SE, SE, SE, SE, SE, I | session process exhausts applicable limits / both corpora exhaust guest limits; guest RSS plus VMM RSS recorded | enforced present resource classes and absent-class disclosure |
+| F-C-01…09: pipe/eventfd barrier; mount namespace; source resolution; root; proc; descriptor closure; UID/LSM/cap/seccomp; record/grant/socket; exec | SE for each point | evaluator fault-injects Linux construction / evaluator fault-injects Firecracker/jailer/guest construction | no runnable partial session, credential, or ambiguous audit record |
+| F-T-01…11: admission; freeze; kill; reap; no-live proof; grant close; broker close; unmount; socket unmount; identity reclaim; record seal | SE for each point | evaluator interrupts Linux teardown / evaluator interrupts termination, CID invalidation, and cleanup | ordered termination, invalidation, and cleanup |
 
-`no_new_privs` inside the guest is **inapplicable to the host-boundary
-comparison**: it cannot determine whether guest root reaches the host. It is
-not an omitted security observation; guest-internal `no_new_privs`, capability
-reduction, and hardening remain measured for operability and defense in depth.
-No catalogue item above is classified inapplicable as a whole, because every
-listed demonstration and suite group has either an identical or a
-substrate-equivalent property test.
+The `…` notation is a mechanical expansion placeholder, not a range that may be
+silently changed. The catalogue MUST assign every plan bullet one or more IDs
+within the shown scheme, retain this class, name its precise VM realization, and
+state its property. Any catalogue item whose mechanic lacks a VM counterpart
+MUST be NDC, retained as arm-specific evidence, and excluded from the common
+boundary-strength score.
 
-No item may be reclassified after control-arm results are seen. A newly added
-test after that point must run on both arms, receive a pre-result classification,
-and be reported separately from this frozen catalogue.
+## Decision: frozen measurement protocol
 
-## Decision: comparative measurements
+WP0 MUST pin the host kernel; Firecracker version; guest kernel; rootfs digest;
+jailer settings and identity; device inventory; guest init; guest audit source;
+and measurement tooling before any result is collected. The Linux pinned kernel
+and its selected local-socket configuration MUST be recorded in the same form.
 
-For each arm, publish the measurement method, pinned host/kernel/VMM versions,
-workload, repetitions, result distribution, and applicable resource class. The
-comparison includes:
+Memory accounting is fixed: steady-state RAM per session is **guest RSS plus VMM
+RSS**, reported separately and summed for the VM arm. The report MUST state the
+Linux process/cgroup RSS method separately and MUST NOT conceal VMM overhead in
+a host-only aggregate. Snapshot/restore is disabled and therefore MUST NOT be
+measured as a supported lifecycle capability.
 
-- boundary strength, as pass/fail per pre-registered item and residual
-  assumption;
-- launch latency and teardown latency;
-- steady-state memory, including guest-visible memory and VMM/jailer overhead;
-- descendant-termination latency;
-- audit fidelity, attribution completeness, and audit loss behavior;
-- policy and configuration complexity, including rule counts and exceptions;
-- privileged and trusted code size, explicitly counting the VMM and jailer as
-  trusted in the microVM arm;
-- accelerator sharing, recorded as absent for this Phase 1 configuration rather
-  than treated as an unmeasured equivalence;
-- operator actions required to launch, diagnose, patch, recover, and clean up.
+Trusted-code size MUST be reported per arm under identical, tool-pinned SLOC
+rules. The report MUST separately count direct privileged code, generated code,
+transitive dependencies, configuration-rule code, and unsafe-language code. VM
+trusted code MUST include the VMM, jailer, guest init, and configuration as well
+as launcher and gateway-related trusted components. If these accounting rules
+cannot yield comparable measurements, code size MUST NOT be used as a cross-arm
+score; per-arm disclosure remains required.
 
-Representative workload/syscall overhead, retained privilege breadth,
-credential issuance and storage continuity may be reported as supporting
-measurements. Equivalent assurance is never inferred merely because the two
-arms share substrate-independent manifest fields. Each arm must list its
-substrate-specific refinements, evidence sources, and residual assumptions.
+## Pre-registered comparative decision rule
+
+The Linux design is **justified as default for the Profile U threat model** only
+if both conditions below hold.
+
+1. Every common boundary test—every identical or substrate-equivalent test—MUST
+   reach its expected preventive outcome on the Linux arm, with no unresolved
+   preventive-invariant failure.
+2. Across at least five repetitions (`N ≥ 5`) with confidence intervals, Linux
+   MUST beat the Firecracker VM arm by thresholds **[fixed at WP0 freeze]** for
+   p95 session construction-plus-teardown latency, steady-state RAM per session,
+   and scripted operator-task time/steps. The thresholds, confidence method,
+   workload, and operator script MUST be frozen before execution.
+
+Any Linux boundary failure selects the VM regardless of performance. If no
+threshold is met by either arm, the result is **“no measured advantage; VM
+preferred on assurance.”** If condition 1 passes but condition 2 fails, the
+result is **“Linux viable but not justified on operational grounds.”** A result
+that does not satisfy both conditions MUST NOT call Linux the default.
+
+The common boundary-strength score includes only identical and
+substrate-equivalent tests. NDC tests remain published as arm-specific evidence.
+A VM failure does not erase a Linux failure, and a retry does not erase either
+negative result. Confidence intervals and all individual repetitions MUST be
+published with the evidence set.
 
 ## Consequences
 
-- Milestone 1D produces the Phase 2 decision input. It is not a gate that
-  retroactively turns 1A–1C evidence into a comparative claim.
-- Any claimed Linux-arm advantage—lower latency, lower memory, simpler
-  operations, smaller trusted surface, or adequate boundary strength—must be
-  measured. It must not be assumed from the use of native host mechanisms.
-- The microVM arm is the reference implementation path for a future Profile W
-  (strong workload isolation), while preserving the common policy, gateway,
-  identity, and audit abstractions.
-- The project accepts the cost of maintaining a second launcher, minimal guest
-  artifacts, VMM/jailer configuration, and a paired automated test corpus.
-- The broader trusted computing base becomes more explicit: a microVM reduces
-  guest exposure to host kernel interfaces but adds VMM, jailer, image, and
-  snapshot lifecycle responsibilities.
-- A hardened-container measurement may be useful, but it cannot replace this
-  control arm or be presented as evidence against shared-kernel risk.
+- Milestone 1D produces the Phase 2 decision input; it does not retrospectively
+  convert 1A–1C evidence into a comparative claim.
+- Firecracker configuration drift requires a new labelled arm or a new frozen
+  evaluation; it MUST NOT be treated as a minor implementation variation.
+- VM assurance includes VMM, jailer, host kernel, guest kernel, image, guest
+  init, audit source, and host lifecycle assumptions.
+- The control arm accepts the cost of a second launcher, guest artifacts,
+  Firecracker/jailer configuration, and paired corpora.
+- A hardened-container measurement MAY be useful, but MUST be a separately
+  labelled arm and cannot replace this microVM control.
 
 ## Alternatives considered
 
+### Network/veth VM topology
+
+Rejected. The evaluation VM exposes one vsock path only. Adding virtio-net or a
+veth path would add a second topology and defeat the frozen single-channel
+comparison.
+
+### Fallback VMM
+
+Rejected as a fallback within this arm. Cloud Hypervisor, Kata, or another
+KVM-based implementation MAY be evaluated only as a separate labelled arm;
+results MUST NEVER be pooled with the Firecracker arm.
+
 ### Hardened container (`gVisor`/`runsc`)
 
-Rejected as the required control arm. It is a valuable optional, explicitly
-labeled third arm for operability and syscall-interposition comparison, but it
-does not answer the microVM-strength boundary question as directly as a VM.
-
-### Kata Containers
-
-Kata is a plausible middle option because it commonly uses VM-backed workload
-isolation. It is not the default because its OCI/container integration adds a
-larger orchestration and device surface than the minimal direct Firecracker
-configuration. It may be evaluated as an optional labeled arm, not silently
-substituted for this ADR's control.
-
-### Plain OCI runtime
-
-Rejected as a control substrate. A plain OCI runtime primarily exercises the
-same host kernel, namespace, cgroup, and capability mechanisms as the Linux
-arm and therefore measures packaging rather than the strength of an
-independent workload boundary.
+Rejected as the required control. It is an optional labelled third arm for
+operability or syscall-interposition comparison, not evidence against the
+shared-kernel boundary question.
 
 ### Dedicated node
 
-Rejected for Phase 1. A dedicated node supplies a strong physical scheduling
-boundary, but makes per-session provisioning, audit correlation, lifecycle
-control, and fair per-session comparison substantially different. It remains a
-possible later deployment profile or a separately labeled operational control.
+Rejected for Phase 1. It changes per-session provisioning, audit correlation,
+lifecycle control, and fair per-session comparison too substantially.
 
 ### No control arm
 
-Rejected. It would leave the central comparison untested and would prevent
-milestone 1D from producing the Phase 2 decision input required by the plan.
+Rejected. It would leave the central architecture comparison untested and
+prevent milestone 1D from supplying the Phase 2 decision input.
 
 ## Open questions for WP0 review
 
-1. ADR-0002 must select one mutually exclusive Linux-arm topology. Its
-   Decision 6 classifies the single vsock path as the pre-registered
-   non-network microVM projection of the abstract single-channel property and defines authoritative
-   VM/session evidence. Is that mapping sufficiently strong for Gate 3?
-2. What exact Firecracker and host-kernel version, jailer configuration, and
-   fallback acceptance criteria are pinned before testing?
-3. What guest-init and guest audit source supplies descendant and process
-   attribution without introducing an unreviewed management channel?
-4. How are snapshot encryption, access control, reclamation, and crash cleanup
-   included in the managed reclamation domain of ADR-0001?
-5. Which measurement boundary counts host page cache, KVM allocation, and VMM
-   process memory consistently across arms?
-6. What gateway authentication evidence binds a vsock peer to the VM session
-   and immutable launch record, including connection lifetime and revocation?
-7. Is guest root necessary for the intended adversary model, or should a
-   second, non-root guest workload measurement be reported without replacing
-   the pre-registered guest-root control?
-8. What pre-registered thresholds distinguish a material assurance gain from a
-   measurement difference, particularly for boundary failures, audit loss, and
-   operator actions?
+1. What exact Firecracker version, host and guest kernel versions, rootfs digest,
+   jailer settings, guest init, guest audit source, and tool versions are pinned
+   at the WP0 freeze?
+2. What non-reusable VM-instance-token format and CID-reassignment proof record
+   will the host endpoint retain?
+3. What guest-side witness, if any, can support a future separately
+   pre-registered VM per-process attribution claim?
+4. What fixed effect thresholds, confidence-interval method, workload profile,
+   and operator script define the comparative decision rule?
+5. Can the pinned SLOC tool and accounting boundaries produce a comparable
+   cross-arm figure; if not, how will per-arm disclosure be presented?

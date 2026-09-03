@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR8
+**Version:** 0.5-TR9
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -22,6 +22,7 @@
 - **0.5-TR5** — Execution identity restated as uniquely allocated with verified reclamation and reuse quarantine; ownership/execution separation stated as an invariant with profile-specific realizations rather than a universal "never executes".
 - **0.5-TR6** — Aligned the phase description with the Phase 1 plan: the microVM control arm is a Phase 1 (milestone 1D) comparison for the Unix-governed profile, and Phase 3 extends it to high-assurance profiles; reclamation condition bounded to a managed domain.
 - **0.5-TR7** — Replaced the pre-plan component sketch with the Agentbound decomposition; Phase 2 restated as extending the Phase 1 baseline mechanisms rather than introducing them.
+- **0.5-TR9** — Construction step 1 restated as a `clone3` synchronization barrier (no kernel facility creates a stopped child); the two egress topologies are retained as general mechanisms with a note that Phase 1 selects the local-socket topology because network transports do not identify the operation-issuing process; Phase 1 decomposition names the `agentbound-lifecycle` daemon.
 - **0.5-TR8** — WP0 consistency: execution-binding audit fields include inference pool; Phase 1 manifest flow clarified as policy authorization plus allocation-bound launch binding.
 
 ---
@@ -272,7 +273,7 @@ A durable Finance agent might be authorized for Finance, Forecasting, and Acquis
 
 The conceptual sequence above hides ordering constraints that are security-critical. A conforming constructor:
 
-1. creates the child stopped (or via `clone3` with the required namespace flags) before any credential or mount is visible to it;
+1. creates the child with `clone3` and the required namespace flags, blocked on a synchronization barrier (pipe or eventfd) until construction completes—no kernel facility creates a child in a stopped state—before any credential or mount is visible to it;
 2. unshares the mount namespace and marks all mounts recursively private before any bind operation, so nothing propagates back to the host;
 3. resolves mount sources through descriptor-relative, path-safe operations (`openat2` with `RESOLVE_BENEATH`/`RESOLVE_NO_SYMLINKS`, or the new mount API with mount file descriptors), never through re-walked string paths;
 4. builds the restricted tree and enters it with `pivot_root`, not `chroot`;
@@ -420,7 +421,7 @@ Additional conditions:
 
 - the session holds no `CAP_NET_RAW` or `CAP_NET_ADMIN`; seccomp forbids unneeded socket families (`AF_PACKET`, `AF_VSOCK`, `AF_NETLINK` beyond what the runtime needs, and raw sockets);
 - the inherited descriptor set contains no pre-opened sockets or connections;
-- no host Unix-domain sockets, loopback services, container-runtime sockets, or local proxies are mounted or reachable inside the session's world. The one permitted alternative is a **local-socket topology** in which the session has no network interface at all and reaches the gateway through exactly one explicitly mounted, single-purpose `AF_UNIX` socket authenticated by peer credentials; the two topologies are mutually exclusive and each carries its own bypass tests;
+- no host Unix-domain sockets, loopback services, container-runtime sockets, or local proxies are mounted or reachable inside the session's world. The one permitted alternative is a **local-socket topology** in which the session has no network interface at all and reaches the gateway through exactly one explicitly mounted, single-purpose `AF_UNIX` socket authenticated by peer credentials; a deployment selects one topology and each carries its own bypass tests. Because network transports (mTLS, veth mapping) identify a session but not the process issuing each operation, a profile that claims the process leg of Invariant 13 must use the local-socket topology with kernel-supplied per-operation credentials (`SOCK_SEQPACKET`, `SCM_CREDENTIALS`); Phase 1 does so (plan §3.3, ADR-0002);
 - the gateway is not a generic HTTP or CONNECT proxy. It exposes named operations with typed arguments, authorizes destination, method, body semantics, tenant, and response size per operation, authenticates its upstream TLS peer, and binds a signed per-session identity and audience to every request;
 - Landlock TCP `bind`/`connect` rules and hostname allowlists are defense in depth, not the boundary: they cover neither UDP/QUIC, vsock, existing descriptors, DNS behavior, nor TLS identity.
 
@@ -836,8 +837,9 @@ The reference implementation uses the decomposition fixed in the Phase 1 plan:
 ```text
 agentbound          CLI/API client: requests, observes, attaches to, terminates sessions
 agentbound-policy   unprivileged resolver: principal, initiator, task, catalogue → manifest
-agentbound-launch   narrow privileged constructor; separate post-launch lifecycle helper
-agentbound-gateway  session-authenticating gateway with typed operation adapters
+agentbound-launch   narrow, short-lived privileged constructor
+agentbound-lifecycle privileged daemon: identity allocator, pidfd holder, termination and reclamation
+agentbound-gateway  on-host session- and process-authenticating gateway with typed operation adapters
 agentbound-audit    launch record + kernel audit + gateway log correlator
 ```
 

@@ -1,10 +1,15 @@
 # Execution-Identity Lifecycle Specification
 
-**Version:** 0.1  
+**Version:** 0.2  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
 **Related:** [ADR-0001](ADR-0001-execution-identity.md), [session lifecycle](session-lifecycle.md), [Phase 1 plan](../plans/phase-1-reference-implementation.md), [technical report](../papers/technical-report.md)
+
+## Revision history
+
+- **0.1** — Initial WP0 draft.
+- **0.2** — Allocator placed inside the `agentbound-lifecycle` daemon; helper references replaced; `loginuid` restated as corroborating evidence with the single R-CON-6 fail rule; host credential scan retained as a reclamation precondition.
 
 ---
 
@@ -59,7 +64,7 @@ The allocator MUST reject a configured range that overlaps known durable-owner m
 
 ### 3.2 Allocator store and authority
 
-Allocator state MUST be an append-only, host-local store owned by the constructor service identity used by `agentbound-launch`. The running session execution UID MUST have neither read nor write access to it. The store MUST be integrity protected, durable before an allocation becomes usable, and accessible to the post-launch lifecycle helper for reclamation.
+The allocator lives in the `agentbound-lifecycle` daemon. Allocator state MUST be an append-only, host-local store owned by that daemon's service identity; `agentbound-launch` requests a reservation over the authenticated interface in [component interfaces](component-interfaces.md). The running session execution UID MUST have neither read nor write access to the store. The store MUST be integrity protected and durable before an allocation becomes usable.
 
 The append-only record stream MUST support a tamper-evident sequence or equivalent integrity check. Compaction MAY occur only through a separately authenticated maintenance action that preserves allocation history and all unreclaimed/quarantined state.
 
@@ -77,7 +82,7 @@ An allocation record MUST contain at least:
 | primary GID | One GID allocated with the UID. |
 | supplementary group set | Exact allocated group IDs and their purpose; no ambient durable-owner group. |
 | state and sequence | Lifecycle state and monotonic append sequence. |
-| allocator actor and timestamp | Constructor/helper identity and trusted timestamp. |
+| allocator actor and timestamp | Constructor or `agentbound-lifecycle` identity and trusted timestamp. |
 | scope/cgroup and PID namespace IDs | Expected containment evidence. |
 | managed-domain manifest | Registered host paths, mounts, stores, grants, IPC/cgroup references. |
 | reclamation and quarantine evidence | Filled on transition from `in-use` onward. |
@@ -97,14 +102,14 @@ free → allocated → in-use → reclaiming → quarantined → free
 | `free` | Numeric identity is available for allocation. | Initial verified empty range entry or completed quarantine. | `allocated`. |
 | `allocated` | Identity is reserved to one authorization-manifest digest and pending launch-record ID; the launch binding is committed atomically with the reservation, but no runtime is yet established. | Durable append of allocation record before identity installation. | `in-use`, `reclaiming`. |
 | `in-use` | Identity has been installed for a session or may have been installed before a crash. | Constructor installs credentials or recovery finds compatible live scope evidence. | `reclaiming`. |
-| `reclaiming` | No reuse is possible while the helper verifies and removes all managed-domain residue. | Termination, construction rollback, or crash reconciliation. | `quarantined`; remains `reclaiming` on uncertainty. |
+| `reclaiming` | No reuse is possible while `agentbound-lifecycle` verifies and removes all managed-domain residue. | Termination, construction rollback, or crash reconciliation. | `quarantined`; remains `reclaiming` on uncertainty. |
 | `quarantined` | Reclamation condition passed; reuse is delayed for late audit correlation. | Recorded successful reclamation proof. | `free`. |
 
 No transition may skip `reclaiming` or `quarantined`. Allocator operations MUST be compare-and-set on allocation record ID and state sequence. A duplicate allocation attempt for the same UID or a launch record mapped to multiple UIDs MUST fail closed, emit `identity.double_allocation_detected`, and prevent both implicated sessions from becoming active until reconciled.
 
 ### 4.1 Verified reclamation condition
 
-Reclamation is a **condition**, not an elapsed period. The helper MUST evaluate it across the declared managed reclamation domain:
+Reclamation is a **condition**, not an elapsed period. `agentbound-lifecycle` MUST evaluate it across the declared managed reclamation domain:
 
 1. session namespaces and mounts;
 2. manifest-registered host paths;
@@ -115,13 +120,13 @@ Reclamation is a **condition**, not an elapsed period. The helper MUST evaluate 
 
 The condition is met only when all of the following are true:
 
-- **No live process:** `cgroup.procs` is empty **and** the PID-namespace init has exited. The helper MUST also scan host process credentials for the execution UID/GIDs and reconcile every match with held pidfds, PID namespace, systemd scope, and allocation record. Any process outside the expected scope or contradictory `/proc` evidence blocks reclamation and raises `identity.scope_escape_suspected`; scope containment is not assumed to make the scan unnecessary.
-- **No owned file or IPC object:** the helper scans each manifest-registered host path and each mounted session workspace/runtime tmpfs for objects owned by the execution UID or session GID, removes or transfers only objects explicitly covered by the cleanup policy, and records every result. The session IPC namespace MUST be destroyed; no session-owned IPC object may remain in a registered host-visible IPC location.
+- **No live process:** `cgroup.procs` is empty **and** the PID-namespace init has exited. `agentbound-lifecycle` MUST also scan host process credentials for the execution UID/GIDs and reconcile every match with held pidfds, PID namespace, systemd scope, and allocation record. Any process outside the expected scope or contradictory `/proc` evidence blocks reclamation and raises `identity.scope_escape_suspected`; scope containment is not assumed to make the scan unnecessary.
+- **No owned file or IPC object:** `agentbound-lifecycle` scans each manifest-registered host path and each mounted session workspace/runtime tmpfs for objects owned by the execution UID or session GID, removes or transfers only objects explicitly covered by the cleanup policy, and records every result. The session IPC namespace MUST be destroyed; no session-owned IPC object may remain in a registered host-visible IPC location.
 - **No outstanding grant:** the broker, storage service, and `agentbound-gateway` MUST confirm revocation/closure for every launch-record-bound grant. An unreachable grant authority is not confirmation.
 
 The managed domain is deliberately bounded. The allocator MUST NOT assert discovery of numeric ownership outside it, such as arbitrary detached mounts, removable media, unregistered paths, external backups, or snapshots. Those exports are controlled by the rule in §5.
 
-If any check cannot be completed, has contradictory evidence, or finds a live process, the identity MUST remain `reclaiming`. The helper MUST NOT release it based on a timeout alone.
+If any check cannot be completed, has contradictory evidence, or finds a live process, the identity MUST remain `reclaiming`. `agentbound-lifecycle` MUST NOT release it based on a timeout alone.
 
 ### 4.2 Quarantine
 
@@ -149,7 +154,7 @@ Every `agentbound-audit` record about a session MUST pair `execution_uid` with `
 
 Kernel PID/PPID values are not durable process identities because PIDs are reused. Records SHOULD include a PID namespace identifier plus process start time or pidfd-derived identity where available. The systemd scope/cgroup is useful corroboration but is not a portable standalone audit key.
 
-Per technical-report §5, `loginuid` is useful for preserving the account that originally gained access and is inherited by descendants. `agentbound-launch` MUST set `loginuid`, when the host's audit policy permits it, in an unset stopped child immediately before exec and before untrusted runtime code. It MUST record the authenticated initiator and the `loginuid` result in the launch record. If the host makes `loginuid` immutable or it is already set incompatibly, construction MUST follow the manifest's fail-closed policy and MUST NOT silently attribute that value to another actor.
+Per technical-report §5, `loginuid` is useful for preserving the account that originally gained access and is inherited by descendants, but it is write-once, inherited across `clone`, and governed by host audit policy; it is therefore **corroborating** evidence only. The authoritative session attribution key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). `agentbound-launch` MUST attempt to set `loginuid` in the barrier-blocked child before exec when the pinned baseline permits it and the child's value is unset, and MUST record the result (set, immutable, already-set, denied) in the launch binding. The single fail rule is R-CON-6 of the requirements: construction fails only when the manifest attribution policy is `required` and the value cannot be set; otherwise the condition is a recorded residual assumption. It MUST NOT silently attribute an inherited value to another actor.
 
 The effective UID records the execution identity, not the durable principal. The signed/append-only launch record is the authoritative mapping between them.
 
@@ -161,10 +166,10 @@ At boot and allocator-service restart, the allocator MUST reconcile each non-`fr
 
 - Any `allocated` identity without a live compatible scope MUST move to `reclaiming`.
 - Any `in-use` identity without a live compatible scope MUST move to `reclaiming`; it MUST NOT return directly to `free`.
-- Any identity with a live scope but missing, conflicting, or unsealed launch-record evidence MUST be treated as an orphan: deny new grants, preserve the identity hold, and request lifecycle-helper containment/termination.
+- Any identity with a live scope but missing, conflicting, or unsealed launch-record evidence MUST be treated as an orphan: deny new grants, preserve the identity hold, and request `agentbound-lifecycle` containment/termination.
 - Any same-UID concurrent scope, duplicate active allocation record, or mismatched UID-to-launch-record mapping is double allocation. The allocator MUST fail closed, block new sessions, emit a high-severity audit event, and require reconciliation.
 
-If the append-only allocator store is corrupt, its integrity chain fails, its durable sequence cannot be determined, or its host binding is unavailable, the allocator MUST fail closed: it MUST admit **no new sessions** and MUST not reuse any identity. Existing sessions MAY be observed and terminated through the lifecycle helper, but their identities MUST remain held until a trusted recovery procedure repairs or replaces the allocator state and records the decision.
+If the append-only allocator store is corrupt, its integrity chain fails, its durable sequence cannot be determined, or its host binding is unavailable, the allocator MUST fail closed: it MUST admit **no new sessions** and MUST not reuse any identity. Existing sessions MAY be observed and terminated through `agentbound-lifecycle`, but their identities MUST remain held until a trusted recovery procedure repairs or replaces the allocator state and records the decision.
 
 ---
 
@@ -197,7 +202,7 @@ The durable principal's owning UID MUST be outside the execution-identity range 
 
 Sessions reach durable partitions only through manifest-authorized per-session grants: read-only or scoped bind mounts, ACLs, narrowly allowlisted descriptors, or a broker. Grants MUST not introduce the durable owner UID/GID as an ambient session credential.
 
-When a grant uses an ACL entry naming an execution UID or its allocated group, the lifecycle helper MUST remove that ACL entry during reclamation, before the identity can enter quarantine. The scan in §4.1 MUST verify removal within all manifest-registered paths. A failed ACL removal leaves the identity in `reclaiming`.
+When a grant uses an ACL entry naming an execution UID or its allocated group, `agentbound-lifecycle` MUST remove that ACL entry during reclamation, before the identity can enter quarantine. The scan in §4.1 MUST verify removal within all manifest-registered paths. A failed ACL removal leaves the identity in `reclaiming`.
 
 Created workspace and runtime data SHOULD be placed in session-owned tmpfs or registered disposable paths. Objects intended to survive termination MUST be exported through the metadata and authorization rules in §5 rather than left as UID-owned durable residue.
 
@@ -273,7 +278,7 @@ Restore tooling MUST place recovered data under a durable owner or storage-broke
 
 ### 12.5 Reclamation authorization
 
-Only the post-launch lifecycle helper and the allocator's authenticated recovery process MAY advance an identity from `in-use` to `reclaiming` or from `reclaiming` to `quarantined`. The `agentbound` CLI, systemd, and revocation triggers may request termination, but they MUST NOT directly mark an identity free.
+Only the `agentbound-lifecycle` and the allocator's authenticated recovery process MAY advance an identity from `in-use` to `reclaiming` or from `reclaiming` to `quarantined`. The `agentbound` CLI, systemd, and revocation triggers may request termination, but they MUST NOT directly mark an identity free.
 
 An operator may place an identity in a manual hold state represented operationally as `reclaiming` with a blocking reason. Manual release requires recorded evidence satisfying the same reclamation condition; it MUST NOT override a live-process, owned-object, or outstanding-grant finding.
 

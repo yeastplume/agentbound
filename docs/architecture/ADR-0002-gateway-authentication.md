@@ -1,174 +1,167 @@
 # ADR-0002: Gateway channel topology and session authentication
 
-**Status:** Proposed for WP0 review; mechanism selection deferred to WP1 spike  
+**Status:** Accepted for Phase 1 (topology and mechanism selected); WP1 spike verifies kernel-baseline assumptions listed in Decision 7  
+**Version:** 0.2  
 **Date:** 28 August 2026  
-**Applies to:** Unix-governed profile, milestones 1B–1C  
-**Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md) §3.3, §4.2, §6.3–6.4; [technical report](../papers/technical-report.md) §3.2; [manifest schema](manifest-schema.md) §3.6; [ADR-0001](ADR-0001-execution-identity.md); [ADR-0003](ADR-0003-control-substrate.md)
+**Applies to:** Unix-governed profile, milestones 1B–1C; microVM projection per ADR-0003  
+**Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md) §3.3, §4.2, §6.3–6.4; [technical report](../papers/technical-report.md) §3.2, §5; [manifest schema](manifest-schema.md); [component interfaces](component-interfaces.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0003](ADR-0003-control-substrate.md)
+
+## Revision history
+
+- **0.1** — Proposed two mutually exclusive Linux-arm topologies (network Candidate N with mTLS/broker; local-socket Candidate L) and deferred selection to WP1.
+- **0.2** — Selected Candidate L for Phase 1. Candidate N withdrawn from Phase 1 because it cannot satisfy the per-operation process leg of Invariant 13; deferred to a future multi-host ADR. Socket type fixed as `SOCK_SEQPACKET`; per-packet `SCM_CREDENTIALS`; descriptor transfer prohibited; `SO_PEERCRED` wording corrected; vsock CID lifetime rules added; WP1 scope narrowed to kernel-baseline verification.
 
 ## Context
 
-Phase 1 requires every remote effect to cross `agentbound-gateway`, which exposes typed operations and propagates the session trace identity. A network namespace, path-protected socket, bearer token, or workload identity alone is insufficient to prove which local session initiated an operation:
+Phase 1 requires every remote effect to cross `agentbound-gateway`, which exposes typed operations and propagates the session trace identity. Invariant 13 claims the attribution chain `initiator → agent → session → process → effect`. The gateway must therefore identify not only the session but the **process** that issued each operation, using evidence the kernel supplies rather than evidence the caller asserts.
+
+No single conventional mechanism does this:
 
 - a network namespace creates a network stack but does not authenticate a process;
 - a pathname-protected Unix socket controls who can open the pathname but not which process is on an established connection;
 - bearer credentials are copyable inside the session;
-- a veth peer identifies a network attachment, not necessarily the calling process;
-- `SO_PEERCRED` reports credentials captured when an `AF_UNIX` connection is established, but connection lifetime, descriptor passing, PID reuse, process exit, and revocation still require explicit rules;
-- a credential broker can reduce exportability while remaining drivable by any hostile process authorized to use it.
+- a veth peer identifies a network attachment, not the calling process;
+- mTLS or proof-of-possession proves that *some* process in the session holds the credential, not *which* process sent a given request;
+- `SO_PEERCRED` is a kernel-supplied credential snapshot taken at connection establishment. It is authoritative for the connecting process but says nothing about later writers on a passed descriptor, and any PID it reports must be resolved to a live process with reuse protection;
+- a credential broker reduces exportability while remaining drivable by any hostile process authorized to use it.
 
-The design also permits two mutually exclusive channel topologies in the Linux arm. Mixing their assumptions would create bypasses and make Gate 3 unfalsifiable. WP0 therefore freezes the candidate set, required evidence, lifetime rules, and selection criteria. WP1 selects one topology and authentication mechanism after focused spikes.
+Version 0.1 of this ADR kept a network topology (Candidate N) open alongside the local-socket topology (Candidate L). Review showed that N's authentication mechanisms (per-session mTLS, veth-mapping broker) can reach session-level attribution only. Keeping N while requiring the process leg made the ADR's own selection criterion decide the question implicitly. This revision decides it explicitly.
 
-## Decision 1: mutually exclusive Linux-arm topologies
-
-Every manifest MUST select exactly one of these topologies. `agentbound-launch` MUST fail closed if fields from both appear.
-
-### Candidate N — network topology
+## Decision 1: Phase 1 uses the local-socket topology only
 
 ```text
-session network namespace
-  └── one veth
-        └── host nftables/eBPF policy
-              └── agentbound-gateway address and port only
+session (no network interface, including loopback)
+  └── exactly one bind-mounted AF_UNIX SOCK_SEQPACKET socket
+        └── agentbound-gateway (on-host)
 ```
 
-Requirements:
+1. The session network namespace MUST contain no interface, including loopback, and no route. Seccomp MUST deny every socket family except `AF_UNIX`, and MUST deny `AF_UNIX` `SOCK_STREAM`/`SOCK_DGRAM` `connect` unless the runtime profile explicitly requires local IPC inside the session (recorded in the manifest).
+2. Exactly one gateway socket is bind-mounted into the session at the manifest's `gateway_socket` mount. No other host Unix socket is visible in the mount namespace. The abstract socket namespace is isolated by the session's network namespace.
+3. The socket type MUST be `SOCK_SEQPACKET`. One complete typed operation MUST be carried in exactly one `sendmsg`; the gateway MUST reject any packet that does not parse as exactly one operation and MUST NOT reassemble operations across packets. `SOCK_STREAM` is not permitted because ancillary data attaches to stream segments, not to application messages.
+4. The manifest's `gateway.channel_topology` has exactly one legal value in Phase 1, `local-socket`. `agentbound-launch` MUST fail closed on any other value or on any network-topology field.
 
-1. The session has one veth and no other interface except loopback. The default route leads only to the host-side enforcement point.
-2. Host nftables or eBPF policy permits only the gateway address and port and, if the manifest requires DNS, one constructor-operated resolver. It drops host, bridge, sibling, link-local, metadata, multicast, and all other destinations for IPv4 and IPv6.
-3. The session has no reachable host Unix socket, no inherited socket, and no `CAP_NET_RAW` or `CAP_NET_ADMIN`.
-4. Seccomp blocks `AF_PACKET`, `AF_VSOCK`, raw sockets, and every socket family the runtime does not need. UDP is blocked unless the approved resolver requires it; QUIC is not permitted.
-5. Authentication is one of N1 or N2 below.
+The network topology is **withdrawn from Phase 1**, not rejected in principle. It is the natural mechanism for off-host gateways in later multi-host profiles and will be the subject of a separate ADR whose first obligation is to state honestly which leg of the attribution chain it can and cannot prove.
 
-**N1 — per-session mTLS / proof-of-possession.** `agentbound-launch` provisions a non-exportable or broker-held private key after every boundary is installed. The certificate or signed workload document binds global agent ID, session ID, execution-identity allocation record ID, launch-record ID, audience (`agentbound-gateway`), and expiry. `agentbound-gateway` verifies the proof on every connection and checks that the launch record is active and not revoked.
+## Decision 2: per-operation process evidence
 
-**N2 — host-side connection broker.** A privileged host component accepts traffic only from the session's veth peer and maps the peer interface and network namespace to one active execution-identity allocation and launch record. It establishes or authenticates the upstream gateway connection. The mapping is an explicit TCB component and MUST be immutable for the session lifetime. Source IP or network identity alone is insufficient evidence.
+Authentication of the connection and attribution of each operation are separate steps with separate evidence.
 
-### Candidate L — local-socket topology
+**Connection establishment.** Immediately after `accept`, the gateway MUST read `SO_PEERCRED` and MUST resolve the reported PID to a pidfd (`pidfd_open`) and read its start time and PID-namespace identity. If the process has exited or the start time does not match, the connection MUST be closed unauthenticated. The gateway binds `(pidfd, start time, UID, GID, PID namespace, cgroup/scope, boot ID)` to exactly one active execution-identity allocation and launch record via `agentbound-lifecycle`'s authoritative index. A UID that maps to no active allocation, or to an allocation in `reclaiming` or `quarantined`, MUST be refused.
 
-```text
-session (no network interface)
-  └── one explicitly mounted AF_UNIX stream socket
-        └── agentbound-gateway
-```
+**Every operation.** The gateway MUST enable `SO_PASSCRED` before reading any data and MUST require exactly one kernel-supplied `SCM_CREDENTIALS` control message per packet. Packets with zero or more than one credential message MUST be rejected. The gateway MUST verify that the credential PID resolves (pidfd or PID+start-time) to a live process whose UID, PID namespace, and cgroup match the connection's bound allocation. On mismatch the operation is denied, the connection is closed, and `gateway.process_mismatch` is emitted. The per-packet credential, not the connection's original peer, is the authoritative process identity recorded against the effect.
 
-Requirements:
+**Descriptor transfer.** `SCM_RIGHTS` on the gateway protocol MUST be rejected. For Phase 1's process-attribution claim, an established gateway descriptor MUST NOT be transferred between processes; a packet whose credential PID differs from the connection's establishing PID is permitted only if both resolve to the same allocation (a child of the establishing process), is recorded as a process change, and is the attributed process for that operation. Cross-session use MUST fail the allocation check and is a conformance failure if accepted.
 
-1. The session has no non-loopback network interface and no route. Seccomp blocks all network socket families except the single `AF_UNIX` stream use required by the adapter.
-2. Exactly one gateway socket is bind-mounted into the session at the manifest path. No other host Unix socket is visible. The socket is a single-purpose operation endpoint, not a general relay.
-3. The socket pathname and filesystem permissions are defense in depth only. Connection establishment evidence is `SO_PEERCRED`, collected immediately after `accept`, plus a peer pidfd obtained from the reported PID where supported. For **each operation**, the gateway MUST enable `SO_PASSCRED` and require kernel-supplied `SCM_CREDENTIALS` on the operation message, then bind its PID to a pidfd or PID+start-time and verify that process remains in the authenticated session's allocation, PID namespace, and scope. This per-message evidence—not caller metadata or the connection's original peer alone—is authoritative for process attribution. The gateway binds `(operation pidfd or PID+start-time, UID, GID, PID namespace, scope, boot ID)` to the active allocation and launch record.
-4. If a race prevents acquisition or verification of the pidfd/process start time, authentication fails. Numeric UID alone is insufficient because UIDs are reclaimed.
-5. `SCM_RIGHTS` on the gateway protocol is forbidden. The gateway MUST reject ancillary descriptors. For Phase 1 process attribution, an established gateway descriptor MUST NOT be transferred between processes. The gateway MUST nevertheless require kernel-backed per-operation process evidence; descriptor-passing, creator exit, PID/UID reuse, or forged process identity MUST fail closed. A topology unable to provide an equivalent operation witness reports session-level attribution only and MUST NOT claim full Invariant 13 conformance.
+**pidfd unavailability.** If the pinned kernel cannot supply pidfds or process start time for the credential PID, the constructor MUST record the condition as a residual assumption in the launch record and the gateway MUST refuse the connection when the manifest's attribution policy is `required`. It MUST NOT fall back to PID alone silently.
 
-## Decision 2: caller and operation authority
+## Decision 3: caller and operation authority
 
-Authentication identifies the session, not the semantic intent of a process. By default, any process under the session execution identity that can reach the gateway channel may invoke operations granted to that session. The gateway MUST assume a hostile process can drive every granted operation.
+Authentication identifies a session and a process, not the semantic intent of that process. By default, any process under the session execution identity that can reach the gateway socket may invoke operations granted to that session. The gateway MUST assume a hostile process can drive every granted operation.
 
-A manifest MAY narrow an operation to an executable digest, process role, or child-session identity only when the selected authentication mechanism can prove that property without trusting caller-supplied metadata. Phase 1 does not require such process-level narrowing.
+A manifest MAY narrow an operation to an executable digest or process role only when the pinned kernel can prove that property from the pidfd (for example via `/proc/<pid>/exe` resolved through the pidfd) without trusting caller-supplied metadata. Phase 1 does not require such narrowing.
 
-For every request, `agentbound-gateway` MUST:
+For every operation, `agentbound-gateway` MUST:
 
-1. authenticate the connection under the chosen mechanism;
+1. verify the per-packet credential per Decision 2;
 2. resolve it to exactly one active launch record;
-3. verify the typed operation appears in that manifest;
+3. verify the typed operation appears in that record's `gateway.operations`;
 4. verify arguments, destination, tenant, body schema, response-size limit, and resource budget;
-5. attach the immutable session trace identity, authenticated operation-process identity, and operation identifier to the upstream request and audit event;
-6. reject if the session is quiescing, terminated, revoked, expired, or audit policy requires a stop.
+5. attach the immutable session trace identity, the authenticated operation-process identity, and the operation identifier to the upstream request and the audit event;
+6. reject if the session is quiescing, terminating, revoked, expired, or the manifest's audit-loss policy requires a stop.
 
-## Decision 3: connection lifetime and revocation
+## Decision 4: connection lifetime and revocation
 
 Connection authentication is not permanent authority.
 
-1. The gateway MUST re-check active launch-record and grant status on **every typed operation**, not merely at connection establishment.
-2. A connection established before a revocation MUST fail its next operation after the revocation record is committed. An operation already admitted is handled according to its manifest policy: complete, cancel where the adapter supports safe cancellation, or record an indeterminate remote outcome. The policy MUST be predeclared per operation.
+1. The gateway MUST re-check active launch-record and grant status on **every operation**.
+2. A connection established before a revocation MUST fail its next operation after the revocation record is committed. An operation already admitted is handled per its predeclared policy: complete-and-record, cancel where the adapter supports safe cancellation, or record an indeterminate remote outcome. For the Git staging-ref adapter the policy is **complete-and-record**: a push already accepted by the Git host is not retracted by the gateway; the staging ref remains under branch-protection control and the audit record marks the operation as admitted-before-revocation.
 3. New connections after revocation MUST fail authentication.
-4. Exit of the process that established an `AF_UNIX` connection does not transfer authority. Another process holding the descriptor is independently identified by per-operation `SCM_CREDENTIALS`; its operation is accepted only if it maps to the same active session and grant. A peer pidfd exit event is logged and MAY close the connection under a stricter manifest policy.
-5. At session termination, the lifecycle helper MUST first mark the launch record terminating and disable/revoke admission for all gateway grants, then close indexed connections, terminate descendants, and only then release credential/grant records. The gateway MUST acknowledge zero remaining connections before identity reclamation proceeds. “Revoke” means deny use immediately; “release” means final lifecycle cleanup after descendant death.
-6. A stale connection whose launch record is sealed, missing, has a different boot binding, or no longer maps to the execution-identity allocation MUST be closed without processing a request.
-7. Gateway restart MUST reconstruct only active grants from the signed launch-record store. It MUST NOT preserve unauthenticated transport sessions across restart.
+4. Exit of the establishing process does not transfer authority. A subsequent packet from a child process is evaluated per Decision 2. A peer pidfd exit event is logged and MAY close the connection under a stricter manifest policy.
+5. On entry to termination, `agentbound-lifecycle` MUST first instruct the gateway to **deny admission** of new operations for the launch record (grant records are not yet released), then run the termination protocol in [session lifecycle](session-lifecycle.md) §5, then close indexed connections and release grant records. The gateway MUST acknowledge zero remaining connections before identity reclamation proceeds.
+6. A connection whose launch record is sealed, missing, has a different boot binding, or no longer maps to a live allocation MUST be closed without processing a request.
+7. Gateway restart MUST reconstruct active grants only from the signed launch-record store and `agentbound-lifecycle`'s allocation index. It MUST NOT preserve transport connections across restart.
+8. The inference adapter (1C) MUST perform execution-binding checks per operation; a separate connection pool per binding is not required because per-operation checks are authoritative.
 
-## Decision 4: trace and audit binding
+## Decision 5: trace and audit binding
 
-Every connection record MUST include:
+Every connection record and every operation record MUST include:
 
-- selected topology and authentication mechanism;
-- launch-record ID and manifest digest;
+- topology (`local-socket`) and socket type;
+- launch-record ID, authorization-manifest digest, and launch-binding digest;
 - global agent ID, session ID, and trace ID;
-- execution UID, allocation-record ID, host ID, and boot ID;
-- for Candidate L: peer UID/GID, PID, process start time, and pidfd acquisition result;
-- for Candidate N1: certificate/workload-document digest, key ID, issuer, audience, and expiry;
-- for Candidate N2: veth/interface identity, network namespace identity, broker mapping record, and broker identity;
-- establishment, last-operation, revocation, and close events;
-- close reason and any indeterminate operation.
+- execution UID, allocation-record ID, host ID, boot ID, PID namespace, scope;
+- establishing peer: UID/GID, PID, start time, pidfd acquisition result;
+- per operation: credential PID, start time, pidfd acquisition result, process-change flag;
+- establishment, last-operation, denial, revocation, and close events with reason;
+- any admitted-before-revocation or indeterminate operation.
 
-The trace identity is correlation metadata, not authentication evidence. Caller-supplied trace IDs MUST be ignored unless they match the authenticated launch record.
+The trace identity is correlation metadata, not authentication evidence. Caller-supplied trace IDs MUST be ignored unless they equal the authenticated launch record's trace ID.
 
-## Decision 5: WP1 selection criteria
+## Decision 6: microVM control-arm projection
 
-WP1 MUST implement focused spikes for Candidate L and at least one Candidate N mechanism. It MUST record:
+ADR-0003 exposes exactly one vsock path from the guest to the host gateway endpoint. `AF_VSOCK` is not `AF_UNIX`; kernel peer credentials do not cross the VM boundary. The vsock path is therefore a pre-registered **substrate-equivalent** projection of the single-channel property, not an implementation of Decision 2.
 
-| Criterion | Required result |
+1. The host endpoint MUST bind the host-observed peer CID to a **non-reusable VM instance token** issued at launch, the VMM process pidfd and start time, the jailer identity, and the active launch record. A guest-supplied CID, token, or trace ID is not sufficient.
+2. CIDs are reusable after VM teardown. All mappings and connections for a CID MUST be invalidated, and the gateway MUST acknowledge zero connections, **before** `agentbound-lifecycle` permits the CID to be reassigned.
+3. The VM arm claims **session-level** attribution for the process leg of Invariant 13 unless a guest-side trusted witness supplies per-operation process evidence. This is a pre-registered difference between arms and is recorded in the ADR-0003 per-test classification and the traceability matrix; it MUST NOT be silently equated with the Linux arm's per-process evidence.
+4. Operation-time grant checks, revocation, and termination ordering are identical to Decisions 3–4.
+
+## Decision 7: WP1 verification scope
+
+WP1 no longer selects a topology. It MUST verify, on the pinned kernel and systemd baseline, and record as pass/fail with evidence:
+
+| Item | Required result |
 |---|---|
-| Connection/process-to-session binding | Every operation resolves through kernel evidence to one process and one active launch record; descriptor transfer and stale UID/PID reuse tests fail closed. A network candidate without per-operation process evidence fails Invariant 13 and cannot be selected for the conforming arm. |
-| Exportability | Whether a hostile session process can copy the authenticator; bearer-only mechanisms fail this criterion |
-| Revocation | Next operation after committed revocation is denied; all indexed connections close at termination |
-| Descriptor passing | Cross-session transfer is prevented by isolation; same-session transfer does not bypass per-operation checks |
-| Gateway bypass | Plan §6.4 corpus passes for the topology |
-| TCB size | Authentication and mapping code included in the privileged/trusted code accounting |
-| Failure behavior | Gateway, broker, policy, and audit loss follow manifest-declared stop/quarantine behavior |
-| Portability | Required kernel APIs and distribution constraints recorded, never silently degraded |
-| Diagnostics | Denial names the policy/requirement and correlation IDs without leaking another session's data |
+| `SOCK_SEQPACKET` + `SO_PASSCRED` | Exactly one `SCM_CREDENTIALS` per `recvmsg` for one `sendmsg`; oversize packets truncate rather than split |
+| pidfd from credential PID | `pidfd_open` succeeds for live peer; start-time and PID-namespace reads succeed via pidfd; reuse of a recycled PID is detected |
+| Descriptor transfer | `SCM_RIGHTS` rejected; a passed connected descriptor used from another session fails the allocation check |
+| Abstract socket isolation | Abstract-namespace sockets of the host and sibling sessions are unreachable from the session's network namespace |
+| Revocation latency | Next operation after committed revocation is denied; connections closed at termination before reclamation |
+| Bypass corpus | Plan §6.4 corpus, local-socket realization, passes |
+| TCB accounting | Gateway authentication and mapping code counted under the SLOC rules in `phase-1-requirements.md` §12 |
+| Failure behaviour | Gateway, lifecycle, policy, and audit loss follow manifest-declared stop/quarantine behaviour |
+| Diagnostics | Denial names the requirement ID, launch-record ID, and trace ID without leaking another session's identifiers |
 
-The final ADR-0002 revision MUST select one Linux-arm topology and mechanism before milestone 1B implementation. The unselected topology MAY remain as a documented alternative but MUST NOT appear in the effective manifest of the evaluation arm.
-
-## Decision 6: microVM control-arm mapping
-
-ADR-0003 uses a single veth for the network topology and a single vsock service for the non-network control-arm topology. `AF_VSOCK` is **not** `AF_UNIX` and peer credentials do not transfer across this boundary. The vsock path is therefore a pre-registered **substrate-equivalent**, not an identical implementation of Candidate L.
-
-For the vsock realization:
-
-- Firecracker's VM identity (VMM process, jailer, VM configuration digest, guest CID, and launch-record binding) is the authoritative peer evidence;
-- the host-side endpoint MUST map the guest CID and VMM/jailer identity to exactly one active launch record;
-- a guest-supplied CID or trace ID is not sufficient;
-- operation-time grant checks and termination invalidation are identical to Decisions 2–4;
-- ADR-0003's test-equivalence table governs comparison and explicitly records the changed attack mechanics.
-
-This clarification does not add a third Linux-arm topology.
+If any item fails on the pinned baseline, this ADR is reopened; the constructor MUST NOT be built against an unverified assumption.
 
 ## Consequences
 
-- Gate 3 remains provisional until WP1 finalizes this ADR.
-- The gateway authentication path and any host broker are in the trusted computing base and line-count review.
-- Candidate L has a smaller network attack surface but introduces process-credential and descriptor-lifetime subtleties.
-- Candidate N composes naturally with remote gateways but requires strong proof-of-possession or a trusted host broker.
-- Neither candidate prevents a hostile process inside an authorized session from invoking an authorized operation; typed adapters and narrow grants remain the semantic boundary.
+- Gate 3's mechanism is fixed; its provisional status is removed. Gate 3 can now fail only on evidence, not on an unselected mechanism.
+- No network namespace configuration, nftables/eBPF rules, mTLS PKI, or host connection broker is in the Phase 1 TCB. The gateway authentication path (`SO_PEERCRED`, `SO_PASSCRED`, pidfd resolution, allocation index lookup) is in the TCB and the SLOC accounting.
+- The gateway MUST be on-host. Remote services are reached by the gateway's adapters, not by the session.
+- No credential is exportable from the session: kernel credentials cannot be copied.
+- Neither this decision nor any other prevents a hostile process inside an authorized session from invoking an authorized operation; typed adapters and narrow grants remain the semantic boundary.
 - Every operation checks live authority, so connection pooling cannot bypass revocation.
+- Multi-host deployment is deferred; a future ADR must address the process-attribution gap of network transports explicitly.
 
 ## Alternatives considered
 
+### Candidate N — network topology (veth + mTLS/PoP or host broker)
+
+Withdrawn from Phase 1. Both authentication variants identify the session, not the operation-issuing process, so the Invariant 13 chain stops at the session leg. A host-side per-process broker could close the gap but would add a privileged component larger than the mechanism it replaces. Retained as the intended mechanism for a later multi-host ADR.
+
 ### Generic HTTP/CONNECT proxy
 
-Rejected. Destination allowlists do not constrain method, payload semantics, tenant, redirects, SSRF behavior, or cumulative effects.
+Rejected. Destination allowlists do not constrain method, payload semantics, tenant, redirects, SSRF behaviour, or cumulative effects.
 
 ### Exportable bearer token in the session
 
-Rejected as the primary mechanism. A hostile process can copy and replay it outside the session until expiry or revocation.
+Rejected. A hostile process can copy and replay it outside the session until expiry or revocation.
+
+### `AF_UNIX SOCK_STREAM` with per-message credentials
+
+Rejected. Credentials attach to stream segments; an application message can straddle a credential boundary and a passed descriptor permits interleaved writers.
 
 ### Pathname permissions alone on an `AF_UNIX` socket
 
-Rejected. They control opening the path but do not provide durable session identity for an established or passed descriptor.
+Rejected. They control opening the path but provide no durable process identity for an established or passed descriptor.
 
-### Source IP or veth address alone
+### Both veth and Unix socket for defence in depth
 
-Rejected. It identifies a network attachment and is susceptible to mapping error or reuse; it does not prove the local process or active launch record without broker state.
-
-### Both veth and Unix socket for defense in depth
-
-Rejected. Two effect paths enlarge the bypass surface and violate the single-channel property. Defense in depth belongs inside one path (peer evidence plus live grant checks), not in a second path.
+Rejected. Two effect paths enlarge the bypass surface and violate the single-channel property.
 
 ## Open questions for WP0 review
 
-1. Should Candidate L be the default because its no-network session makes bypass testing simpler, or Candidate N1 because it more closely resembles production remote-gateway deployment?
-2. Is peer pidfd acquisition sufficiently portable across the Phase 1 kernel baseline, or should Candidate L require a small host broker with privileged process inspection?
-3. Should same-session descriptor passing of an established gateway connection be prohibited outright, even though session authority is unchanged, to simplify causal attribution to a process?
-4. Which operation-admission policy is safe for a Git push already in progress when revocation arrives: complete-and-record or abort-and-mark-remote-state-unknown?
-5. Does the inference adapter require a separate connection pool per execution binding, or are per-operation binding checks sufficient?
+1. Should the manifest's attribution policy default to `required` (refuse connections without pidfd evidence) for the entire Linux evaluation arm, so that Invariant 13 is measured without a residual assumption?
+2. Should a permitted same-allocation process change on an established connection (Decision 2, descriptor transfer paragraph) instead be forbidden outright, forcing one connection per process, to simplify the audit model at the cost of connection churn?
+3. Is a guest-side witness for the VM arm worth building in 1D, so that both arms claim the same Invariant 13 leg, or is the pre-registered difference acceptable for the comparative claim?

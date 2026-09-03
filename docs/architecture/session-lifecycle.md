@@ -1,10 +1,15 @@
 # Session Lifecycle Specification
 
-**Version:** 0.1  
+**Version:** 0.2  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
 **Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md), [technical report](../papers/technical-report.md), [ADR-0001](ADR-0001-execution-identity.md)
+
+## Revision history
+
+- **0.1** — Initial WP0 draft.
+- **0.2** — Replaced the systemd-invoked lifecycle helper with the `agentbound-lifecycle` daemon (D-Bus scope signals plus held pidfds); construction step 1 restated as a `clone3` synchronization barrier; termination protocol reordered so the PID-namespace init reaps before `cgroup.kill`, with a host credential scan and a termination deadline; quiesce redefined as admission denial plus freeze; local-socket topology only; two-stage launch record terminology.
 
 ---
 
@@ -14,7 +19,7 @@ This specification defines the lifecycle of an `agentbound` session from a reque
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are normative. A session is not active merely because a process exists: it is active only when its effective manifest, launch record, execution identity, containment boundary, and required audit binding have all been established.
 
-`agentbound-policy` resolves policy and derives the effective manifest. `agentbound-launch` is the narrow privileged constructor. `agentbound-gateway` mediates only named approved service operations. `agentbound-audit` records and correlates evidence. The `agentbound` CLI is a policy-governed client; it is not itself privileged lifecycle authority.
+`agentbound-policy` resolves policy and signs the allocation-free authorization manifest. `agentbound-launch` is the narrow, short-lived privileged constructor that reserves an execution identity and signs the launch binding. `agentbound-lifecycle` is the single privileged long-running daemon that owns the identity allocator, holds session pidfds, and is the sole actor for quiesce, termination, reclamation, and restart reconciliation. `agentbound-gateway` mediates only named approved service operations. `agentbound-audit` records and correlates evidence. The `agentbound` CLI is a policy-governed client; it is not itself privileged lifecycle authority.
 
 ---
 
@@ -32,12 +37,12 @@ A session status API MUST expose the current state, the latest transition event,
 |---|---|---|---|
 | `requested` | `agentbound` submits an authenticated bounded request. | No execution identity, scope, mount, credential, or runtime exists. | `requested` or request rejection reason. |
 | `authorized` | `agentbound-policy` derives and signs/commits the allocation-free authorization manifest. | Authorization inputs and versions are fixed; no execution identity exists yet. | `authorized`; launch may be scheduled. |
-| `constructing` | `agentbound-launch` accepts the committed manifest and reserves construction resources. | Child is stopped; no untrusted runtime executes and no usable grant exists. | `constructing`, with current construction step only to authorized operators. |
+| `constructing` | `agentbound-launch` accepts the committed manifest and reserves construction resources. | Child is blocked on the construction barrier; no untrusted runtime executes and no usable grant exists. | `constructing`, with current construction step only to authorized operators. |
 | `active` | All mandatory boundaries exist, launch record is committed, grants are usable, privilege is dropped, and runtime exec succeeds. | Session authority is no greater than the manifest. | `active`, plus policy-governed attach/observe capability. |
 | `quiescing` | A terminate or quiesce decision is accepted. | No new child and no new gateway operation may start. | `quiescing`, with reason and configured bound. |
 | `termination-incomplete` | The termination bound expired while live or contradictory process evidence remains. | Nonterminal: grants are revoked where safe, identity remains held, observation and retries continue; record MUST NOT be sealed final. | `termination-incomplete`, blocking evidence, and next action. |
 | `terminated` | No live process remains in the supervised cgroup or PID namespace. | All processes are dead or reaped; identity remains held pending cleanup. | `terminated`, with termination reason. |
-| `cleaned/sealed` | Cleanup and reclamation prerequisites complete; launch record is sealed. | No managed grant, mount, firewall/veth/socket, or identity allocation remains usable. | `sealed` with immutable final outcome. |
+| `cleaned/sealed` | Cleanup and reclamation prerequisites complete; launch record is sealed. | No managed grant, mount, gateway socket, or identity allocation remains usable. | `sealed` with immutable final outcome. |
 | `rejected` | Request or derivation is invalid, unauthenticated, expired, or unauthorized. | No construction side effect is retained. | `rejected` with safe derivation failure code. |
 | `construction-failed` | A required construction step, audit binding, privilege drop, or exec fails. | Rollback is in progress or completed; no runnable partial session is permitted. | `construction-failed`; cleanup outcome is shown separately. |
 | `aborted` | Authorized actor cancels before `active`, or recovery aborts an unsafe incomplete launch. | Runtime MUST NOT become usable. | `aborted` with actor/reason. |
@@ -53,28 +58,28 @@ A session status API MUST expose the current state, the latest transition event,
 | `requested` → `authorized` | `agentbound-policy` | `session.authorized` | Same canonical inputs produce one manifest/launch-record ID; conflicting replay is rejected. | Discard uncommitted derivation data. | `authorized` or `rejected`. |
 | `requested`/`authorized` → `rejected` | `agentbound-policy` | `session.rejected` | Terminal for the request key; a corrected request requires a new key. | No UID or grant may be allocated. | `rejected` and reason class. |
 | `authorized` → `constructing` | `agentbound-launch` | `session.construction_started` | Compare-and-set on launch-record ID; only one constructor owns an attempt. | Release reservations if ownership cannot be established. | `constructing`. |
-| `authorized`/`constructing` → `aborted` | initiator/approver under policy, systemd recovery, or lifecycle helper | `session.aborted` | Repeated abort converges on rollback and sealed outcome. | Kill stopped child, revoke provisional grants, release resources. | `aborted` then final cleanup state. |
+| `authorized`/`constructing` → `aborted` | initiator/approver under policy, systemd recovery, or `agentbound-lifecycle` | `session.aborted` | Repeated abort converges on rollback and sealed outcome. | Kill barrier-blocked child, revoke provisional grants, release resources. | `aborted` then final cleanup state. |
 | `constructing` → `active` | `agentbound-launch` | `session.activated` | Commit is once-only; retry observes committed launch record rather than execing twice. | If acknowledgment is uncertain, recovery treats session as constructing until scope and record reconcile. | `active`. |
 | `constructing` → `construction-failed` | `agentbound-launch` or fault injector | `session.construction_failed` | Rollback actions are individually idempotent and may be retried. | Execute reverse-order rollback; retain identity if safe release cannot be proven. | `construction-failed`. |
-| `active` → `quiescing` | lifecycle helper after policy decision, systemd, or authorized CLI action | `session.quiesce_started` | Repeated request preserves earliest reason and tightest bound. | If freeze/quiesce fails, escalate to termination when policy requires it. | `quiescing`. |
-| `active` → `degraded` | lifecycle helper applying manifest-declared behavior | `session.degraded` | Same cause updates one degradation record; recovery re-evaluates policy. | Revoke affected grants and reject affected operations. | `degraded`. |
-| `degraded` → `quiescing`/`terminated` | lifecycle helper | `session.degradation_escalated` | Idempotent escalation. | Apply termination ordering. | `quiescing` or `terminated`. |
-| `active`/`quiescing`/`degraded` → `terminated` or `termination-incomplete` | lifecycle helper (systemd may only invoke it) | `session.terminated` | Repeated termination is successful only after no live process is confirmed. | Hold identity and mark incomplete if proof cannot be obtained. | `terminated` or `termination-incomplete`. |
-| `termination-incomplete` → `terminated` | lifecycle helper after retry/recovery proves no live process | `session.termination_completed` | Repeated proof is idempotent. | Keep identity and containment state on uncertainty. | `terminated` only after proof. |
-| `terminated` → `cleaned/sealed` | lifecycle helper and identity allocator | `session.cleaned` and `session.sealed` | Cleanup and sealing are retry-safe; sealing is append-only and once-only. | Do not release identity on cleanup uncertainty. | `sealed` with final reason. |
+| `active` → `quiescing` | `agentbound-lifecycle` after policy decision, systemd, or authorized CLI action | `session.quiesce_started` | Repeated request preserves earliest reason and tightest bound. | If freeze/quiesce fails, escalate to termination when policy requires it. | `quiescing`. |
+| `active` → `degraded` | `agentbound-lifecycle` applying manifest-declared behavior | `session.degraded` | Same cause updates one degradation record; recovery re-evaluates policy. | Revoke affected grants and reject affected operations. | `degraded`. |
+| `degraded` → `quiescing`/`terminated` | `agentbound-lifecycle` | `session.degradation_escalated` | Idempotent escalation. | Apply termination ordering. | `quiescing` or `terminated`. |
+| `active`/`quiescing`/`degraded` → `terminated` or `termination-incomplete` | `agentbound-lifecycle` (triggered by request, revocation, or systemd scope signal) | `session.terminated` | Repeated termination is successful only after no live process is confirmed. | Hold identity and mark incomplete if proof cannot be obtained. | `terminated` or `termination-incomplete`. |
+| `termination-incomplete` → `terminated` | `agentbound-lifecycle` after retry/recovery proves no live process | `session.termination_completed` | Repeated proof is idempotent. | Keep identity and containment state on uncertainty. | `terminated` only after proof. |
+| `terminated` → `cleaned/sealed` | `agentbound-lifecycle` and identity allocator | `session.cleaned` and `session.sealed` | Cleanup and sealing are retry-safe; sealing is append-only and once-only. | Do not release identity on cleanup uncertainty. | `sealed` with final reason. |
 | any nonterminal → `construction-failed`/`aborted` during recovery | recovery controller | `session.recovery_aborted` | Reconciliation is repeatable from persisted facts. | Prefer containment and identity hold over speculative release. | failure state and recovery reason. |
 
-An actor MAY request a transition but the lifecycle helper MUST authorize and serialize every post-launch state change. A transition audit event MUST be emitted before or atomically with the externally visible state update; audit pipeline failure follows the manifest's fail-closed rule.
+An actor MAY request a transition but `agentbound-lifecycle` MUST authorize and serialize every post-launch state change. A transition audit event MUST be emitted before or atomically with the externally visible state update; audit pipeline failure follows the manifest's fail-closed rule.
 
 ---
 
 ## 3. Construction protocol
 
-`agentbound-launch` MUST perform these nine sub-steps in this exact order from technical-report §2.1. It MUST create the child stopped, or use an equivalent `clone3` stopped construction, and it MUST NOT run untrusted code between steps.
+`agentbound-launch` MUST perform these nine sub-steps in this exact order from technical-report §2.1. The child is created with `clone3` carrying the required namespace flags and `CLONE_PIDFD`; because no kernel facility creates a child in a stopped state, the child MUST block on a **synchronization barrier** (a pipe or eventfd held by the constructor) before executing anything other than its bootstrap, and the constructor releases the barrier only after every step below is complete and verified. No untrusted code runs between steps.
 
 | # | Required construction sub-step | Rollback action | Plan §7.3 fault-injection point |
 |---|---|---|---|
-| 1 | Create the child stopped, or use `clone3` with required namespace flags, before any credential or mount is visible. | Kill/reap stopped child; remove provisional scope. | Namespace and mount setup at each §2.1 step. |
+| 1 | `clone3` with namespace flags and `CLONE_PIDFD`; child blocks on the synchronization barrier before any credential or mount is visible. | Kill/reap blocked child via pidfd; remove provisional scope. | Namespace and mount setup at each §2.1 step. |
 | 2 | Unshare mount namespace and recursively mark mounts private before any bind operation. | Destroy child mount namespace by killing child; verify no propagation to host. | Namespace and mount setup. |
 | 3 | Resolve mount sources descriptor-relatively with `openat2` safe resolution or mount FDs; never re-walk string paths. | Close source and mount FDs; unregister provisional path references. | Namespace/mount setup and constructor-input path/TOCTOU tests. |
 | 4 | Build restricted tree and enter it with `pivot_root`, never `chroot`. | Unmount restricted tree from host-side tracked mount FD; destroy child. | Namespace and mount setup. |
@@ -84,47 +89,50 @@ An actor MAY request a transition but the lifecycle helper MUST authorize and se
 | 8 | Make credentials or broker access usable only after every boundary is in place and the launch record is committed. | Revoke/close provisional broker or credential grant; record issuance and revocation outcome. | Credential/gateway grant issuance and audit binding. |
 | 9 | Exec the runtime last. | If exec fails, kill/reap child and execute all reverse-order cleanup. | Runtime `exec`. |
 
-The constructor MUST create the cgroup/systemd scope, resource limits, required network path/firewall policy, and audit/session provenance as prerequisites incorporated in these steps; a required prerequisite failure MUST cause `construction-failed`.
+The constructor MUST create the cgroup/systemd scope, resource limits, the single `SOCK_SEQPACKET` gateway-socket mount, and audit/session provenance as prerequisites incorporated in these steps; a required prerequisite failure MUST cause `construction-failed`.
 
 Credentials, `agentbound-gateway` authority, and broker access MUST become usable **only after** the launch record is committed. The runtime MUST be exec'd last. `agentbound-launch` MUST drop launch-only privileges before that exec. A launch record committed for a failed exec MUST be sealed with a failure outcome, not deleted.
 
 ---
 
-## 4. Post-launch privileged lifecycle helper
+## 4. Post-launch privileged lifecycle daemon
 
-The post-launch privileged lifecycle helper is a separately authorized and reviewable component. It MUST be separate from `agentbound-launch`; the constructor MUST NOT retain a general post-launch control channel merely for convenience.
+`agentbound-lifecycle` is one privileged, long-running daemon, separately authorized and reviewable, and counted in the privileged-code accounting. It MUST be separate from `agentbound-launch`; the constructor hands each session's pidfds, scope name, and allocation record to the daemon before exit and MUST NOT retain a post-launch control channel.
 
-The helper's enumerated privileged operations are:
+Rationale: a transient systemd scope has no `ExecStop=`; systemd can only stop or kill its cgroup and cannot invoke a helper. The ordered termination protocol in §5 therefore needs an actor that outlives the constructor, holds pidfds durably, and survives restarts. That actor is the daemon.
+
+Its enumerated privileged operations are:
 
 1. terminate a session and its descendants;
-2. quiesce/freeze a session and enforce the quiescing restrictions;
-3. revoke credentials, broker access, and `agentbound-gateway` grants;
-4. clean session mounts, firewall rules, veth, or the explicitly mounted gateway socket; and
-5. release the execution identity to the identity allocator only after verified reclamation.
+2. quiesce a session and enforce the quiescing restrictions;
+3. instruct `agentbound-gateway` to deny admission, then release credentials, broker access, and gateway grant records;
+4. clean session mounts and the mounted gateway socket;
+5. allocate, reclaim, quarantine, and release execution identities (ADR-0001); and
+6. reconcile persisted state after restart (§7).
 
-The helper MAY be invoked by systemd for scope failure or stop handling (systemd MUST invoke it and MUST NOT update lifecycle state directly), by the `agentbound` CLI only through a policy-authorized request, and by authenticated revocation triggers. It MUST record the invoking actor and delegated authority. It MUST NOT accept arbitrary cgroup paths, mount paths, UIDs, firewall rules, or shell commands from its caller.
+The daemon subscribes to systemd's D-Bus `UnitRemoved` and `PropertiesChanged` signals for session scopes and holds the PID-namespace-init pidfd as an independent liveness source; either signal triggers the §5 protocol. If systemd kills a scope before the daemon acts, the daemon MUST still execute the full protocol and MUST record `session.ordering_deviation` with the systemd event that pre-empted it. The daemon accepts requests from the `agentbound` CLI only through a policy-authorized request, and from authenticated revocation triggers; it MUST record the invoking actor and delegated authority and MUST NOT accept arbitrary cgroup paths, mount paths, UIDs, or shell commands from any caller. Peer identity and authorization for each caller are specified in [component interfaces](component-interfaces.md).
 
 ---
 
 ## 5. Termination and cleanup ordering
 
-For every normal stop, cancellation, revocation requiring termination, construction rollback after process creation, and recovery stop, the helper MUST perform this order:
+For every normal stop, cancellation, revocation requiring termination, construction rollback after process creation, and recovery stop, `agentbound-lifecycle` MUST perform this order:
 
-1. mark the session terminating and make the gateway deny admission of new operations without yet releasing grant records;
-2. freeze the session cgroup;
-3. kill the cgroup with `cgroup.kill`;
-4. reap processes through the PID-namespace init/subreaper and held pidfds;
-5. confirm that no live process remains;
-6. revoke and release `agentbound-gateway` grant records and close indexed connections;
+1. mark the session terminating and instruct `agentbound-gateway` to deny admission of new operations without yet releasing grant records;
+2. freeze the session cgroup so no process can fork while the protocol runs;
+3. deliver `SIGTERM` to the workload via the PID-namespace init and thaw briefly within a bounded window so init can reap exited children;
+4. freeze again and kill the cgroup with `cgroup.kill`; wait for the init pidfd to signal exit;
+5. confirm that `cgroup.procs` is empty, the init has exited and been reaped, and the host credential scan of the [identity lifecycle](execution-identity-lifecycle.md) §4.1 finds no process under the execution UID/GIDs;
+6. release `agentbound-gateway` grant records and close indexed connections; the gateway MUST acknowledge zero connections;
 7. close broker access and any session credential capability;
 8. unmount session filesystems;
-9. remove firewall/veth or the approved gateway socket;
+9. remove the mounted gateway socket;
 10. release the execution identity to reclamation; and
 11. seal the launch record with the termination reason and cleanup outcome.
 
-Denying new operation admission is mandatory on entry and is distinct from releasing grant records. The helper MUST NOT release gateway/credential records before descendant termination is complete unless early revocation is needed to contain an immediate remote effect. In that exception it MUST record the ordering deviation, revoke early, and continue process termination.
+Denying new operation admission is mandatory on entry and is distinct from releasing grant records. `agentbound-lifecycle` MUST NOT release gateway/credential records before descendant termination is complete unless early revocation is needed to contain an immediate remote effect. In that exception it MUST record the ordering deviation, revoke early, and continue process termination.
 
-`cgroup.kill` does not reap processes and cannot terminate an uninterruptible D-state task. The helper MUST use a configurable bounded wait for cgroup emptiness, PID-namespace-init exit, and relevant pidfds. If a task remains live at the bound, it MUST mark the session `termination-incomplete`, retain all identity allocation and grants needed for safe containment decisions, and continue observation or operator escalation. It MUST NEVER release an execution identity while a live process remains in its declared managed reclamation domain.
+`cgroup.kill` sends `SIGKILL` to current cgroup members; it neither reaps zombies nor terminates an uninterruptible D-state task, and membership is containment evidence rather than proof against a task that left the cgroup (hence step 5). `agentbound-lifecycle` MUST use a configurable bounded wait for cgroup emptiness, PID-namespace-init exit, and relevant pidfds. If a task remains live at the bound, it MUST mark the session `termination-incomplete`, retain all identity allocation and grants needed for safe containment decisions, and continue observation or operator escalation. A manifest-declared **termination deadline** bounds this state: a session still `termination-incomplete` at the deadline is a **non-pass** for the affected test and a mandatory operator escalation; the identity remains held regardless. It MUST NEVER release an execution identity while a live process remains in its declared managed reclamation domain.
 
 ---
 
@@ -132,7 +140,7 @@ Denying new operation admission is mandatory on entry and is distinct from relea
 
 A manifest MUST declare one behavior for each applicable trigger: `terminate`, `quiesce`, or `continue-degraded`. The declaration is a policy choice, but the implementation MUST execute it deterministically and audit the trigger, decision, affected grants, and result.
 
-**Quiesce** means: the helper freezes or otherwise admission-controls the session so that it can create **no new gateway operation** and **no new child process**; it revokes admission for new attachments and grants; existing processes MAY finish only within a configured bound. On bound expiry, the helper MUST terminate the session. Quiesce is not a promise that already-read information is forgotten.
+**Quiesce** means: `agentbound-lifecycle` instructs the gateway to deny admission of new operations, denies new attachments and grants, and then **freezes** the session cgroup for the manifest-declared bound; the frozen session can create no new gateway operation and no new process. At bound expiry `agentbound-lifecycle` MUST terminate the session. Quiesce does not promise that thawed processes could not fork: no-new-child semantics are provided only by the freeze, so a quiesced session is never thawed except by the termination protocol. Quiesce is not a promise that already-read information is forgotten.
 
 | Milestone | Trigger | Declared behavior requirements |
 |---|---|---|
@@ -166,7 +174,7 @@ On restart, the control plane MUST treat persisted launch records, systemd scope
 | `termination-incomplete` | Maintain identity hold and containment observation; require explicit successful no-live-process confirmation before cleanup. |
 | terminal/sealed | Verify seal integrity only; do not recreate session resources. |
 
-An orphan is a live scope, cgroup, mount, grant, or allocator allocation lacking a compatible active launch record, or a launch record claiming a session whose scope evidence conflicts with it. Recovery MUST mark an orphan audit event, deny new grants, and contain/terminate it using the lifecycle helper. Systemd scope state and the launch-record store are the authoritative paired discovery sources; either source alone is insufficient for safe reclamation.
+An orphan is a live scope, cgroup, mount, grant, or allocator allocation lacking a compatible active launch record, or a launch record claiming a session whose scope evidence conflicts with it. Recovery MUST mark an orphan audit event, deny new grants, and contain/terminate it. Authoritative-source precedence when systemd scope state, the launch-record store, the allocator store, the gateway connection index, and audit disagree is specified in [component interfaces](component-interfaces.md); the default is fail closed (hold identity, deny authority).
 
 ---
 
@@ -190,7 +198,7 @@ Every event below MUST include: `host_id`, `boot_id`, `launch_record_id`, `alloc
 | `session.termination_started` | reason, cgroup/scope identity, ordering deviations. |
 | `session.terminated` | `cgroup.kill` result, pidfd/PID-init reaping result, no-live-process proof. |
 | `session.termination_incomplete` | remaining process evidence, configured bound, identity hold. |
-| `session.cleanup_completed` | mounts, firewall/veth/socket, brokers, grants, and ACL cleanup results. |
+| `session.cleanup_completed` | mounts, gateway socket, brokers, grants, and ACL cleanup results. |
 | `session.identity_released` | allocation record, reclamation proof reference, quarantine status. |
 | `session.sealed` | final state, termination reason, seal sequence/hash. |
 | `session.recovery_reconciled` / `session.orphan_detected` | discovered scope/store evidence and resulting action. |
@@ -206,7 +214,7 @@ Every event below MUST include: `host_id`, `boot_id`, `launch_record_id`, `alloc
 1. `agentbound-policy` MUST derive authority before `agentbound-launch` obtains an execution identity or creates a scope.
 2. An approval, policy, catalogue, or runtime decision used to enter `authorized` MUST be recorded by immutable reference. A later caller MUST NOT substitute a newer or differently encoded value into an already authorized attempt.
 3. At most one constructor attempt MAY own a launch-record ID at a time. The ownership lease MUST be durable enough that a restart can distinguish a live owner from an abandoned attempt.
-4. Only the lifecycle helper MAY advance an active session toward quiescing, termination, cleanup, or identity release. systemd and the `agentbound` CLI invoke its authorized interface; neither bypasses its checks.
+4. Only `agentbound-lifecycle` MAY advance an active session toward quiescing, termination, cleanup, or identity release. systemd supplies scope observations only; the `agentbound` CLI and revocation triggers request action through its authorized interface; `agentbound-lifecycle` alone decides, serializes, and performs the transition.
 5. A failed transition MUST be fail closed with respect to new authority. In particular, a failed revocation check MUST NOT enable a new `agentbound-gateway` operation.
 6. A state transition MUST preserve a causal link to the initiating request, policy decision, revocation signal, systemd event, or recovery observation that caused it.
 7. An observer MAY see a lagging status replica, but the status API MUST label its observation sequence and MUST offer an authoritative record reference for privileged observers.
@@ -235,10 +243,10 @@ Safe reason codes MUST be stable machine-readable values. Human-readable detail 
 
 | Resource class | Required rollback proof |
 |---|---|
-| stopped child and PID namespace | Child exit/reap and PID-namespace-init outcome. |
+| barrier-blocked child and PID namespace | Child exit/reap and PID-namespace-init outcome. |
 | systemd scope/cgroup | Scope stop result and empty `cgroup.procs`, or explicit incomplete-termination hold. |
 | mounts and mount FDs | Unmount result and closure of tracked FDs. |
-| network path | Removal of veth/firewall state, or closure of the one permitted local socket mount. |
+| gateway channel | Closure and unmount of the one permitted `SOCK_SEQPACKET` gateway socket. |
 | descriptors | Closure or explicit transfer to an allowed, still-live supervised process. |
 | execution identity | Transition to `reclaiming`, not speculative `free`. |
 | gateway/broker grant | Issuer confirmation of revocation or a recorded unreachable dependency that blocks release. |
@@ -279,7 +287,7 @@ Tests SHOULD run these checks against both normal operations and fault-injected 
 
 ### 9.7 Dependencies and failure boundaries
 
-The lifecycle helper relies on systemd scope control, cgroup v2, a PID-namespace init or subreaper, a trusted launch-record store, the identity allocator, and any configured broker or `agentbound-gateway` grant authority. Each dependency MUST expose an authenticated status interface or a durable record sufficient for recovery.
+The `agentbound-lifecycle` relies on systemd scope control, cgroup v2, a PID-namespace init or subreaper, a trusted launch-record store, the identity allocator, and any configured broker or `agentbound-gateway` grant authority. Each dependency MUST expose an authenticated status interface or a durable record sufficient for recovery.
 
 A dependency failure does not automatically authorize termination completion. For example, a missing gateway confirmation blocks identity reclamation even if the cgroup is empty; a lost audit collector triggers the manifest's audit-loss behavior; and a missing systemd response requires corroboration from cgroup and process evidence. Implementations MUST state which source is authoritative for each check and MUST treat contradictory sources as an unsafe condition.
 
@@ -290,7 +298,7 @@ A configuration that omits a required dependency for a claimed property MUST mar
 ## 10. Open questions for WP0 review
 
 1. What exact systemd and kernel version set defines the supported semantics for `cgroup.freeze`, `cgroup.kill`, pidfds, and scope recovery?
-2. Which gateway topology will ADR-0002 select, and how does its connection lifetime interact with a quiesce transition?
+2. On the pinned baseline, does a frozen cgroup hold a `SOCK_SEQPACKET` connection open in a way that delays the gateway's zero-connection acknowledgement, and should quiesce therefore close idle gateway connections before freezing?
 3. What trust anchor, correction procedure, and retention policy seal the launch-record store?
 4. Which control-plane outage modes may safely use `continue-degraded`, and what minimum local evidence is required?
 5. How is audit-pipeline backpressure represented in the manifest and status API?

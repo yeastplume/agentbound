@@ -1,59 +1,77 @@
-# Agentbound Effective Manifest Schema
+# Agentbound Manifest Schema
 
-**Version:** 0.1  
-**Status:** Draft for WP0 review  
-**Date:** 28 August 2026  
+**Version:** 0.2
+**Status:** Draft for WP0 review
+**Date:** 28 August 2026
 **Applies to:** the Unix-governed reference implementation and its microVM control arm
+
+## Revision history
+
+| Version | Date | Change |
+|---|---|---|
+| 0.1 | 28 August 2026 | Initial effective-manifest draft. |
+| 0.2 | 28 August 2026 | Replaces one effective-manifest object with policy-signed authorization and constructor-signed launch-binding objects. |
 
 ---
 
 ## 1. Purpose and normative conventions
 
-This document specifies the bounded request accepted by `agentbound-policy` and
-the policy-signed authorization manifest and constructor-signed launch binding consumed as the effective manifest by `agentbound-launch`. It is a WP0
-artefact required by the [Phase 1 reference implementation plan](../plans/phase-1-reference-implementation.md)
+This document specifies the bounded request accepted by `agentbound-policy`, the
+policy-signed authorization manifest, and the constructor-signed launch binding
+consumed by `agentbound-launch`. It is a WP0 artefact required by the [Phase 1
+reference implementation plan](../plans/phase-1-reference-implementation.md)
 (the “plan”). It implements the launch-record and derivation requirements in
-[Agents as Unix Principals](../papers/technical-report.md) (the “technical
-report”) and the ownership/execution split in
-[ADR-0001](ADR-0001-execution-identity.md).
+[Agents as Unix Principals](../papers/technical-report.md) and the
+ownership/execution split in [ADR-0001](ADR-0001-execution-identity.md).
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** in this document are to be interpreted as described by RFC 2119.
 
-A request is an untrusted selection of registered names. An effective manifest
-is a policy-derived decision and is not an entitlement supplied by the caller.
-`agentbound-launch` MUST accept no authority-bearing input other than a
-validated, policy-signed authorization manifest; after allocation it accepts only the constructor-produced launch binding paired with that authorization digest.
+A request is an untrusted selection of registered names. An authorization
+manifest is a policy-derived decision, not an entitlement supplied by the
+caller. A launch binding is the host-specific projection of precisely that
+decision after identity reservation. The **effective manifest** is the verified
+pair; it is not a third signed object.
 
-This version defines a JSON data model. All object members named in this
-document are case-sensitive ASCII strings. Identifiers are opaque strings;
-components MUST NOT infer authority from their spelling.
+`agentbound-launch` MUST accept no authority-bearing input other than a
+validated, policy-signed authorization manifest. It MUST create a launch binding
+only after all required checks and atomic execution-identity reservation. It
+MUST NOT derive, expand, or replace policy during binding construction.
+
+This version defines a JSON data model. All named object members are
+case-sensitive ASCII strings. Identifiers are opaque values whose authority is
+established only through typed validation and catalogue resolution.
 
 ### 1.1 Terms
 
 - **Caller** means the authenticated party submitting a request to `agentbound`.
 - **Catalogue** means a versioned, server-side registry of named resources,
-  runtimes, adapters, mount sources, and allowed platform bindings.
-- **Derivation input** means an authenticated identity, approval, policy,
-  catalogue entry, or other versioned fact evaluated by the derivation relation.
-- **Launch record** means the immutable signed record represented by an
-  authorization manifest and launch binding plus both signature envelopes in Section 4.
-- **Managed reclamation domain** has the meaning in ADR-0001: the declared
+  runtimes, adapters, mount sources, target templates, and platform bindings.
+- **Authorization manifest** means the allocation-free policy decision with
+  `manifest_version` equal to `agentbound.authorization-manifest.v0.1`.
+- **Launch binding** means the allocation-bound host projection with
+  `launch_binding_version` equal to `agentbound.launch-binding.v0.1`.
+- **Launch record** means the immutable effective-manifest pair and its two
+  signature envelopes.
+- **Managed reclamation domain** has the meaning in ADR-0001: declared
   namespaces, mounts, registered host paths, runtime/workspace stores, grants,
-  IPC state, and cgroup state examined before execution-identity reuse.
+  IPC state, and cgroup state examined before identity reuse.
 
 ### 1.2 Conformance boundary
 
-`agentbound-policy` produces substrate-independent authorization decisions and catalogue-constrained projection requirements. `agentbound-launch` allocates and records only the platform values and substrate-specific projections explicitly identified below as launch-binding outputs; it MUST NOT derive policy. `agentbound-gateway` enforces only named typed operations. It MUST NOT
-interpret a manifest as permission to proxy arbitrary network traffic.
-`agentbound-audit` records the signed launch record and correlates its required
-keys with kernel and gateway evidence; it MUST apply the manifest audit-loss
-behaviour when its declared evidence stream is unavailable.
+`agentbound-policy` produces substrate-independent policy decisions and
+catalogue-constrained intent requirements. `agentbound-launch` allocates and
+records only the platform values and host projections identified as launch
+binding outputs. `agentbound-gateway` enforces only named, typed operations. It
+MUST NOT interpret either object as permission to proxy arbitrary traffic.
+
+`agentbound-audit` MUST retain the sealed launch record and correlate required
+keys with kernel and gateway evidence. It MUST apply the declared audit-loss
+behaviour when an evidence stream is unavailable.
 
 The Unix-governed profile does not claim dynamic information-flow propagation.
 Where label-like fields are used by another profile, they are policy metadata
-and do not alter that profile's conformance claim unless its own specification
-says otherwise.
+unless that profile's specification explicitly provides a stronger claim.
 
 ---
 
@@ -74,26 +92,24 @@ schema_version
 task_purpose_id
 ```
 
-`schema_version` MUST equal the string `"agentbound.session-request.v0.1"`.
-The request MUST be authenticated independently of this JSON object.
-`initiator_credential_ref` identifies the already-authenticated credential or
-session used for correlation; it MUST NOT contain credential material.
-
-A caller MAY supply only the following selections:
+`schema_version` MUST equal `"agentbound.session-request.v0.1"`. The request
+MUST be authenticated independently of this JSON object.
+`initiator_credential_ref` identifies already-authenticated evidence for
+correlation; it MUST NOT contain credential material.
 
 | Member | Type and maximum | Meaning |
 |---|---|---|
-| `agent_principal_id` | string, 1–128 UTF-8 bytes | Registered durable agent principal ID. |
-| `task_purpose_id` | string, 1–128 UTF-8 bytes | Registered task or purpose ID. |
-| `requested_resources` | array of 0–32 strings, each 1–128 bytes | Named resource requests, resolved only through the catalogue. |
-| `requested_runtime` | string, 1–128 bytes | Runtime name from the approved runtime catalogue. |
-| `budget` | object, optional, at most 16 members | Requested upper bounds only; see Section 2.2. |
-| `initiator_credential_ref` | string, 1–256 bytes | Opaque reference to authenticated initiator evidence. |
-| `approval_references` | array of 0–16 strings, each 1–256 bytes | Opaque references to approval objects. |
+| `agent_principal_id` | identifier, 1–128 UTF-8 bytes | Registered durable agent principal. |
+| `task_purpose_id` | identifier, 1–128 UTF-8 bytes | Registered task or purpose. |
+| `requested_resources` | array of 0–32 identifiers | Catalogue resource selections. |
+| `requested_runtime` | identifier, 1–128 UTF-8 bytes | Approved runtime selection. |
+| `budget` | object, optional, at most 16 members | Requested upper bounds only. |
+| `initiator_credential_ref` | evidence reference, 1–256 bytes | Authenticated initiator evidence. |
+| `approval_references` | array of 0–16 evidence references | Approval-object references. |
 
-The caller MAY request fewer resources or a lower budget than policy permits.
-A request MUST NOT cause authority, visibility, budget, or credential scope to
-increase merely because it includes a name.
+A caller MAY request fewer resources or a lower budget than policy permits. A
+request MUST NOT increase authority, visibility, budget, or credential scope
+merely because it includes a name.
 
 ### 2.2 Requested budget
 
@@ -105,169 +121,202 @@ io_bytes, gateway_requests, gateway_bytes, connection_count,
 audit_events, model_tokens, monetary_microunits, delegation_fanout
 ```
 
-Each value MUST be a JSON non-negative integer that is exactly representable
-under JCS/ECMAScript numeric rules and MUST be no greater than `9007199254740991`.
-The request MUST NOT specify a rate, an unlimited value, a negative value, a
-floating-point value, or a unit-bearing string. Policy MAY omit a requested
-class or reduce it to a lower catalogue-supported bound.
+Each value MUST be a JSON non-negative integer exactly representable under
+JCS/ECMAScript numeric rules and no greater than `9007199254740991`. The request
+MUST NOT specify a rate, unlimited value, negative value, floating-point value,
+or unit-bearing string. Policy MAY omit a requested class or reduce it to a
+lower catalogue-supported bound.
 
-### 2.3 Rejected fields and values
+### 2.3 Structural validation and rejected fields
 
-The request parser MUST reject the entire request if it contains an unknown
-member at any level, including an extension member. It MUST reject duplicate
-object member names, even if a generic JSON parser would retain one value.
+The request parser MUST reject the entire request for an unknown member at any
+level, including an extension member, or for duplicate object-member names. The
+schema is closed. The parser MUST enforce the declared types, bounds, and the
+following identifier grammars:
 
-In particular, the following caller-supplied fields, aliases, or semantically
-equivalent values MUST be rejected if present anywhere in the request:
+| Identifier class | Grammar | Additional validation |
+|---|---|---|
+| principal, task, resource, runtime, catalogue IDs | `[a-z][a-z0-9-]{0,31}:[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}` | MUST exist in the applicable catalogue or authority registry. |
+| evidence references | `[a-z][a-z0-9-]{0,31}:[a-zA-Z0-9][a-zA-Z0-9._/-]{0,255}` | MUST resolve to authenticated evidence of the required type. |
+| digest | `sha256:[0-9a-f]{64}` | MUST identify the stated algorithm and value. |
+| opaque local identifier | `[A-Za-z][A-Za-z0-9._:-]{0,127}` | MUST be used only in the member class that defines it. |
 
-- numeric UIDs, GIDs, execution identities, or ownership projections;
-- filesystem paths, host paths, mount targets, mount sources, file descriptors,
-  device names, or labels;
-- credential material, tokens, passwords, private keys, certificate bodies,
-  bearer values, or broker secrets;
-- network addresses, hostnames, URLs, ports, CIDRs, interface names, routes, or
-  socket paths;
-- Linux capabilities, securebits, seccomp, Landlock, LSM/MAC context, or other
-  privilege controls;
-- namespace settings, clone flags, cgroup paths, systemd unit names, or
-  firewall rules.
+No semantic inspection of opaque identifiers is performed. A component MUST NOT
+infer a filesystem path, URL, address, authority, or configuration instruction
+from identifier spelling. Catalogue-existence and typed-reference checks, not
+string interpretation, determine whether an identifier is usable.
 
-This prohibition applies to JSON member names, nested objects, strings encoded
-as JSON, and string values that purport to carry such configuration. A named
-catalogue resource is permitted only as a member of `requested_resources`; it
-is not a path or direct mount instruction.
+The schema has no members for numeric UIDs/GIDs, execution identities,
+ownership projections, filesystem paths, mount sources or targets, file
+descriptors, credential material, network addresses, ports, URLs, Linux
+privilege controls, namespace settings, cgroup paths, systemd unit names, or
+firewall rules. Such configuration is invalid because no typed member admits
+it—not because an opaque string is inspected for resemblance to it.
 
 ### 2.4 Bounds and syntax
 
 A request MUST be at most 16 KiB after UTF-8 encoding. Its maximum object or
-array nesting depth is 4, including the root. It MUST contain no control
-characters in identifier strings, no `NUL`, and no Unicode noncharacters.
+array nesting depth is four, including the root. It MUST contain no control
+characters, `NUL`, or Unicode noncharacters in identifier strings.
 Implementations MUST reject invalid UTF-8, non-finite numbers, and JSON text
 with trailing non-whitespace bytes.
 
 Each array that represents a set MUST contain no duplicate value after exact
-Unicode code-point comparison. The parser MUST preserve the supplied bytes for
-audit but MUST NOT use ordering as an authorization input. `agentbound-policy`
-MUST authenticate referenced identities and approval objects before derivation.
+Unicode code-point comparison. The parser MUST preserve supplied bytes for
+audit but MUST NOT use ordering as authorization input. `agentbound-policy`
+MUST authenticate referenced identities and approvals before derivation.
 
 ---
 
 ## 3. Effective manifest schema
 
-### 3.1 Common rules
+### 3.1 Common rules and object division
 
-The immutable launch record has two canonically encoded objects to avoid requiring a host allocation before policy authorization:
+The immutable launch record has exactly two canonically encoded signed objects:
 
-1. the policy-signed **authorization manifest** (`agentbound.authorization-manifest.v0.1`), containing substrate-independent decisions and catalogue references but no numeric execution identity or resolved host object; and
-2. the constructor-signed **launch binding** (`agentbound.launch-binding.v0.1`), produced only after validation and atomic identity reservation, binding host allocation and substrate-specific projections to the authorization-manifest digest.
+1. the **AUTHORIZATION MANIFEST**, produced and Ed25519-signed by
+   `agentbound-policy`, allocation-free, with version
+   `agentbound.authorization-manifest.v0.1`; and
+2. the **LAUNCH BINDING**, produced and Ed25519-signed by `agentbound-launch`
+   after verification and atomic identity reservation, with version
+   `agentbound.launch-binding.v0.1`.
 
-Together they are the effective manifest. Optional values use an explicitly documented `null` or empty array; neither producer may silently omit a required security decision. The launch-record identity is `SHA-256(authorization_manifest_digest || launch_binding_digest)` over the two binary digest values in that order.
+Together, after both signatures and correspondence checks succeed, they are the
+effective manifest. Optional decisions use an explicitly documented `null` or
+empty array; neither producer MAY silently omit a required security decision.
 
-“Independent” means substrate-independent and is shared unchanged with the
-microVM control arm. “Specific” means substrate-specific and MUST be separately
-projected and reviewed for each launcher. A field marked “both” contains an
-independent policy decision plus a specific enforcement projection.
+Every policy decision lives in the authorization manifest. Every host projection
+lives in the launch binding and references its authorization-manifest counterpart
+by ID. A field MUST NOT be duplicated as an unconstrained “both” field. The
+constructor MUST verify this one-to-one correspondence:
 
-**Table 1 — required effective-manifest members**
+1. `launch_record_id` values MUST be byte-for-byte equal.
+2. The binding's `authorization_manifest_digest` MUST equal the digest verified
+   for the authorization manifest.
+3. Every `mount_intent.mount_id` MUST have exactly one `mount_projections`
+   entry with that ID, and no projection MAY name another ID.
+4. Every credential-grant intent ID MUST have exactly one issued credential
+   grant referencing it, and no issued grant MAY name another ID.
+5. Gateway operation IDs, typed operation content, scopes, and budgets MUST be
+   unchanged; a binding MUST NOT add, drop, substitute, or widen an operation.
+6. Resource classes and policy limits MUST have exactly one resource projection
+   each; installed values MUST be no greater than policy values.
+7. Runtime, execution-binding, audit, revocation, and retention decisions MUST
+   be identical to the authorization manifest where the binding references them;
+   no binding member MAY introduce additional authority.
 
-| Member | Type / bound | Class | Record / producer | Signed |
-|---|---|---|---|---|
-| `manifest_version` | string | Independent | authorization / `agentbound-policy` | policy |
-| `launch_binding_version` | string | Specific | launch binding / `agentbound-launch` | constructor |
-| `launch_record_id` | UUID-like opaque string, ≤128 bytes | Independent | authorization / `agentbound-policy` | policy |
-| `agent` | object: `global_id`, `durable_ownership_projection` | Both | authorization decision + launch projection | both, separate objects |
-| `execution_identity` | object: `allocation_id`, `uid`, `gids`, `mac_context` | Specific | launch binding / `agentbound-launch` | constructor |
-| `session_trace` | object: `session_id`, `trace_id`, `boot_binding` | Both | authorization decision + launch projection | both, separate objects |
-| `actors` | object: initiators, approvers, scheduler, owner | Independent | authorization / `agentbound-policy` | policy |
-| `task` | object: `purpose_id`, `approval_references` | Independent | authorization / `agentbound-policy` | policy |
-| `derivation` | object described in Section 3.2 | Independent | authorization / `agentbound-policy` | policy |
-| `runtime` | object: catalogue ID, artifact digest, invocation profile | Both | authorization decision + launch projection | both, separate objects |
-| `execution_binding` | object described in Section 3.3 | Independent | authorization / `agentbound-policy` | policy |
-| `namespaces` | object described in Section 3.4 | Specific | launch binding / `agentbound-launch` | constructor |
-| `mounts` | array of mount specifications | Specific | authorization decision + launch projection | both, separate objects |
-| `descriptor_allowlist` | array of descriptor specifications | Specific | launch binding / `agentbound-launch` | constructor |
-| `resource_limits` | object of enforced limits | Both | authorization decision + launch projection | both, separate objects |
-| `gateway` | object described in Section 3.6 | Both | authorization decision + launch projection | both, separate objects |
-| `credential_grants` | array of broker/credential grants | Both | authorization decision + launch projection | both, separate objects |
-| `audit` | object described in Section 3.7 | Independent | authorization / `agentbound-policy` | policy |
-| `revocation` | object of trigger behaviours | Independent | authorization / `agentbound-policy` | policy |
-| `termination_retention` | object described in Section 3.8 | Independent | authorization / `agentbound-policy` | policy |
+Failure of any equality check MUST reject construction and MUST publish no
+runnable session.
 
-`agent.global_id` is the durable agent principal identity. Its
-`durable_ownership_projection` MUST state either an opaque storage-principal
-reference or a stable local ownership UID projection. That projection MUST NOT
-be the execution UID in this profile.
+### 3.2 Authorization manifest
 
-`execution_identity.uid` is a non-negative integer; `gids` is a non-empty array
-of unique non-negative integers limited to 32 entries; `mac_context` is either
-`null` or an opaque, policy-approved context string. The allocation is unique
-for active sessions and is reusable only under the verified reclamation and
-quarantine condition in ADR-0001. `allocation_id` MUST remain the identity's
-stable reference even where the numeric UID is later reused.
+The authorization manifest MUST contain exactly these top-level members:
 
-### 3.2 Derivation and actor fields
+```text
+actors
+audit
+credential_grant_intents
+derivation
+execution_binding
+gateway
+launch_record_id
+manifest_version
+mount_intents
+resource_limits
+revocation
+runtime
+session_trace
+task
+termination_retention
+agent
+```
+
+`manifest_version` MUST equal `agentbound.authorization-manifest.v0.1`.
+`launch_record_id`, `session_trace.session_id`, and `session_trace.trace_id` are
+policy-issued. The object MUST contain no numeric execution identity, host ID,
+boot ID, scope, PID namespace, resolved host object, credential handle, or raw
+host path.
+
+| Member | Required content |
+|---|---|
+| `agent` | `global_id` and `durable_ownership_projection`. |
+| `session_trace` | Policy-issued `session_id` and `trace_id`. |
+| `actors` | Initiators, approvers, scheduler, and owner. |
+| `task` | `purpose_id` and approval references. |
+| `derivation` | Versioned inputs, input digest, policy, and resolved resource IDs. |
+| `runtime` | `catalogue_id`, `artifact_digest`, and `invocation_profile`. |
+| `execution_binding` | `model`, `endpoint`, `tenant`, `adapters`, `retention_mode`, and `inference_pool`. |
+| `mount_intents` | Catalogue IDs, access, and required flag; never host paths. |
+| `gateway` | `channel_topology`, `operations`, and budgets. |
+| `credential_grant_intents` | Grant kind, operation subset, expiry policy; never issued handles. |
+| `resource_limits` | The closed class table in §3.5. |
+| `audit` | Required events, correlation keys, and loss behaviour. |
+| `revocation` | Required trigger-to-behaviour mapping, including reclassification. |
+| `termination_retention` | Termination, retention, and reclamation-domain policy. |
+
+`agent.global_id` is the durable agent principal. Its
+`durable_ownership_projection` MUST be either an opaque storage-principal
+reference or stable local ownership UID projection. It MUST NOT be the
+execution UID in this profile, consistent with ADR-0001.
+
+### 3.3 Derivation, actor, runtime, and execution-binding decisions
 
 `actors.initiators` MUST contain one or more authenticated actor objects with
 `id`, `credential_reference`, and `relationship` (`delegation`, `scheduled`,
 `agent-parent`, or `service`). `actors.approvers` contains zero or more objects
 with `id`, `approval_reference`, `decision`, and `expires_at`. A scheduled
-request MUST contain both `actors.scheduler` and a non-null accountable
-`actors.owner`.
+request MUST contain both `actors.scheduler` and non-null `actors.owner`.
 
-`derivation` MUST contain:
+`derivation` MUST contain `agent_authority_version`, `catalogue_version`,
+`derivation_relation_version`, `derivation_input_digest`, `inputs`,
+`policy_version`, `requested_budget_digest`, and `resolved_resource_ids`. It
+MUST record every authenticated input identity and version evaluated by
+`derive(Agent, Initiators, Task, Approvals, Policy)`.
 
-```text
-agent_authority_version
-catalogue_version
-derivation_relation_version
-derivation_input_digest
-policy_version
-requested_budget_digest
-resolved_resource_ids
-```
-
-It MUST also record an ordered list of all authenticated input identities and
-versions used to evaluate `derive(Agent, Initiators, Task, Approvals, Policy)`.
 The activated authority MUST be represented only as typed named grants in
-`gateway`, `mounts`, `credential_grants`, and resource limits; raw universal
-capability strings are forbidden. The result MUST satisfy the derivation bounds
-in the technical report: it is no broader than agent authority and task/policy
-permission, and delegation is no broader than initiator authority.
+`gateway`, `mount_intents`, `credential_grant_intents`, and `resource_limits`.
+Raw universal capability strings are forbidden. The result MUST be no broader
+than agent authority, task/policy permission, and initiator delegation bounds.
 
-### 3.3 Runtime and execution binding
+`runtime.artifact_digest` MUST be `sha256:<lowercase-hex>`.
+`runtime.invocation_profile` is a catalogue name, not a caller command-line.
+The constructor MUST resolve executable and arguments only from that profile.
 
-`runtime` MUST name one approved catalogue runtime and include its immutable
-artifact digest as `sha256:<lowercase-hex>`. `invocation_profile` is a catalogue
-name, not a caller command-line string. The actual executable and arguments are
-resolved by `agentbound-launch` from that profile.
+`execution_binding` MUST contain `adapters`, `endpoint`, `inference_pool`,
+`model`, `retention_mode`, and `tenant`. Each except `adapters` MAY be `null`
+when the runtime requires none; `adapters` is a catalogue-ID array. A change to
+any non-null decision is policy-controlled and auditable and MUST NOT mutate a
+running launch record.
 
-`execution_binding` MUST contain `model`, `endpoint`, `tenant`, `adapters`, and
-`retention_mode`; it MAY additionally contain `inference_pool`. Each is a
-catalogue identifier or `null` where the runtime needs no model. A change to any
-non-null element is a policy-controlled auditable event; it MUST NOT be made by
-mutating a running manifest.
+### 3.4 Mount intents, gateway, and credential-grant intents
 
-### 3.4 Namespaces, mounts, and descriptors
+Each `mount_intents` entry MUST contain `access` (`read-only` or `read-write`),
+`catalogue_id`, `mount_id`, `required`, and `target_template_id`. It MUST NOT
+contain a raw source, raw target, raw path, or host-object handle.
 
-`namespaces` MUST declare each of `mount`, `pid`, `ipc`, `uts`, `network`, and
-`user` as a catalogue-defined mode. The Unix process profile MUST use private
-mount, PID, IPC, and UTS namespaces; the permitted network mode is determined
-solely by `gateway.channel_topology`.
+`gateway.channel_topology` MUST equal `local-socket`. It has exactly one legal
+value in Phase 1. The network topology is dropped from Phase 1 and deferred to
+a future ADR. No authorization manifest, binding, namespace declaration, or
+descriptor rule may select network topology, veth, route, interface, firewall,
+or direct network traffic.
 
-Each `mounts` entry MUST have `mount_id`, `source_catalogue_id`,
-`target_template_id`, `access` (`read-only` or `read-write`), and `required`.
-It MUST NOT contain raw path strings or raw host sources. `agentbound-launch`
-MUST resolve both source and target descriptor-relatively from the named
-catalogue entries.
+`gateway.operations` is a non-empty array of typed operation objects. Each MUST
+contain `adapter_catalogue_id`, `budgets`, `operation`, `operation_id`, and
+`scope`. Generic HTTP, CONNECT, arbitrary destination, arbitrary URL, and
+untyped byte-stream operations are invalid. `gateway.budgets` contains the
+closed budget decisions applying to the operation set.
 
-Each `descriptor_allowlist` entry MUST contain `purpose`, `kind`, `direction`,
-and `inheritable`. Allowed kinds are `stdin`, `stdout`, `stderr`, `pty`, and
-`gateway_socket`. `gateway_socket` is legal only for the local-socket topology.
-The list is closed: every descriptor not listed MUST be closed before exec.
+Each `credential_grant_intents` entry MUST contain `expiry_policy`, `grant_id`,
+`kind`, and `operation_subset`. It MAY contain a policy-approved audience ID.
+It MUST NOT embed credential material, a broker handle, revocation handle, or
+any session-visible reusable secret.
 
 ### 3.5 Resource limits
 
-`resource_limits` is closed and MUST contain one entry for each class below. Each entry has `status` (`enforced` or `absent`), `limit` and unit when enforced, `enforcement_owner`, and `absence_evidence` when absent. Unknown classes are invalid.
+`resource_limits` is closed and MUST contain one entry for each class below.
+Each entry has `status` (`enforced` or `absent`), `limit` and unit when
+enforced, `enforcement_owner`, and `absence_evidence` when absent. Unknown
+classes are invalid.
 
 | Class | Minimum Phase 1 enforcement |
 |---|---|
@@ -275,152 +324,208 @@ The list is closed: every descriptor not listed MUST be closed before exec.
 | `file_descriptors` | `RLIMIT_NOFILE` |
 | `cpu` | cgroup CPU controller |
 | `memory_bytes` | cgroup memory controller |
-| `disk_bytes`, `disk_inodes` | project/filesystem quota or bounded disposable image |
+| `disk_bytes`, `disk_inodes` | Per-session filesystem image with fixed capacity and inode count, or tmpfs `size=`/`nr_inodes=` bounds reported as bounded volatile storage—never “project quota” on tmpfs. |
 | `io_bandwidth` | cgroup I/O controller |
-| `network_bandwidth`, `connection_count`, `request_rate` | gateway/firewall limiter (absent before 1B) |
-| `audit_capacity` | audit queue and manifest loss policy |
-| `delegation_fanout` | policy counter plus child/session limit |
-| `storage_bytes`, `external_spend`, `model_tokens` | gateway accounting (model classes absent before 1C) |
-| `accelerator` | absent unless an accelerator is exposed |
+| `network_bandwidth`, `connection_count`, `request_rate` | Gateway limiter; absent before 1B where unavailable. |
+| `audit_capacity` | Audit queue and manifest loss policy |
+| `delegation_fanout` | Policy counter plus child/session limit |
+| `storage_bytes`, `external_spend`, `model_tokens` | Gateway accounting; model classes absent before 1C. |
+| `accelerator` | Absent unless an accelerator is exposed |
 
-A present class MUST have an enforcement owner and test. A class may be absent only if the deployment exposes no such resource; absence is evidence, not an unlimited value.
+A present class MUST have an enforcement owner and test. A class MAY be absent
+only if the deployment exposes no such resource; absence is evidence, not an
+unlimited value.
 
-### 3.6 Gateway, channel topology, grants, and budgets
+### 3.6 Audit, revocation, and termination retention
 
-`gateway` MUST contain exactly one `channel_topology`: `network` or
-`local-socket`. These values are mutually exclusive.
+`audit` MUST contain `correlation_keys`, `loss_behaviour`, and `required_events`.
+Correlation keys MUST include launch-record ID, session trace ID, agent global
+ID, and, once bound, allocation ID, execution UID, host ID, and boot ID.
+`loss_behaviour` MUST be `stop`, `quarantine`, or `continue-with-loss-counter`.
 
-For `network`, `gateway` MUST identify a single veth-backed gateway binding and
-MUST declare an empty local-socket grant. The session MUST have no inherited
-socket descriptor. For `local-socket`, it MUST declare `network_interface: false`
-and exactly one named single-purpose gateway socket mount; no other network
-interface or host Unix socket is permitted.
+`revocation` MUST map every declared trigger to exactly one of `terminate`,
+`quiesce`, or `continue-degraded`. It MUST include `approval_expired`,
+`authority_revoked`, `catalogue_withdrawn`, `control_plane_unavailable`,
+`gateway_grant_withdrawn`, `gateway_unavailable`, `initiator_disabled`,
+`policy_withdrawn`, `reclassification`, and `task_cancelled`. Where execution
+binding or inference access exists, their withdrawal triggers are REQUIRED.
+`continue-degraded` MUST identify disabled operations, maximum-duration policy,
+and audit event.
 
-`gateway.permitted_operations` is a non-empty array of typed operation objects.
-Each object MUST contain `adapter_catalogue_id`, `operation`, `scope`, and
-`budgets`. Every budget is a non-negative bounded integer. Typical Git scope is
-a repository ID and an exact `refs/agentbound/<session>/...` staging-ref
-pattern. A generic HTTP, CONNECT, arbitrary destination, arbitrary URL, or
-untyped byte-stream operation is invalid.
+`termination_retention` MUST contain `audit_retention_class`,
+`credential_revocation_order`, `descendant_kill_order`, `reclamation_domain_id`,
+`termination_triggers`, and `workspace_retention`. New grant use MUST be
+disabled before termination. Descendants MUST be killed or reaped before
+credential/broker release completes. Retention MUST preserve the signed pair and
+UID/boot/session mapping needed to disambiguate numeric UID reuse.
 
-A `credential_grants` entry MUST identify either a non-exportable broker grant
-or a proof-of-possession credential reference. It MUST specify its audience,
-operation subset, expiry, and revocation handle. It MUST NOT embed a reusable
-secret in the manifest or make it visible to the session.
+### 3.7 Launch binding
 
-### 3.7 Audit and revocation
+The launch binding MUST contain exactly these top-level members:
 
-`audit` MUST contain `required_events`, `correlation_keys`, and
-`loss_behaviour`. Required correlation keys include `launch_record_id`, session
-trace ID, agent global ID, execution allocation ID, and execution UID plus boot
-binding. `loss_behaviour` MUST be exactly one of `stop`, `quarantine`, or
-`continue-with-loss-counter`.
+```text
+authorization_manifest_digest
+constructor
+credential_grants
+descriptor_allowlist
+execution_identity
+gateway_projection
+host_binding
+launch_binding_version
+launch_record_id
+mount_projections
+namespaces
+resource_projection
+```
 
-`revocation` MUST map every declared trigger to exactly one behaviour:
-`terminate`, `quiesce`, or `continue-degraded`. The manifest MUST include, at
-minimum, entries for `initiator_disabled`, `approval_expired`, `authority_revoked`,
-`policy_withdrawn`, `catalogue_withdrawn`, `task_cancelled`, `reclassification`,
-`gateway_grant_withdrawn`, `gateway_unavailable`, and `control_plane_unavailable`.
-If an execution binding or inference grant exists, entries for their withdrawal
-are also REQUIRED. `continue-degraded` MUST identify the disabled operations,
-maximum duration policy reference, and audit event.
+`launch_binding_version` MUST equal `agentbound.launch-binding.v0.1`.
+`launch_record_id` MUST equal the authorization manifest's ID.
 
-### 3.8 Termination and retention
+`execution_identity` MUST contain `allocation_id`, `gids`, `mac_context`, and
+`uid`. `uid` is a non-negative integer. `gids` is a non-empty unique array of
+no more than 32 non-negative integers. `mac_context` is `null` or an opaque,
+policy-approved context. The identity is unique for active sessions and reusable
+only after verified reclamation and quarantine under ADR-0001.
 
-`termination_retention` MUST contain `termination_triggers`,
-`descendant_kill_order`, `credential_revocation_order`, `workspace_retention`,
-`audit_retention_class`, and `reclamation_domain_id`. New grant use MUST be disabled before termination begins. Descendants MUST be killed
-or reaped before credential and broker-grant record release completes. The retention
-policy MUST retain the signed launch record and sufficient UID/boot/session
-mapping to disambiguate later numeric UID reuse.
+`host_binding` MUST contain `boot_id`, `host_id`, `pid_namespace_id`, and
+`scope_id`; `scope_id` is the systemd scope name. `namespaces` records modes
+actually applied for mount, PID, IPC, UTS, and user namespaces. The Unix process
+profile MUST use private mount, PID, IPC, and UTS namespaces.
+
+Each `mount_projections` entry MUST contain `mount_id` and exactly one resolved
+source form: a handle reference or a catalogue version reference. It MUST also
+record installed access and target-template projection. There MUST be one entry
+per mount intent and no raw path string.
+
+`descriptor_allowlist` is closed. Each entry MUST contain `descriptor_id`,
+`kind`, and `purpose`; allowed kinds are `stdin`, `stdout`, `stderr`, `pty`, and
+`gateway_socket`. Every descriptor not listed MUST be closed before exec.
+`gateway_socket` MUST appear exactly once, MUST be `AF_UNIX SOCK_SEQPACKET`, and
+MUST be the descriptor described by `gateway_projection`.
+
+`gateway_projection` MUST contain `seqpacket: true` and `socket_mount_id`.
+`socket_mount_id` MUST name the single projected local-socket gateway mount.
+
+Each `credential_grants` entry MUST contain an issued non-exportable handle and
+its `grant_intent_id`. It MUST reference exactly one authorization-manifest
+intent and MUST NOT reveal secret material to the session.
+
+`resource_projection` contains exactly one installed projection per policy
+resource class, recording the enforcement owner and installed value. It MUST NOT
+relax policy or treat an absent class as unlimited.
+
+`constructor` MUST contain `agentbound_launch_version_digest` and `key_id`.
 
 ---
 
-## 4. Canonical encoding, digest, and signature
+## 4. Canonical encoding, digest, signature, and rollback
 
-The canonical encoding is JSON Canonicalization Scheme (JCS), RFC 8785. JSON
-is selected because the policy boundary and audit tooling need a readily
-inspectable format, while JCS defines deterministic member ordering, escaping,
-and number serialization. Ordinary “pretty JSON” is not canonical JSON.
+The canonical encoding is JSON Canonicalization Scheme (JCS), RFC 8785. Each
+object digest is `SHA-256(JCS-UTF8(object))`, represented as `sha256:` plus 64
+lowercase hexadecimal characters. Member ordering is JCS ordering by UTF-16 code
+units; ASCII member names therefore appear in ordinary ascending byte order.
 
-Each object digest is `SHA-256(JCS-UTF8(object))`, serialized as `sha256:` plus 64 lowercase hexadecimal characters. The authorization-signature envelope carries `authorization_manifest_digest`; the launch-binding envelope carries `launch_binding_digest`, `authorization_manifest_digest`, `allocation_id`, `host_id`, and `boot_id`. Both use detached Ed25519 signatures, key ID, issuance time, and named timestamp source. Policy signs only the authorization object. After verification and atomic reservation, the constructor signs the launch binding. The gateway and `agentbound-audit` treat the pair and their combined launch-record identity as authoritative; neither object may be mutated.
+The launch-record identity is
+`SHA-256(authorization_manifest_digest || launch_binding_digest)` over the two
+32-byte binary digest values in that order. It is represented as a SHA-256
+digest when serialized, while `launch_record_id` remains the policy-issued
+record identifier carried in both objects.
 
-If construction rolls back after allocation but before launch-binding commit, the identity enters reclamation and no launch binding is published. If failure occurs after binding commit, the pair is sealed with a failed outcome and is never deleted. A second binding for one authorization digest or allocation is forbidden.
+The policy signature envelope MUST contain exactly `authorization_manifest_digest`,
+`issued_at`, `key_id`, `launch_record_id`, `signature`, and `timestamp_source`.
+The constructor signature envelope MUST contain exactly `allocation_id`,
+`authorization_manifest_digest`, `boot_id`, `host_id`, `issued_at`, `key_id`,
+`launch_binding_digest`, `launch_record_id`, and `signature`. Both use detached
+Ed25519 signatures. Policy signs only the authorization object; the constructor
+signs only the launch binding after reservation and correspondence checks.
 
-`agentbound-launch` MUST reject non-canonical input bytes when the transport
-claims to carry canonical JSON. It MAY parse and canonicalize an authenticated
-transport representation only if the signature is verified over the resulting
-canonical bytes and no duplicate names were accepted during parsing.
+`agentbound-launch` MUST reject non-canonical bytes when transport claims to
+carry canonical JSON. It MAY parse and canonicalize an authenticated transport
+representation only when it rejects duplicate names and verifies the signature
+over the resulting canonical bytes.
 
-The constructor MUST NOT re-parse manifest strings as paths. It MUST resolve
-catalogue-selected mounts using descriptor-relative, path-safe operations (for
-example `openat2` with appropriate resolution constraints or mount file
-descriptors), as required by technical-report §2.1. String paths, symlinks, and
-TOCTOU-prone re-walks are not a conforming substitute.
+After allocation but before binding commit, rollback MUST move the identity to
+`reclaiming` and MUST publish no launch binding. After binding commit, a failed
+construction MUST seal the pair with a failed outcome and MUST NEVER delete it.
+A second binding for one authorization digest or allocation is forbidden.
 
 ---
 
 ## 5. Constructor validation rules
 
-Before identity allocation or any other privileged operation—including namespace
-creation, mount resolution, cgroup creation, network setup, credential issue,
-or audit binding—`agentbound-launch` MUST perform all of the following:
+Before allocation or any other privileged construction operation—including
+namespace creation, mount installation, cgroup creation, credential issue, audit
+binding, or execution-identity installation—`agentbound-launch` MUST:
 
-1. Parse the request/manifest according to Sections 2–4 and confirm a supported
-   schema version.
-2. Verify the detached signature, signed digest, signing key identity, trusted
-   timestamp source, and launch-record ID binding.
+1. Parse request and authorization manifest according to §§2–4; reject
+   unsupported versions, duplicates, unknown members, and non-conforming types.
+2. Verify the policy detached signature, authorization digest, signing key,
+   timestamp source, issuance freshness, and launch-record ID binding.
 3. Resolve every actor, agent, task, approval, catalogue item, resource, runtime,
-   adapter, and policy reference uniquely; ambiguity is a failure.
-4. Confirm the authorization manifest requests no concrete UID/GID. Atomically reserve a current, unique, non-quarantined allocation; then create and sign the launch binding and its managed-domain declaration before installing credentials.
-5. Confirm every mount source and target template is in the current catalogue,
-   then obtain descriptor-relative handles before construction starts.
-6. Confirm the descriptor allowlist is closed, internally consistent, and has no
-   socket exception other than the one allowed by the selected topology.
-7. Confirm exactly one gateway channel topology, `network` or `local-socket`, is
-   selected and that all namespace and descriptor declarations match it.
-8. Confirm every permitted gateway operation and every execution-binding adapter
-   is present in the current adapter catalogue and has typed scope and budgets.
-9. Confirm policy, derivation-relation, runtime, catalogue, adapter, and agent
-   authority versions are current and not withdrawn, superseded where policy
-   forbids it, or otherwise invalidated.
-10. Confirm every approval is authentic, unexpired, unrevoked, quorum-consistent,
-    and applicable to the named task and agent.
-11. Recompute the derivation relation and confirm that all recorded derivation
-    inputs, input digest, actor relationships, activated grants, and bounds are
-    consistent with its result.
-12. Confirm the manifest's resource and gateway budgets do not exceed policy or
-    catalogue limits and that every applicable resource class has a declared
-    enforcement point or is explicitly absent from the deployment.
+   adapter, and policy reference uniquely; ambiguity MUST fail.
+4. Confirm policy, derivation, runtime, catalogue, adapter, and agent-authority
+   versions are current and not withdrawn, superseded where policy forbids it,
+   or otherwise invalidated.
+5. Confirm every approval is authentic, unexpired, unrevoked, quorum-consistent,
+   and applicable to the named task and agent.
+6. Recompute derivation and confirm recorded inputs, digest, relationships,
+   activated grants, budgets, and bounds are consistent with the result.
+7. Confirm every mount intent source and target template exists in the current
+   catalogue; obtain only safe descriptor-relative references for later use.
+8. Confirm gateway operations and execution-binding adapters exist in the
+   current catalogue, have typed scopes and budgets, and use only `local-socket`.
+9. Confirm all resource classes have a valid enforcement projection plan or
+   explicit deployment absence evidence; confirm no proposed value widens policy.
+10. **Allocate:** atomically reserve one current, unique, non-quarantined
+    execution identity bound to this authorization digest and launch-record ID.
+11. Create the launch binding, verify every §3.1 equality check, sign it, and
+    atomically commit the allocation-to-binding association before credentials
+    are installed.
+12. Revalidate mutable approval, catalogue, and version facts immediately before
+    every irreversible use; install only the committed binding's projections.
+
+For mount resolution, the constructor MUST use the new mount API with a pinned
+kernel: descriptor-relative `openat2` with `RESOLVE_NO_MAGICLINKS`, an explicit
+`RESOLVE_NO_XDEV` policy, and `open_tree`/`move_mount` as appropriate. String
+paths, symlink following, and TOCTOU-prone re-walks are not conforming
+substitutes.
 
 On any failure, `agentbound-launch` MUST create no runnable partial session,
 MUST issue no usable credential or broker grant, and MUST emit an audit denial
-that identifies the failed input or validation rule. Revalidation MUST occur
-again immediately before each irreversible step when a version, approval, or
-catalogue reference can change between validation and use.
+identifying the failed input or rule. After allocation, it MUST apply §4 rollback
+rather than releasing an identity directly.
 
 ---
 
-## 6. Illustrative complete effective manifest
+## 6. Illustrative complete signed pair
 
-The following is a compact review rendering of the **combined effective view** for the plan's step-zero scenario. In transport, policy-owned members form the authorization manifest and host-owned members form the separately signed launch binding; no UID appears in the policy-signed object.
-The displayed line breaks are for review only; canonical bytes are obtained by
-JCS serialization. All identifiers, hashes, UIDs, keys, and endpoints are
-obviously placeholder values.
+The following compact JCS-form examples use the plan's step-zero scenario:
+`engineering-agent`, Alice, `fix-issue-1234`, and `git.push-staging-ref`.
+All identifiers, digests, handles, signatures, and host values are obvious
+placeholders. Each fenced line is one complete JSON object with lexically sorted
+ASCII keys at every object level.
 
-```json
-{"actors":{"approvers":[],"initiators":[{"credential_reference":"authn://example.invalid/session/alice-0001","id":"human:alice@example.invalid","relationship":"delegation"}],"owner":null,"scheduler":null},"agent":{"durable_ownership_projection":{"kind":"storage-principal","reference":"storage://example.invalid/principal/engineering-agent"},"global_id":"agent:engineering-agent"},"audit":{"correlation_keys":["launch_record_id","trace_id","agent_global_id","execution_allocation_id","execution_uid_boot"],"loss_behaviour":"quarantine","required_events":["launch","gateway-operation","revocation","termination","audit-loss"]},"credential_grants":[{"audience":"agentbound-gateway","expiry":"2026-08-28T16:30:00Z","grant_id":"grant:placeholder-git-pop-0001","kind":"proof-of-possession-reference","operation_subset":["git.push-staging-ref"],"revocation_handle":"revoke:placeholder-git-0001"}],"derivation":{"agent_authority_version":"agent-authz:v2026-08-28-demo","catalogue_version":"catalogue:v2026-08-28-demo","derivation_input_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","derivation_relation_version":"derive:v0.1","inputs":[{"id":"agent:engineering-agent","kind":"agent","version":"agent-authz:v2026-08-28-demo"},{"id":"human:alice@example.invalid","kind":"initiator","version":"authn-session:alice-0001"},{"id":"task:fix-issue-1234","kind":"task","version":"task:v17"}],"policy_version":"policy:v2026-08-28-demo","requested_budget_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","resolved_resource_ids":["resource:repo-worktree/fix-issue-1234","resource:git-service/protected-repo"]},"descriptor_allowlist":[{"direction":"in","inheritable":true,"kind":"stdin","purpose":"harness-input"},{"direction":"out","inheritable":true,"kind":"stdout","purpose":"harness-output"},{"direction":"out","inheritable":true,"kind":"stderr","purpose":"harness-diagnostics"}],"execution_binding":{"adapters":[],"endpoint":null,"inference_pool":null,"model":null,"retention_mode":null,"tenant":null},"execution_identity":{"allocation_id":"execalloc:placeholder-7f3a","gids":[42017],"mac_context":null,"uid":42017},"gateway":{"channel_topology":"network","local_socket_grant":null,"network_binding":{"gateway_binding_catalogue_id":"gateway-bind:demo-veth-git","network_interface":true},"permitted_operations":[{"adapter_catalogue_id":"adapter:git-staging-v0.1","budgets":{"gateway_bytes":10485760,"gateway_requests":4},"operation":"git.push-staging-ref","scope":{"repository_id":"repo:protected-demo","staging_ref_pattern":"refs/agentbound/sess-placeholder-0001/*"}}]},"launch_record_id":"launchrec:placeholder-0001","manifest_version":"agentbound.effective-manifest.v0.1","mounts":[{"access":"read-write","mount_id":"mount:workspace","required":true,"source_catalogue_id":"resource:repo-worktree/fix-issue-1234","target_template_id":"target:session-workspace"},{"access":"read-only","mount_id":"mount:runtime","required":true,"source_catalogue_id":"runtimefs:python-harness-v0.1","target_template_id":"target:runtime"}],"namespaces":{"ipc":"private","mount":"private","network":"veth-gateway-only","pid":"private","user":"host-credential","uts":"private"},"resource_limits":{"audit_events":100000,"cpu_millis":2000,"disk_bytes":2147483648,"disk_inodes":100000,"gateway_bytes":10485760,"gateway_requests":4,"memory_bytes":4294967296,"pids":256,"wall_clock_seconds":3600},"revocation":{"approval_expired":"terminate","authority_revoked":"terminate","catalogue_withdrawn":"terminate","control_plane_unavailable":"quiesce","gateway_grant_withdrawn":"quiesce","gateway_unavailable":"quiesce","initiator_disabled":"terminate","policy_withdrawn":"terminate","task_cancelled":"terminate"},"runtime":{"artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","catalogue_id":"runtime:coding-harness-v0.1","invocation_profile":"profile:noninteractive-coding-harness"},"session_trace":{"boot_binding":"boot:placeholder-host-0001","session_id":"session:sess-placeholder-0001","trace_id":"trace:00000000000000000000000000000001"},"task":{"approval_references":[],"purpose_id":"task:fix-issue-1234"},"termination_retention":{"audit_retention_class":"retention:security-launch-record","credential_revocation_order":"after-descendant-kill","descendant_kill_order":"cgroup-kill-then-pidns-reap","reclamation_domain_id":"reclaim-domain:linux-session-v0.1","termination_triggers":["policy-revocation","task-cancel","explicit-owner-termination","resource-limit"],"workspace_retention":"retain-sealed-for-forensics"}}
-```
-
-The displayed envelope illustrates the policy signature; a conforming record also carries the constructor signature envelope binding its digest, allocation ID, host ID, and boot ID to this authorization digest:
+### 6.1 Authorization manifest
 
 ```json
-{"algorithm":"ed25519","authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","issued_at":"2026-08-28T15:30:00Z","key_id":"policy-key:placeholder-ed25519-01","launch_record_id":"launchrec:placeholder-0001","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp_source":"time-source:policy-service-utc-v0.1"}
+{"actors":{"approvers":[],"initiators":[{"credential_reference":"authn:alice-session-0001","id":"human:alice","relationship":"delegation"}],"owner":null,"scheduler":null},"agent":{"durable_ownership_projection":{"kind":"storage-principal","reference":"storage:engineering-agent"},"global_id":"agent:engineering-agent"},"audit":{"correlation_keys":["launch_record_id","trace_id","agent_global_id","execution_allocation_id","execution_uid_boot"],"loss_behaviour":"quarantine","required_events":["launch","gateway-operation","revocation","termination"]},"credential_grant_intents":[{"expiry_policy":"expiry:session-or-2026-08-28t163000z","grant_id":"grant:git-push-0001","kind":"proof-of-possession","operation_subset":["op:git-push-staging-0001"]}],"derivation":{"agent_authority_version":"agent-authz:v2026-08-28","catalogue_version":"catalogue:v2026-08-28","derivation_input_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","derivation_relation_version":"derive:v0.1","inputs":[{"id":"agent:engineering-agent","kind":"agent","version":"agent-authz:v2026-08-28"},{"id":"human:alice","kind":"initiator","version":"authn:alice-session-0001"},{"id":"task:fix-issue-1234","kind":"task","version":"task:v17"}],"policy_version":"policy:v2026-08-28","requested_budget_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","resolved_resource_ids":["resource:git-service","resource:repo-worktree"]},"execution_binding":{"adapters":["adapter:git"],"endpoint":null,"inference_pool":null,"model":null,"retention_mode":"retention:ephemeral","tenant":null},"gateway":{"budgets":{"gateway_bytes":1048576,"gateway_requests":10},"channel_topology":"local-socket","operations":[{"adapter_catalogue_id":"adapter:git","budgets":{"bytes":1048576,"requests":10},"operation":"git.push-staging-ref","operation_id":"op:git-push-staging-0001","scope":"repo:protected/refs/agentbound/fix-issue-1234/*"}]},"launch_record_id":"launchrec:fix-issue-1234-0001","manifest_version":"agentbound.authorization-manifest.v0.1","mount_intents":[{"access":"read-write","catalogue_id":"mount-source:repo-worktree","mount_id":"mount:workspace","required":true,"target_template_id":"mount-target:workspace"},{"access":"read-write","catalogue_id":"mount-source:gateway-socket","mount_id":"mount:gateway-socket","required":true,"target_template_id":"mount-target:gateway-socket"}],"resource_limits":{"accelerator":{"absence_evidence":"deployment:no-accelerator","enforcement_owner":"none","status":"absent"},"audit_capacity":{"enforcement_owner":"agentbound-audit","limit":10000,"status":"enforced","unit":"events"},"cpu":{"enforcement_owner":"cgroup","limit":1000,"status":"enforced","unit":"milli-cpu"},"delegation_fanout":{"enforcement_owner":"policy","limit":0,"status":"enforced","unit":"children"},"disk_bytes":{"enforcement_owner":"session-image","limit":1073741824,"status":"enforced","unit":"bytes"},"disk_inodes":{"enforcement_owner":"session-image","limit":100000,"status":"enforced","unit":"inodes"},"external_spend":{"absence_evidence":"deployment:no-spend-adapter","enforcement_owner":"none","status":"absent"},"file_descriptors":{"enforcement_owner":"rlimit","limit":256,"status":"enforced","unit":"descriptors"},"io_bandwidth":{"enforcement_owner":"cgroup","limit":10485760,"status":"enforced","unit":"bytes-per-second"},"memory_bytes":{"enforcement_owner":"cgroup","limit":1073741824,"status":"enforced","unit":"bytes"},"model_tokens":{"absence_evidence":"runtime:no-model","enforcement_owner":"none","status":"absent"},"network_bandwidth":{"absence_evidence":"phase1:no-network-topology","enforcement_owner":"none","status":"absent"},"pids":{"enforcement_owner":"cgroup","limit":128,"status":"enforced","unit":"processes"},"request_rate":{"enforcement_owner":"gateway","limit":10,"status":"enforced","unit":"requests"},"storage_bytes":{"enforcement_owner":"gateway","limit":1048576,"status":"enforced","unit":"bytes"}},"revocation":{"approval_expired":"terminate","authority_revoked":"terminate","catalogue_withdrawn":"quiesce","control_plane_unavailable":"continue-degraded","gateway_grant_withdrawn":"terminate","gateway_unavailable":"quiesce","initiator_disabled":"terminate","policy_withdrawn":"terminate","reclassification":"quiesce","task_cancelled":"terminate"},"runtime":{"artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","catalogue_id":"runtime:engineering-agent","invocation_profile":"profile:fix-issue-1234"},"session_trace":{"session_id":"session:fix-issue-1234-0001","trace_id":"trace:fix-issue-1234-0001"},"task":{"approval_references":[],"purpose_id":"task:fix-issue-1234"},"termination_retention":{"audit_retention_class":"retention:wp0","credential_revocation_order":"revoke-before-cleanup","descendant_kill_order":"children-before-parent","reclamation_domain_id":"domain:session-default","termination_triggers":["task_cancelled","approval_expired"],"workspace_retention":"discard"}}
 ```
 
-The example provides no session-visible Git credential, no path-valued mount
-source, no direct Git host address, and no route other than the typed gateway
-operation. A direct push to `main` is outside the operation scope and MUST fail.
+### 6.2 Launch binding
+
+```json
+{"authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","constructor":{"agentbound_launch_version_digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","key_id":"key:launch-ed25519-01"},"credential_grants":[{"grant_intent_id":"grant:git-push-0001","issued_handle":"handle:gateway-grant-0001"}],"descriptor_allowlist":[{"descriptor_id":"fd:stdin","kind":"stdin","purpose":"harness-input"},{"descriptor_id":"fd:stdout","kind":"stdout","purpose":"harness-output"},{"descriptor_id":"fd:stderr","kind":"stderr","purpose":"harness-diagnostics"},{"descriptor_id":"fd:gateway","kind":"gateway_socket","purpose":"typed-gateway"}],"execution_identity":{"allocation_id":"allocation:host-a-0001","gids":[200001],"mac_context":null,"uid":200001},"gateway_projection":{"seqpacket":true,"socket_mount_id":"mount:gateway-socket"},"host_binding":{"boot_id":"boot:host-a-0001","host_id":"host:reference-a","pid_namespace_id":"pidns:4026533001","scope_id":"agentbound-session-0001.scope"},"launch_binding_version":"agentbound.launch-binding.v0.1","launch_record_id":"launchrec:fix-issue-1234-0001","mount_projections":[{"access":"read-write","catalogue_version":"catalogue:v2026-08-28","mount_id":"mount:workspace","target_template_projection":"mount-target:workspace"},{"access":"read-write","mount_id":"mount:gateway-socket","resolved_source_handle":"handle:gateway-socket-0001","target_template_projection":"mount-target:gateway-socket"}],"namespaces":{"ipc":"private","mount":"private","pid":"private","user":"private","uts":"private"},"resource_projection":{"accelerator":{"enforcement_owner":"none","status":"absent"},"audit_capacity":{"enforcement_owner":"agentbound-audit","installed_value":10000,"unit":"events"},"cpu":{"enforcement_owner":"cgroup","installed_value":1000,"unit":"milli-cpu"},"delegation_fanout":{"enforcement_owner":"policy","installed_value":0,"unit":"children"},"disk_bytes":{"enforcement_owner":"session-image","installed_value":1073741824,"unit":"bytes"},"disk_inodes":{"enforcement_owner":"session-image","installed_value":100000,"unit":"inodes"},"external_spend":{"enforcement_owner":"none","status":"absent"},"file_descriptors":{"enforcement_owner":"rlimit","installed_value":256,"unit":"descriptors"},"io_bandwidth":{"enforcement_owner":"cgroup","installed_value":10485760,"unit":"bytes-per-second"},"memory_bytes":{"enforcement_owner":"cgroup","installed_value":1073741824,"unit":"bytes"},"model_tokens":{"enforcement_owner":"none","status":"absent"},"network_bandwidth":{"enforcement_owner":"none","status":"absent"},"pids":{"enforcement_owner":"cgroup","installed_value":128,"unit":"processes"},"request_rate":{"enforcement_owner":"gateway","installed_value":10,"unit":"requests"},"storage_bytes":{"enforcement_owner":"gateway","installed_value":1048576,"unit":"bytes"}}}
+```
+
+### 6.3 Policy and constructor envelopes
+
+```json
+{"constructor":{"allocation_id":"allocation:host-a-0001","authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","boot_id":"boot:host-a-0001","host_id":"host:reference-a","issued_at":"2026-08-28T15:31:00Z","key_id":"key:launch-ed25519-01","launch_binding_digest":"sha256:5555555555555555555555555555555555555555555555555555555555555555","launch_record_id":"launchrec:fix-issue-1234-0001","signature":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"},"policy":{"authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","issued_at":"2026-08-28T15:30:00Z","key_id":"key:policy-ed25519-01","launch_record_id":"launchrec:fix-issue-1234-0001","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp_source":"clock:policy-utc-v0.1"}}
+```
+
+The examples expose no session-visible Git credential, host path, direct Git
+address, route, veth, or other network topology. A direct push to `main` is
+outside the typed operation scope and MUST fail.
 
 ---
 
@@ -429,15 +534,12 @@ operation. A direct push to `main` is outside the operation scope and MUST fail.
 1. Which concrete schema language (JSON Schema, CDDL, or both) should be the
    machine-readable companion to this normative data model?
 2. What authoritative clock, freshness tolerance, and key-rotation procedure
-   should govern the policy signature envelope?
+   should govern the policy and constructor signature envelopes?
 3. Does the first implementation reserve `mac_context` as `null`, or require a
    concrete MAC projection before any non-Unix-governed profile is admitted?
-4. ADR-0002 has not yet selected the network or local-socket topology. Which
-   catalogue fields and connection-lifetime semantics must be fixed before the
-   provisional topology becomes an implementation contract?
-5. Which resource classes are explicitly absent in the first deployment, and
+4. Which resource classes are explicitly absent in the first deployment, and
    what evidence is required before an omitted class may be declared absent?
-6. What immutable representation should record a policy-approved runtime command
-   without allowing the caller to inject executable paths or arguments?
-7. Which launch-record retention class is sufficient to disambiguate execution
+5. What immutable representation should record a policy-approved runtime command
+   without allowing a caller to inject executable paths or arguments?
+6. Which launch-record retention class is sufficient to disambiguate execution
    UID reuse while minimizing retention of potentially sensitive audit data?
