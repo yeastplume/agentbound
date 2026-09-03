@@ -1,0 +1,18 @@
+# spike: git-staging
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: 17611b8
+# date: 2026-09-03T14:22:38Z
+# args: 
+
+spike git-staging; git version 2.47.3
+RESULT GS-1.session-produces-bundle-without-remote PASS bundle 279 bytes; session repo has no remotes; commit d68df43c24dd
+RESULT GS-2.gateway-imports-bundle-into-quarantine-and-fscks PASS fetch ok=true fsck ok=true  imported d68df43c24dd
+RESULT GS-3.staging-ref-push-permitted PASS pushed refs/agentbound/sess-7f3a/fix-issue-1234; host now has refs/agentbound/sess-7f3a/fix-issue-1234 at d68df43c24dd
+RESULT GS-4.all-non-staging-and-forged-pushes-denied-by-gateway PASS 12 cases: main: ref outside session staging namespace: refs/heads/main | any other branch: ref outside session staging namespace: refs/heads/feature-x | another session's namespace: ref outside session staging namespace: refs/agentbound/sess-0b19/fix | forged/mismatched trace: trace mismatch: request trace-0b19 vs authenticated trace-7f3a | dot-dot traversal: malformed ref tail: "../../heads/main" | empty tail: malformed ref tail: "" | embedded refspec colon: malformed ref tail: "x:refs/heads/main" | force marker: ref outside session staging namespace: +refs/agentbound/sess-7f3a/x | .lock suffix: malformed ref tail: "a.lock" | whitespace: malformed ref tail: "a b" | tag: ref outside session staging namespace: refs/tags/v1 | HEAD: ref outside session staging namespace: HEAD
+RESULT GS-5.main-unchanged PASS refs/heads/main still 58691ad84c92
+RESULT GS-6.host-protected-branch-refuses-even-if-gateway-bypassed PASS direct push to main: ok=false; remote: host: protected branch refs/heads/main refused        
+RESULT GS-7.session-uid-cannot-read-gateway-credential PASS cat gateway-cred as 200042: exit Some(1); direct push as session (path reachable in this spike only) → host hook: fatal: detected dubious ownership in repository at '/tmp/ab-git/session-ws'
+RESULT GS-8.non-fast-forward-to-own-staging-ref-rejected-without-explicit-force PASS amended history push: ok=false; ! [rejected]        refs/incoming/sess-7f3a -> refs/agentbound/sess-7f3a/fix-issue-1234 (non-fast-forward) — the gateway decides whether `force` is a distinct, separately-authorised operation (policy question for WP2, mechanism refuses by default)
+done
+
+# exit: 0

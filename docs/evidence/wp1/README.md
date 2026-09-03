@@ -31,7 +31,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | Socket-family seccomp and abstract-socket isolation in an empty netns | **PASS + FINDING F-2** | [netns-seccomp](netns-seccomp.md) NS-*, SC-* | requirements R-CON; ADR-0002 D7-4 |
 | ADR-0002 Decision 7 verification | in progress (items 1–5 done; 6–9 are WP2) | above | ADR-0002 |
 | `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | **PASS + FINDINGS F-4, F-5** | [scope-kill](scope-kill.md) C-* | session lifecycle §4; component interfaces |
-| Git staging-ref adapter and protected-branch behaviour | pending | — | plan §3.3 |
+| Git staging-ref adapter and protected-branch behaviour | **PASS** | [git-staging](git-staging.md) | plan §3.3 |
 | `loginuid` and audit correlation, loss behaviour under load | **PASS + FINDING F-6** | [audit-loginuid](audit-loginuid.md) | requirements R-CON-6; identity lifecycle §6 |
 | Minimal control-arm launcher | pending (boot check only in WP1) | — | ADR-0003 |
 
