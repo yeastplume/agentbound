@@ -24,7 +24,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 
 | Spike | Status | Evidence | Reopens on failure |
 |---|---|---|---|
-| Per-session execution identity allocation and durable-ownership projection | pending | — | ADR-0001; identity lifecycle |
+| Per-session execution identity allocation and durable-ownership projection | **PASS** (allocation: [identity-store](identity-store.md); UID/cap projection: [mount-construct](mount-construct.md) C7-1) | — | ADR-0001; identity lifecycle |
 | systemd scope + PID-namespace init containment; `cgroup.kill`, D-state tasks | **PASS + FINDINGS F-3, F-4** | [scope-kill](scope-kill.md) A-*, B-* | session lifecycle §5 |
 | Namespace/mount/procfs construction in §2.1 order; mount-descriptor resolution | **PASS** | [mount-construct](mount-construct.md) R6-*, C1–C5 | session lifecycle §3 |
 | Descriptor closure and runtime launch ordering | **PASS** | [mount-construct](mount-construct.md) C6–C7 | session lifecycle §3 |
@@ -41,9 +41,9 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 |---|---|---|---|
 | VM-1 vsock peer-CID reporting | pending | — | ADR-0002 Decision 6 (binding via VMM connection table) |
 | VM-2 cross-arm SLOC comparability | pending | — | ADR-0003 (per-arm disclosure only) |
-| LC-1 allocator/constructor implementation spike | pending | — | identity lifecycle §3 |
+| LC-1 allocator/constructor implementation spike | **PASS** — allocator: [identity-store](identity-store.md); constructor/freeze/kill/pidfd/scope: [scope-kill](scope-kill.md), [mount-construct](mount-construct.md) | — | identity lifecycle §3 |
 | LC-2 frozen cgroup holding a `SOCK_SEQPACKET` connection | **PASS** — no delay; §6 stands | [frozen-peer](frozen-peer.md) LC2-1–5 | session lifecycle §6 |
-| ID-1 allocator-store crash consistency | pending | — | identity lifecycle §3 |
+| ID-1 allocator-store crash consistency | **PASS** — candidate design holds; §3 not reopened | [identity-store](identity-store.md) ID-9–11 | identity lifecycle §3 |
 
 ## Findings requiring document amendments before WP2
 

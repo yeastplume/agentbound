@@ -1,0 +1,103 @@
+# spike: identity-store
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: e5dc2cf
+# date: 2026-09-03T14:19:11Z
+# args: 
+
+warning: variable does not need to be mutable
+   --> src/main.rs:145:75
+    |
+145 |     drop(s); let _ = fs::remove_dir_all("/var/lib/ab-spike-idstore"); let mut s = Store::open();
+    |                                                                           ----^
+    |                                                                           |
+    |                                                                           help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `STATES` is never used
+  --> src/main.rs:20:7
+   |
+20 | const STATES: [&str; 5] = ["free", "allocated", "in-use", "reclaiming", "quarantined"];
+   |       ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `0` is never read
+  --> src/main.rs:25:33
+   |
+25 | #[derive(Debug)] enum Err { Cas(String), Sql(rusqlite::Error), Range(String) }
+   |                             --- ^^^^^^
+   |                             |
+   |                             field in this variant
+   |
+   = note: `Err` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+   |
+25 - #[derive(Debug)] enum Err { Cas(String), Sql(rusqlite::Error), Range(String) }
+25 + #[derive(Debug)] enum Err { Cas(()), Sql(rusqlite::Error), Range(String) }
+   |
+
+warning: field `0` is never read
+  --> src/main.rs:25:46
+   |
+25 | #[derive(Debug)] enum Err { Cas(String), Sql(rusqlite::Error), Range(String) }
+   |                                          --- ^^^^^^^^^^^^^^^
+   |                                          |
+   |                                          field in this variant
+   |
+   = note: `Err` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+   |
+25 - #[derive(Debug)] enum Err { Cas(String), Sql(rusqlite::Error), Range(String) }
+25 + #[derive(Debug)] enum Err { Cas(String), Sql(()), Range(String) }
+   |
+
+warning: field `0` is never read
+  --> src/main.rs:25:70
+   |
+25 | #[derive(Debug)] enum Err { Cas(String), Sql(rusqlite::Error), Range(String) }
+   |                                                                ----- ^^^^^^
+   |                                                                |
+   |                                                                field in this variant
+   |
+   = note: `Err` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+   |
+25 - #[derive(Debug)] enum Err { Cas(String), Sql(rusqlite::Error), Range(String) }
+25 + #[derive(Debug)] enum Err { Cas(String), Sql(rusqlite::Error), Range(()) }
+   |
+
+warning: method `tail` is never used
+  --> src/main.rs:49:8
+   |
+28 | impl Store {
+   | ---------- method in this implementation
+...
+49 |     fn tail(&self) -> (i64, Vec<u8>) { self.c.query_row("SELECT seq, hash FROM records ORDER BY seq DESC LIMIT 1", [], |r| Ok((r.get...
+   |        ^^^^
+
+spike identity-store (ID-1); sqlite 3.46.0
+RESULT ID-0.range-disjoint-from-local-accounts PASS 27 passwd entries, none in 200000–299999
+RESULT ID-2.no-skipping-reclaiming-or-quarantined PASS allocated→free: Some(Cas("uid 200001: illegal transition allocated→free")); allocated→quarantined: Some(Cas("uid 200001: illegal transition allocated→quarantined"))
+RESULT ID-3.cas-rejects-stale-sequence PASS Some(Cas("uid 200001: expected (rec-200001-1788445178440256557,0) but tail is (rec-200001-1788445178440256557,1,allocated)"))
+RESULT ID-4.double-allocation-same-uid-fails-closed PASS Some(Cas("uid 200001: allocation attempted but tail is (rec-200001-1788445178440256557,2,in-use) — double allocation")) → identity.double_allocation_detected
+RESULT ID-5.one-launch-record-two-uids-fails-closed PASS second allocation for authz-A on uid 200002: Some("Sql(SqliteFailure(Error { code: ConstraintViolation, extended_code: 2067 }, Some(\"UNIQUE c") (partial unique index on live allocated bindings)
+RESULT ID-6.full-cycle-and-reuse-gets-new-record-id PASS seqs [1, 2, 3, 4, 5, 6, 7]; record id rec-200001-1788445178440256557 → rec-200001-1788445178445550291 on reuse
+RESULT ID-7.append-only-enforced-in-store PASS UPDATE: Some("append-only"); DELETE: Some("append-only")
+RESULT ID-8.hash-chain-detects-tamper PASS before: Ok((7, 1)); after in-place edit of seq 1: Err("hash mismatch at seq 1")
+racer 5 won 50 cas-lost 0 busy/other 0
+racer 6 won 0 cas-lost 50 busy/other 0
+racer 2 won 0 cas-lost 50 busy/other 0
+racer 4 won 0 cas-lost 50 busy/other 0
+racer 3 won 0 cas-lost 50 busy/other 0
+racer 0 won 0 cas-lost 50 busy/other 0
+racer 7 won 0 cas-lost 50 busy/other 0
+racer 1 won 0 cas-lost 50 busy/other 0
+RESULT ID-9.concurrent-allocators-exactly-one-winner-per-uid PASS 8 racers × 50 UIDs in 224 ms: 50 allocated records over 50 distinct UIDs; verify=Ok((50, 50)) (losers got CAS/busy errors, never a second record)
+RESULT ID-10.crash-consistency-under-sigkill PASS 150 rounds, writer killed after 1–37 acknowledged commits each; 2815 acknowledged transitions all present after reopen; chain verified each round; final store 2965 records over 696 UIDs; 0 anomalies []; 2830 ms
+RESULT ID-11.crash-recovery-moves-orphans-to-reclaiming-only PASS 331 identities orphaned in allocated/in-use by crashes; direct →free rejected 331×; →reclaiming appended 331×
+RESULT ID-12.session-uid-cannot-read-store PASS store dir 0700 owned by daemon identity (root here); as uid 200042: "open error unable to open database file: /var/lib/ab-spike-idstore/alloc.db" (exit Some(3)); as owner: "read 3296"
+allocation latency (synchronous=FULL, WAL, per durable commit): 405 µs
+done
+
+# exit: 0
