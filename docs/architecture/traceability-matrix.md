@@ -1,6 +1,6 @@
 # Phase 1 invariant-to-test traceability matrix
 
-**Version:** 0.4  
+**Version:** 0.5  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Conformance target:** [technical report](../papers/technical-report.md) §7, Unix-governed profile U  
@@ -13,6 +13,7 @@
 - **0.2** — Result column renamed to expected mechanism class / pass criterion with observed class unconstrained; Inv 14 and 21 split into detective/assumption and enforced halves; Inv 10/13 rows aligned with ADR-0002 0.2; test references point to the test catalogue.
 - **0.3** — Requirement-coverage check performed and recorded (§8); R-ID-7 and R-AUD-5 traced; test-catalogue and identifier terminology aligned.
 - **0.4** — T-6.8 references extended to 013.
+- **0.5** — Post-freeze editorial maintenance (no normative change): residual column defined as three fields; rows 14a and 21a completed; requirements version reference updated.
 
 
 ## 1. Result vocabulary
@@ -44,7 +45,9 @@ The "expected mechanism class / pass criterion" column in §3 is the pre-registe
 
 ## 3. Applicable invariants
 
-| Inv | Property | Milestone complete | Normative requirements | Mechanism | Primary tests / demos (IDs per test catalogue) | Expected mechanism class / pass criterion | Residual assumption / owner / impact / compensating control / acceptance authority / trigger |
+The last column is a compact cell of exactly three slash-separated fields: *residual assumption / owner / revalidation trigger*. The full six-field `residual_assumption` record (adding impact, compensating control, and acceptance authority) is produced per test in the report record of §6.
+
+| Inv | Property | Milestone complete | Normative requirements | Mechanism | Primary tests / demos (IDs per test catalogue) | Expected mechanism class / pass criterion | Residual assumption / owner / revalidation trigger |
 |---:|---|---|---|---|---|---|---|
 | 1 | Durable identity | 1A | R-ID-1, R-ID-6, R-ID-7 | Principal registry; signed manifest; durable ownership projection separate from execution identity | T-6.5-010; T-6.6-001, T-6.6-008; D-01, D-02 | enforced and passed | Registry correctness / policy owner / registry or schema change |
 | 2 | Explicit initiator | 1A | R-ID-2 | Authenticated request; initiator, approver, scheduler and owner fields in launch record | T-6.6-002, T-6.6-004; D-10 | enforced and passed | Initiator authenticator / IAM owner / authentication mechanism change |
@@ -55,13 +58,13 @@ The "expected mechanism class / pass criterion" column in §3 is the pre-registe
 | 11 | Credential confinement | 1B | R-GW-3, R-GW-6 | No upstream secret in session; gateway/broker holds credential | T-6.3-001..008; D-10 | enforced and passed, or assumption where hardware-backed non-exportability is claimed | Authentication credential exportability / gateway owner / mechanism change |
 | 12 | Complete descendant control | 1A | R-ISO-3…4 | systemd scope, cgroup v2, PID-ns init/subreaper, pidfd, `cgroup.kill` | T-6.2-001..008; D-06, D-07, D-08; F-T-01..11 | enforced and passed | D-state can delay but not escape; kernel trusted / platform owner / kernel change |
 | 13 | Attribution of mediated effects | 1B | R-CON-6, R-GW-3, R-AUD-1…5 | Signed launch record; per-operation `SCM_CREDENTIALS` process evidence; trace identity; corroborating loginuid; kernel and gateway audit correlation | D-10, D-12; T-6.4-006..009, T-6.4-013; T-6.8-001..013; metric and load profiles per test catalogue §5; pass at ≥99% nominal and 100% gateway corpus | detected only (attribution is detective); VM arm records session-level for the process leg | Audit availability and loss / audit owner / load or audit configuration change |
-| 14a | Policy provenance — historical record | 1A | R-ID-8, R-AUD-4 | Policy/catalogue versions and derivation inputs in signed append-only launch record | T-6.5-008; D-11 | detected only |
+| 14a | Policy provenance — historical record | 1A | R-ID-8, R-AUD-4 | Policy/catalogue versions and derivation inputs in signed append-only launch record | T-6.5-008; D-11 | detected only | Launch-record store integrity / policy owner / store change |
 | 14b | Policy provenance — version currency | 1A | R-ID-8, R-REQ-5 | Constructor rejects withdrawn or superseded versions | T-6.5-006; T-6.6-007 | enforced and passed | Signing key and launch-record store / policy owner / key or store change |
 | 15 | Launch privilege disposal | 1A | R-CON-3…5 | Capability bounding/drop, `no_new_privs`, separate enumerated `agentbound-lifecycle` daemon | T-6.2-001, T-6.2-003, T-6.2-004; privileged-code review under requirements §12; D-05 | enforced and passed | `agentbound-lifecycle` trusted / implementation owner / daemon operation change |
 | 17 | Same-principal session isolation | 1A | R-ISO-1…2 | Per-session execution UID, namespaces, private state, descriptor discipline | T-6.1-001..013; D-03, D-04 | enforced and passed | Kernel and constructor trusted / platform owner / pinned-version or constructor change |
 | 19 | Integrity promotion (protected-object subset) | 1B | R-GW-5 | Git adapter restricts staging ref; independent branch protection promotes | T-6.4-011, T-6.4-013; D-13 | enforced and passed for staging boundary | Git host branch protection / repository owner / protection-rule change |
 | 20 | Bounded external resources | 1B; inference classes 1C | R-RES-1…5, R-GW-7, R-GW-9 | cgroup/rlimit/storage bounds, audit queue policy, delegation counters, plus per-operation gateway budgets | T-6.9-001..008 (class-by-milestone per R-RES-5); D-07, D-14 where relevant | enforced and passed for every present class; absent classes listed | Gateway accounting and upstream billing reconciliation / service owner / resource-class addition |
-| 21a | Lifecycle and revocation — policy choice | 1A | R-LC-2 | Manifest declares terminate/quiesce/continue-degraded per trigger | manifest review | assumption |
+| 21a | Lifecycle and revocation — policy choice | 1A | R-LC-2 | Manifest declares terminate/quiesce/continue-degraded per trigger | manifest review | assumption | Declared choice is appropriate / policy owner / trigger or service addition |
 | 21b | Lifecycle and revocation — implementation of declared behaviour | Latest applicable service (1C in full programme) | R-LC-1, 3…5 | `agentbound-lifecycle`; per-operation gateway grant checks | T-6.8-001..013 by milestone (T-6.8-007 is the U reclassification case; 011–013 are the outage and forbidden-degraded cases); D-16; F-T-01..11 | enforced and passed | Correct choice of terminate/quiesce/degrade / policy owner / trigger or service addition |
 | 22 | Execution-binding control | 1C | R-GW-8 | Inference adapter compares live operation with approved manifest binding | D-14; T-6.8-010 | enforced and passed | Gateway is only inference path / gateway owner / new inference path or adapter |
 
@@ -116,7 +119,7 @@ The report MUST preserve negative results. Retrying a failed test does not erase
 ## 7. WP0 review checks
 
 1. Confirm every Profile U invariant in technical-report §7 appears exactly once in §3 or §4.
-2. Confirm every requirement ID in `phase-1-requirements.md` appears here or is explicitly non-invariant operational support. **Performed for requirements 0.3:** all 58 IDs are accounted for — 48 traced to invariants in §3 and 10 recorded as non-invariant support in §8.
+2. Confirm every requirement ID in `phase-1-requirements.md` appears here or is explicitly non-invariant operational support. **Performed for requirements 0.5:** all 58 IDs are accounted for — 48 traced to invariants in §3 and 10 recorded as non-invariant support in §8.
 3. Confirm ADR-0003 has classified every demonstration and suite named above before any control-arm run.
 4. Confirm the attribution threshold is paired with the fixed nominal-load profile in the test catalogue §5 (done in catalogue 0.2).
 5. Confirm Invariant 21 cannot be reported complete at 1A or 1B when later services remain in programme scope.

@@ -1,7 +1,7 @@
 # Phase 1 Reference Implementation Plan
 
-**Status:** Draft for review  
-**Plan version:** 0.10
+**Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record)  
+**Plan version:** 0.11  
 **Date:** 28 August 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
@@ -21,6 +21,7 @@
 - **0.8** — Second WP0 review: gateway-free 1A manifest form; one connection per process; policy component emits the authorization manifest, not the effective manifest; ADR-0003 accepted with pinned configuration and thresholds.
 - **0.9** — WP1 spike list extended with the open-question register items VM-1, VM-2, LC-2, ID-1.
 - **0.10** — §6.8 1A case list uses the split outage-trigger vocabulary and the `continue-degraded` restriction.
+- **0.11** — Post-freeze maintenance: status reflects the WP0 freeze; WP0 section marked complete and in past tense; fault-point list uses the empty-network-namespace/gateway-socket wording.
 
 
 ---
@@ -255,7 +256,7 @@ termination and retention policy
 
 Fields are tagged **substrate-independent** (identity, derivation inputs, authority, budgets, gateway policy, audit requirements) or **substrate-specific** (namespaces, mounts, descriptors, seccomp). Only the former are shared with the control arm.
 
-The schema and canonical serialization become reviewable project artifacts before the privileged constructor is implemented.
+The schema and canonical serialization are frozen project artifacts (manifest schema 0.5) and precede the privileged constructor.
 
 ### 4.4 Session lifecycle
 
@@ -511,7 +512,7 @@ Every invariant applicable to profile U receives a row (Section 7.2). Results us
 
 `Not evaluated` is a milestone-progress status, not one of the five final conformance result classes. Once evaluated, each applicable invariant receives exactly one final class. Every residual assumption records its owner, impact, compensating control, acceptance authority, and revalidation trigger.
 
-Pre-registered thresholds (interface inventory, adversary matrix, required attribution completeness, maximum policy-exception rate, pinned kernel/systemd/LSM versions) are fixed in WP0 before any test runs.
+Pre-registered thresholds (interface inventory, adversary matrix, required attribution completeness, maximum policy-exception rate, pinned kernel/systemd/LSM versions) were fixed in WP0 (requirements §12, test catalogue §5, ADR-0003) before any test run.
 
 ### 7.3 Fault injection
 
@@ -520,7 +521,7 @@ Force failures during:
 - authorization and derivation;
 - execution-identity allocation, reclamation, and quarantine (including crash during allocation);
 - namespace and mount setup, at each step of the §2.1 ordering;
-- network path and firewall rule installation;
+- empty-network-namespace verification and gateway-socket mounting;
 - cgroup setup;
 - credential/gateway grant issuance;
 - audit binding;
@@ -568,9 +569,9 @@ The control arm is milestone 1D. It may lag the Linux arm, and 1A–1C results m
 
 The work proceeds by exit conditions rather than calendar estimates. A later work package begins only when its prerequisites are satisfied; independent packages may overlap when doing so does not weaken a gate or review boundary.
 
-### WP0 — Specification freeze and threat model
+### WP0 — Specification freeze and threat model (complete)
 
-Deliverables:
+WP0 is complete; the frozen set is indexed in the [architecture README](../architecture/README.md), whose freeze record names the commit at which the exit condition was met. Deliverables (as frozen):
 
 - Phase 1 normative requirement list using MUST/SHOULD/MAY;
 - scoped threat model and non-goals;
@@ -584,7 +585,7 @@ Deliverables:
 - pre-registered thresholds: interface inventory, adversary-capability matrix, attribution completeness by the catalogue metric, maximum policy-exception rate, privileged-code reviewability bound with SLOC accounting rules, pinned kernel/systemd/LSM versions;
 - invariant-to-test traceability matrix covering every profile U invariant.
 
-Exit condition: every profile U invariant maps to at least one catalogue test ID; every threshold in the requirements §12 has a defined measurement; every open question in the WP0 documents is either answered or explicitly deferred to WP1 with a named verification item.
+Exit condition (met): every profile U invariant maps to at least one catalogue test ID; every threshold in the requirements §12 has a defined measurement; every open question in the WP0 documents is either answered or explicitly deferred to WP1 with a named verification item.
 
 ### WP1 — Mechanism spikes
 
@@ -646,7 +647,7 @@ Exit condition: issue a go/no-go recommendation for Phase 2.
 
 The ordinal sequence is:
 
-1. freeze the bounded specification, threat model, and ADRs 0002–0003 (WP0);
+1. freeze the bounded specification, threat model, and ADRs 0002–0003 (WP0 — complete);
 2. resolve high-risk mechanism questions with focused spikes (WP1);
 3. **1A** — construct, isolate, delegate, revoke, and terminate a fail-closed shell session (WP2); stop point;
 4. **1B** — bind one protected remote effect to session identity and audit (WP3); stop point;

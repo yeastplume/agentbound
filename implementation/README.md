@@ -2,4 +2,4 @@
 
 This directory is reserved for the Phase 1 reference implementation.
 
-Implementation begins only after the Phase 1 specification freeze and mechanism spikes. Component names in the plan are provisional; the privileged constructor must remain narrow and policy resolution should remain unprivileged.
+Implementation begins after the WP1 mechanism spikes. Components follow the Phase 1 plan; their names remain provisional. The privileged constructor remains narrow and policy resolution remains unprivileged.

@@ -1,6 +1,6 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Version:** 0.5
+**Version:** 0.6
 **Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built
 **Date:** 28 August 2026
 **Applies to:** Phase 1 milestone 1D control arm
@@ -13,6 +13,7 @@
 - **0.3** — Status reconciled with the architecture README; version pins, guest init, guest audit source, comparative thresholds, confidence method, operator script, VM instance token format, and SLOC comparability rule filled in; open questions reduced to WP1 verification items.
 - **0.4** — Unblinding and operator-familiarity recording; per-ID `control-arm-register.md` as a 1D prerequisite; open questions disposed via the register.
 - **0.5** — T-6.8 register row extended to 013.
+- **0.6** — Post-freeze editorial maintenance (no normative change): catalogue described as frozen; typo.
 
 
 ## Context
@@ -148,7 +149,7 @@ substrate-independent manifest fields.
 Only the execution boundary and substrate-specific projection may vary. Linux
 uses namespaces, mounts, cgroups, descriptor realization, and `AF_UNIX` process
 evidence. The VM uses Firecracker, jailer, guest kernel/init/audit, closed
-virtio inventory, versus mapping, and VM lifecycle evidence. Each result MUST
+virtio inventory, vsock mapping, and VM lifecycle evidence. Each result MUST
 list its substrate-specific refinements and residual assumptions.
 
 ## Decision: adversary corpora and comparability
@@ -167,13 +168,13 @@ named VM realization. If an attack mechanic has no VM counterpart, it is **not
 directly comparable**. It remains arm-specific evidence but MUST be excluded
 from the common boundary-strength score.
 
-The authoritative complete list and final numeric suffixes are in
-[test-catalogue.md](test-catalogue.md), which is concurrently being frozen. IDs
-use `T-<suite>-<nnn>` for §6.x bullets, `D-<nn>` for demonstrations 1–17, and
+The frozen [test catalogue](test-catalogue.md) is the authoritative list of
+IDs: `T-<suite>-<nnn>` for §6.x bullets, `D-<nn>` for demonstrations 1–17, and
 `F-C-<n>`/`F-T-<n>` for construction/termination fault points. The register
-below fixes classifications at the plan-bullet granularity now. Once the
-catalogue freezes, a per-ID row MUST be completed mechanically by expanding
-this register; no result, outcome, or observation may cause reclassification.
+below fixes classifications at plan-bullet granularity. Before milestone 1D,
+these group-level classifications MUST be expanded mechanically into one
+committed row per catalogue ID (`control-arm-register.md`); no result,
+outcome, or observation may cause reclassification.
 
 ### Demonstration register
 

@@ -1,6 +1,6 @@
 # Phase 1 Test Catalogue
 
-**Version:** 0.4  
+**Version:** 0.5  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** Agentbound milestones 1A–1D  
@@ -14,6 +14,7 @@
 - **0.2** — Gateway-free 1A form (`channel_topology: none`) applied to 1A tests; load profiles, correlation deadlines, and repetition seeds fixed; T-6.4 rows rewritten for the local-socket corpus; one-connection-per-process rule in T-6.4-007; control-arm column declared to be populated by ADR-0003; identifier terminology aligned.
 - **0.3** — Control-arm column points to the committed per-ID register as a 1D prerequisite.
 - **0.4** — T-6.8-006 narrowed to policy-service outage; T-6.8-011–013 added (audit degradation, lifecycle-daemon outage, forbidden degraded mapping).
+- **0.5** — Post-freeze editorial maintenance (no normative change): T-6.4 coverage accounting corrected (014 from bullets; 015 is the control-arm projection); GR/GU privilege labels; pinning ownership cited; §7.3 fault-point wording.
 
 
 ## 1. Purpose and status
@@ -76,7 +77,8 @@ asserts all of them.
 **Privileges** use only these labels: **USP** (unprivileged session process),
 **CSSP** (concurrent same-principal session), **COSP** (concurrent
 other-principal session), **ANI** (authenticated non-admin initiator), and
-**RR** (remote response). “Evidence” is a required retained artefact class,
+**RR** (remote response), and, for control-arm rows only, **GR** (guest root)
+and **GU** (guest unprivileged). “Evidence” is a required retained artefact class,
 not an implementation filename.
 
 All denials MUST return a safe diagnostic containing the applicable requirement
@@ -102,8 +104,9 @@ is a failure pending investigation; it MUST NOT be labeled flaky or removed by
 retry. Every attempt, including retry, failure, and infrastructure abort, MUST
 be retained and linked by test ID, run ID, input digest, and idempotency key.
 
-Repetition counts, kernel/systemd/LSM versions, interface inventory, and test
-seeds are pinned here: bypass and fault tests run 10 repetitions each; the seed for each repetition is `SHA-256(test_id || repetition_index)` truncated to 64 bits. Each row executes its pinned count; where a
+Repetition counts and test seeds are fixed here; kernel/systemd/LSM versions are
+pinned in ADR-0003 and requirements §12, and the interface inventory in
+requirements §12 and the traceability matrix §2: bypass and fault tests run 10 repetitions each; the seed for each repetition is `SHA-256(test_id || repetition_index)` truncated to 64 bits. Each row executes its pinned count; where a
 row participates in the nominal profile it MUST execute at least `N` times.
 An attempt is passing only if its preventive result, required audit event, and
 all required evidence are present. A missing required audit record is a failed
@@ -257,7 +260,7 @@ change the denominator.
 | T-6.4-012 | 1B | 10 | R-GW-4 | RR | upstream redirect or TLS identity mismatch | adapter refuses; `gateway.upstream_rejected` | GA,DR | |
 | T-6.4-013 | 1B | 10,11,13 | R-GW-3..4 | CSSP | replay of another session's launch-record, trace, or grant identity | per-packet credential mismatch deny | GA,DR,AR | |
 | T-6.4-014 | 1B | 11,21 | R-GW-3,R-LC-3 | USP | operation after committed revocation on established connection; new connection after revocation | next operation denied; new connection refused | GA,DR,LR | |
-| T-6.4-015 | 1D | 10,11 | R-GW-1,R-GW-3 | guest root / guest unprivileged | control arm: vsock-path realization of T-6.4-001..014 and CID reuse after teardown | per ADR-0003 classification; stale CID mapping invalidated | GA,DR,ADR-0003 evidence | |
+| T-6.4-015 | 1D | 10,11 | R-GW-1,R-GW-3 | GR, GU | control arm: vsock-path realization of T-6.4-001..014 and CID reuse after teardown | per ADR-0003 classification; stale CID mapping invalidated | GA,DR,ADR-0003 evidence | |
 
 ### 7.5 Constructor and request inputs
 
@@ -359,15 +362,15 @@ failure evidence, and no unsafe identity reuse.
 The §7.3 named points map as follows: authorization/derivation → `T-6.6-*` and
 `F-C-01`; identity allocation, crash, reclamation, and quarantine →
 `T-6.5-009`, `F-C-07`, `F-T-10`; namespace/mount setup → `F-C-01..05`;
-network path/firewall installation is replaced by the single gateway-socket
-bind/mount → `F-C-08` and `F-T-09`; cgroup setup → `F-C-01`, `F-T-02..05`;
+gateway-socket bind/mount (the only network-adjacent step; there is no network
+path) → `F-C-08` and `F-T-09`; cgroup setup → `F-C-01`, `F-T-02..05`;
 credential/grant issuance → `F-C-08`; audit binding → `F-C-08`, `F-T-11`;
 privilege disposal → `F-C-06..07`; runtime exec → `F-C-09`; active-session
 supervision → `T-6.8-*`; and termination/cleanup → `F-T-01..11`.
 
 ## 9. Coverage check
 
-This section is a visible completeness check. A source item MUST NOT be
+This section is the source-to-test coverage check. A source item MUST NOT be
 considered covered merely because it is mentioned in prose; it must map here to
 one or more atomic IDs.
 
@@ -380,7 +383,7 @@ one or more atomic IDs.
 | §6.1 bullets 1–13 | T-6.1-001..013 |
 | §6.2 bullets 1–8 | T-6.2-001..008 |
 | §6.3 bullets 1–8 | T-6.3-001..008 |
-| §6.4 bullets 1–10 | T-6.4-001..015 (bullets 1, 4, 5, and 7 each split into two IDs) |
+| §6.4 bullets 1–10 | T-6.4-001..014 (bullets 1, 4, 5, and 7 each split into two IDs); T-6.4-015 is the 1D control-arm projection of 001..014, not a plan bullet |
 | §6.5 bullets 1–10 | T-6.5-001..010 |
 | §6.6 bullets 1–8 | T-6.6-001..008 |
 | §6.7 sole bullet | T-6.7-001 |

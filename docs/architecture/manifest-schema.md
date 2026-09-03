@@ -1,6 +1,6 @@
 # Agentbound Manifest Schema
 
-**Version:** 0.5
+**Version:** 0.6
 **Status:** Frozen (WP0)
 **Date:** 28 August 2026
 **Applies to:** the Unix-governed reference implementation and its microVM control arm
@@ -14,6 +14,7 @@
 | 0.3 | 28 August 2026 | Gateway-free form `channel_topology: none` (the only form constructible at 1A); two distinct identifiers `authorization_id` (policy-issued) and `launch_record_digest` (pair-derived) with a per-use table in §4; correspondence check 5 extended to topology. |
 | 0.4 | 28 August 2026 | Open questions disposed per the open-question register; answers written into the normative text. `mac_context` null in Profile U; invocation-profile digest recorded. |
 | 0.5 | 28 August 2026 | §3.6 revocation trigger vocabulary split; `continue-degraded` restriction enforced by policy; example updated. |
+| 0.6 | 28 August 2026 | Post-freeze editorial maintenance (no normative change): wording. |
 
 
 ---
@@ -548,7 +549,7 @@ rather than releasing an identity directly.
 
 The following compact JCS-form examples use the plan's step-zero scenario:
 `engineering-agent`, Alice, `fix-issue-1234`, and `git.push-staging-ref`.
-All identifiers, digests, handles, signatures, and host values are obvious
+All identifiers, digests, handles, signatures, and host values are non-production
 placeholders. Each fenced line is one complete JSON object with lexically sorted
 ASCII keys at every object level.
 

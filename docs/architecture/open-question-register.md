@@ -1,6 +1,6 @@
 # WP0 open-question disposition register
 
-**Version:** 0.2  
+**Version:** 0.3  
 **Status:** Frozen (WP0) — every open question in the WP0 set is listed here with exactly one disposition  
 **Date:** 28 August 2026  
 **Related:** [architecture README](README.md) freeze condition; all WP0 documents
@@ -9,6 +9,7 @@
 
 - **0.1** — Initial disposition of all 32 questions.
 - **0.2** — External review: three answers (24 h quarantine floor, closed five-path domain, `continue-degraded` restriction with split outage triggers) were present only in open-question summaries; now written into the normative sections of the identity lifecycle §4.1–4.2, session lifecycle §6, manifest schema §3.6, requirements R-LC-2/3, and test catalogue T-6.8-006/011–013.
+- **0.3** — Post-freeze editorial maintenance (no normative change): LC-1 classified as an implementation spike verifying an answered question; canonical WP1 verification set stated once.
 
 ## Purpose
 
@@ -59,7 +60,7 @@ Dispositions:
 
 | # | Question | Disposition | Answer / WP1 item |
 |---|---|---|---|
-| 1 | systemd/kernel version set for freeze/kill/pidfd semantics | **A** | Pinned in ADR-0003 and requirements §12: Linux 6.12 LTS series, systemd 258 series. Behaviour verification is WP1 item *LC-1* (already in the plan's WP1 list). |
+| 1 | systemd/kernel version set for freeze/kill/pidfd semantics | **A** | Pinned in ADR-0003 and requirements §12: Linux 6.12 LTS series, systemd 258 series. The architectural question is answered by pinning the baseline; verifying the pinned baseline's behaviour is the WP1 implementation spike *LC-1* (plan WP1 list), which is not an unresolved WP0 question. |
 | 2 | Frozen cgroup holding a `SOCK_SEQPACKET` connection open | **W1** | WP1 item *LC-2*: measure whether a frozen peer delays the gateway's zero-connection acknowledgement. Failure: quiesce closes idle gateway connections before freezing and the lifecycle §6 text is revised. |
 | 3 | Trust anchor, correction, retention for the launch-record store | **A** | Component interfaces §4–5: append-only, hash-chained, fsync commit, correction by new record referencing the original; retention per manifest-schema Q6 above. |
 | 4 | Which outage modes may use `continue-degraded` | **A** | Only *policy-service unavailable* and *audit-pipeline degraded below stop threshold*, and only when the manifest declared it. `agentbound-lifecycle` unavailable is never `continue-degraded`: sessions keep running under their installed boundary but no new authority is issued and no transition is possible until it returns. |
@@ -93,4 +94,4 @@ Dispositions:
 | Execution-identity lifecycle | 7 | 1 (ID-1) |
 | **Total** | **28** | **4** |
 
-Together with the ADR-0002 Decision 7 kernel-baseline list and the plan's WP1 spikes, the WP1 verification set is: Decision 7 items, VM-1, VM-2, LC-1, LC-2, ID-1. Every item names the document it reopens on failure.
+The canonical WP1 verification set is: the ADR-0002 Decision 7 items; register items VM-1, VM-2, LC-2, ID-1; and the implementation spike LC-1 (pinned-baseline `cgroup.freeze`/`cgroup.kill`/pidfd/scope-recovery behaviour), which verifies an answered question rather than resolving an open one. Every item names the document it reopens on failure. This list is authoritative; the architecture README and the plan's WP1 section refer to it.

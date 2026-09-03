@@ -1,6 +1,6 @@
 # Phase 1 Normative Requirements
 
-**Version:** 0.5  
+**Version:** 0.6  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
@@ -14,6 +14,7 @@
 - **0.3** — R-ID-8 restated with the two identifiers; R-GW-1 covers `channel_topology: none` at 1A; pinned versions aligned with ADR-0003 0.3.
 - **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Evaluation-arm manifests: attribution `required`, audit-loss *stop*; `nosuid,nodev` plus image digest; per-key approval sequence; sixth SLOC figure.
 - **0.5** — R-LC-2 restriction on `continue-degraded`; R-LC-3 trigger list uses the split outage vocabulary.
+- **0.6** — Post-freeze editorial maintenance (no normative change): R-CON-1 rollback list names the gateway-socket projection instead of a firewall rule; host firewall removed from the trusted list.
 
 
 ---
@@ -42,7 +43,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **In scope.** An adversary who controls the workload inside a session (the runtime, any child process, any input to them) and may issue any syscall available to the session; an adversary who submits arbitrary requests to `agentbound-policy` and `agentbound-launch` as an authenticated but non-administrative initiator; an adversary who controls a concurrent session of the same or a different principal on the same host; an adversary who controls the remote end of an authorized gateway operation's *response*.
 
-**Trusted.** Kernel, systemd, host firewall, `agentbound-policy` and its catalogue store, `agentbound-launch` and the `agentbound-lifecycle` daemon (which contains the execution-identity allocator), `agentbound-gateway` and its adapters, the launch-record store and signing key, `agentbound-audit`, the Git host's branch protection, and (from 1C) the approved model endpoint.
+**Trusted.** Kernel, systemd, `agentbound-policy` and its catalogue store, `agentbound-launch` and the `agentbound-lifecycle` daemon (which contains the execution-identity allocator), `agentbound-gateway` and its adapters, the launch-record store and signing key, `agentbound-audit`, the Git host's branch protection, and (from 1C) the approved model endpoint.
 
 **Out of scope for Phase 1.** Kernel and hardware vulnerabilities; side and covert channels; malicious administrators; misuse by an initiator of authority they legitimately hold; semantic content of prompts, tool arguments, and model responses; compromise of a remote service after an authorized operation; aggregation across authorized outputs.
 
@@ -88,7 +89,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 ## 5. Construction
 
-**R-CON-1 (1A) [Inv 7].** Construction MUST follow the ordering in technical-report §2.1 as specified in the [session lifecycle](session-lifecycle.md) §3, using a `clone3` synchronization barrier (no kernel facility creates a stopped child). Any step that cannot be completed MUST abort the launch, MUST roll back every completed irreversible step, and MUST leave no runnable process, usable credential, live grant, mounted resource, firewall rule, or unsealed launch record.
+**R-CON-1 (1A) [Inv 7].** Construction MUST follow the ordering in technical-report §2.1 as specified in the [session lifecycle](session-lifecycle.md) §3, using a `clone3` synchronization barrier (no kernel facility creates a stopped child). Any step that cannot be completed MUST abort the launch, MUST roll back every completed irreversible step, and MUST leave no runnable process, usable credential, live grant, mounted resource, gateway-socket projection, or unsealed launch record.
 
 **R-CON-2 (1A) [Inv 7].** The mount namespace MUST be marked recursively private before any bind; `pivot_root` MUST be used (not `chroot`); `proc` MUST be mounted only after the PID namespace exists; host `/proc` MUST NOT be visible.
 

@@ -35,7 +35,7 @@ tests/            Test implementations, fixtures, and conformance suites
 
 ## Current status
 
-The position paper is version 0.9 and the technical report is version 0.5-TR10. Both remain working drafts for external review. The Phase 1 plan is version 0.10.
+The position paper is version 0.9 and the technical report is version 0.5-TR10. Both remain working drafts for external review. The Phase 1 plan is version 0.11.
 
 The WP0 specification set is **frozen (WP0)** after three independent review rounds. WP1 mechanism-verification spikes are next. A failed spike reopens the ADR or specification that depends on its result.
 
