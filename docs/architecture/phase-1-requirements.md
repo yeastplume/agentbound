@@ -1,6 +1,6 @@
 # Phase 1 Normative Requirements
 
-**Version:** 0.2  
+**Version:** 0.3  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
@@ -9,6 +9,7 @@
 
 ## Revision history
 
+- **0.3** — R-ID-8 restated with the two identifiers; R-GW-1 covers `channel_topology: none` at 1A; pinned versions aligned with ADR-0003 0.3.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Local-socket topology only (ADR-0002 0.2); `agentbound-lifecycle` daemon replaces the systemd-invoked helper; `loginuid` made corroborating evidence with one fail rule; storage bounds restated for tmpfs/images; quiesce redefined; termination deadline; SLOC accounting rules; attribution metric referenced to the test catalogue; bypass-corpus rule made non-tautological; resource-class milestone matrix; comparative decision rule referenced to ADR-0003.
 
@@ -62,7 +63,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **R-ID-7 (1A) [ADR-0001].** An execution identity MUST be reclaimed only when the reclamation condition holds across the declared managed domain, followed by quarantine. Objects exported beyond that domain MUST carry the global principal and session identifiers and MUST NOT depend on the numeric UID for durable authorization.
 
-**R-ID-8 (1A) [Inv 14].** The launch record is the verified pair of a policy-signed authorization manifest and a constructor-signed launch binding (manifest schema §3–4), identified by `SHA-256(authorization_manifest_digest || launch_binding_digest)`. The authorization manifest MUST carry the policy version, catalogue version, and derivation inputs; each object MUST be signed with a key whose identity and custody are stated in the evaluation report.
+**R-ID-8 (1A) [Inv 14].** The launch record is the verified pair of a policy-signed authorization manifest and a constructor-signed launch binding (manifest schema §3–4). Its policy-issued `authorization_id` is the pre-binding key; its authoritative post-binding identity is `launch_record_digest = SHA-256(authorization_manifest_digest || launch_binding_digest)`; the manifest schema §4 table fixes which identifier each component uses. The authorization manifest MUST carry the policy version, catalogue version, and derivation inputs; each object MUST be signed with a key whose identity and custody are stated in the evaluation report.
 
 ---
 
@@ -118,7 +119,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 ## 7. Gateway, egress, and credentials
 
-**R-GW-1 (1B) [Inv 10].** The session MUST have exactly one channel to `agentbound-gateway`: one bind-mounted `AF_UNIX SOCK_SEQPACKET` socket (ADR-0002), and no network interface, route, or other host socket. The network topology is not part of Phase 1.
+**R-GW-1 (1B) [Inv 10].** Under `gateway.channel_topology: local-socket` the session MUST have exactly one channel to `agentbound-gateway`: one bind-mounted `AF_UNIX SOCK_SEQPACKET` socket (ADR-0002), and no network interface, route, or other host socket. Under `none` (the only form constructible at 1A) the session has no channel at all and the same no-network, no-host-socket boundary. The network topology is not part of Phase 1.
 
 **R-GW-2 (1B) [Inv 10].** Seccomp MUST deny every socket family except `AF_UNIX`; the inherited-socket set MUST be empty; every Unix socket other than the manifest's gateway socket, pathname or abstract, MUST be unreachable; `SCM_RIGHTS` on the gateway protocol MUST be rejected.
 
@@ -178,7 +179,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 ## 10. Audit and attribution
 
-**R-AUD-1 (1A) [Inv 13].** Every audit event MUST carry host ID, boot ID, launch-record ID, allocation-record ID, session and trace identities, execution UID, monotonic and wall-clock timestamps, actor, and outcome. Kernel process records MUST additionally carry the PID-namespace identity and process start time or pidfd-derived identity where supported; lack of pidfd support MUST be recorded as a residual assumption, never silently replaced by PID alone.
+**R-AUD-1 (1A) [Inv 13].** Every audit event MUST carry host ID, boot ID, authorization ID, launch-record digest, allocation-record ID, session and trace identities, execution UID, monotonic and wall-clock timestamps, actor, and outcome. Kernel process records MUST additionally carry the PID-namespace identity and process start time or pidfd-derived identity where supported; lack of pidfd support MUST be recorded as a residual assumption, never silently replaced by PID alone.
 
 **R-AUD-2 (1B) [Inv 13].** For the defined effect ontology (local objects in the session's world, process lifecycle events, gateway operations), `agentbound-audit` MUST reconstruct `initiator → agent → session → process → effect` and the report MUST state the fraction reconstructed, computed by the metric definition and load profiles in the [test catalogue](test-catalogue.md), against the threshold in §12.
 
@@ -213,7 +214,7 @@ These values are fixed before any test runs and MAY be changed only by a recorde
 | Privileged-code reviewability bound | `agentbound-launch` + `agentbound-lifecycle` (including allocator) + gateway authentication path ≤ 6 000 **direct** SLOC. SLOC accounting: pinned counting tool and version; five separately reported figures — direct privileged SLOC, generated SLOC, transitive dependency SLOC in privileged processes, configuration/rule SLOC (seccomp, Landlock, systemd units, D-Bus policy), and SLOC in a language without memory safety by default (allowed only with a listed justification per file). The bound applies to the first figure; all five are published | R-CON-8 |
 | Policy-exception rate | Zero manifest fields overridden by administrators outside the catalogue during the evaluation run; every privileged manual repair recorded | Gate 4 |
 | Fault-injection coverage | Every fault point in the test catalogue's finite inventory (F-C-01…09, F-T-01…11) injected at least once; after each, no live process, usable grant, mount, or unsealed record; sealed failed records are the only permitted remnant; reconciliation completes within the catalogue deadline | R-CON-1, R-ISO-4 |
-| Pinned versions | Kernel (with `openat2`, new mount API, pidfd, `SOCK_SEQPACKET` credentials verified per ADR-0002 Decision 7), systemd, LSM policy, Firecracker and guest image digest (control arm, per ADR-0003), Git host; recorded in the evaluation report and unchanged within a run | all |
+| Pinned versions | Linux 6.12 LTS series (exact patch release recorded; `openat2`, new mount API, pidfd, `SOCK_SEQPACKET` credentials verified per ADR-0002 Decision 7), systemd 258 series (exact release recorded), LSM policy digest, Firecracker v1.16.1 and the ADR-0003 `pinned-configuration.json` digest (control arm), Git host version; recorded in the evaluation report and unchanged within a run | all |
 | Control-arm equivalence and decision rule | The ADR-0003 per-test classification and the pre-registered comparative decision rule, frozen before any control-arm result | Gate 4 comparative claim |
 
 ---

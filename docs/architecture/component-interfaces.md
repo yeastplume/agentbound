@@ -1,9 +1,15 @@
 # Agentbound Component Interfaces
-**Version:** 0.1  
+**Version:** 0.2  
 **Status:** Draft for WP0 review — skeleton; wire formats are WP1 outputs  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed reference implementation  
 **Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md), [manifest schema](manifest-schema.md), [session lifecycle](session-lifecycle.md), [execution-identity lifecycle](execution-identity-lifecycle.md), [ADR-0001](ADR-0001-execution-identity.md), [ADR-0002](ADR-0002-gateway-authentication.md), and [Phase 1 requirements](phase-1-requirements.md)
+
+## Revision history
+
+- **0.1** — Initial WP0 skeleton.
+- **0.2** — Envelope freshness values fixed; identifier terminology aligned; systemd is an observation source only.
+
 ---
 ## 1. Purpose and normative language
 This WP0 skeleton freezes the security-relevant component boundaries, trust
@@ -81,7 +87,7 @@ policy signing private key or an authority to issue a manifest.
 |---|---|
 | Transport | Dedicated local `AF_UNIX` `SOCK_SEQPACKET`; launch verifies `SO_PEERCRED`. |
 | Peer identity | Launch MUST accept only the provisioned `agentbound-policy` service identity. Policy MUST verify the constructor service identity before delivery. |
-| Permitted operations | Deliver an allocation-free authorization manifest and detached signature; query a safe construction outcome for an authorized launch-record ID. |
+| Permitted operations | Deliver an allocation-free authorization manifest and detached signature; query a safe construction outcome for an authorized authorization ID. |
 | Not trusted | Any concrete UID/GID, scope/unit name, host path, mount source, namespace configuration, credential material, gateway connection, claimed allocation, or policy assertion outside the signed canonical manifest. |
 `agentbound-launch` MUST verify RFC 8785 JCS canonical bytes, the Ed25519
 signature, `key_id`, verifier-key validity, freshness, revocation status, and
@@ -156,8 +162,11 @@ Each signature envelope MUST use detached Ed25519 over RFC 8785 JCS canonical
 JSON and contain algorithm, `key_id`, issuance time, named timestamp source,
 and signed-object digest. Policy signs only the authorization manifest. The
 constructor signs only the launch binding after successful atomic reservation.
-The combined launch-record identity MUST use the digest concatenation defined
-in Section 1.2 and [the manifest schema](manifest-schema.md#3-effective-manifest-schema).
+The pair-derived `launch_record_digest` MUST use the digest concatenation and
+the identifier-use table in [the manifest schema](manifest-schema.md) §4; the
+policy-issued `authorization_id` is the pre-binding key and the digest is the
+post-binding authoritative identity. Gateway grant indexes MUST key on the
+digest only.
 Verifier keyrings MUST be distributed as integrity-protected, versioned local
 configuration to launch, lifecycle, gateway, and audit. A keyring entry MUST
 include `key_id`, public key, not-before time, not-after time, intended signer
@@ -170,10 +179,12 @@ The constructor signing key MUST be a distinct file-backed key held only by the
 short-lived `agentbound-launch` service identity, mode `0600`, and unavailable
 to policy, lifecycle, gateway, audit, CLI, and sessions. The constructor MUST
 not retain this key after its construction attempt ends.
-Envelope freshness is REQUIRED. WP1 MUST set the exact `issued_at` tolerance,
-maximum future skew, and maximum authorization age. Until then this skeleton
-uses the explicit placeholder `FRESHNESS_WINDOW_TBD`; an implementation MUST
-fail closed rather than silently choose an unlimited window. The reference
+Envelope freshness is REQUIRED. Phase 1 values: `issued_at` MUST be no more
+than **30 s** in the future relative to the verifier's clock; an authorization
+manifest MUST be consumed by the constructor within **10 min** of `issued_at`;
+a launch binding MUST be committed within **60 s** of its own `issued_at`.
+A verifier that cannot read a trusted clock MUST fail closed rather than
+choose an unlimited window. The reference
 clock source is the host kernel realtime clock disciplined by the
 administrator-configured host time service; envelopes and audit events MUST
 record the named clock source, wall-clock time, and monotonic time where
@@ -202,7 +213,7 @@ The lifecycle daemon owns an append-only allocator store. Allocation mutation
 MUST use compare-and-set on both allocation-record ID and current state
 sequence. The durable `free → allocated` append is the allocation commit point
 and MUST complete before launch installs the UID/GID or any identity-dependent
-resource. The allocator record MUST bind host ID, boot ID, launch-record ID,
+resource. The allocator record MUST bind host ID, boot ID, authorization ID,
 authorization digest, allocation ID, UID/GID set, scope expectation, and
 managed reclamation domain.
 A launch record cannot have two bindings or two active allocations. A duplicate
@@ -228,8 +239,8 @@ silently reset sequence or hash history.
 | Client and component requests | Every request MUST have a scoped idempotency key. Same key plus same authenticated input returns the original result; same key plus different input is rejected. |
 | Approvals | Approval objects MUST include an issuer-authenticated nonce or monotonic sequence, expiry, and subject binding. Policy MUST reject replay, stale sequence, or duplicate contradictory approval. |
 | Authorization manifest | Policy MUST issue one committed authorization result per accepted request key and canonical derivation input set. Conflicting replay is rejected. |
-| Launch binding | Lifecycle/launch MUST reject a second binding for an authorization digest, allocation record, or launch-record ID. A retry returns the existing binding/outcome. |
-| Constructor ownership | Constructor attempt ownership MUST be a durable compare-and-set lease on the launch-record ID. Only one owner may execute construction. |
+| Launch binding | Lifecycle/launch MUST reject a second binding for an authorization digest, allocation record, or authorization ID. A retry returns the existing binding/outcome. |
+| Constructor ownership | Constructor attempt ownership MUST be a durable compare-and-set lease on the authorization ID. Only one owner may execute construction. |
 | Grants | Grant issue and revoke MUST have exactly-once externally visible semantics through durable launch-record state transitions. Retried issuer calls MUST converge on the original grant state. |
 | Audit | Senders deliver at least once. Audit deduplicates by stable event ID and preserves loss/duplicate counters. |
 Exactly-once does not assert that an external remote effect happened once. An
@@ -279,7 +290,7 @@ issue until it has reconciled all nonterminal records. It MUST enumerate
 persisted active/nonterminal launch records, allocator records, registered
 systemd scopes, retained pidfds where available, cgroup evidence, gateway
 connection/grant index, and audit delivery state.
-For each launch-record ID, lifecycle MUST:
+For each authorization ID, lifecycle MUST:
 1. Verify launch-record hash chain, signatures, key validity/revocation, host
    and boot binding, and record seal/state sequence.
 2. Match a signed binding and allocator allocation record by immutable IDs, not
@@ -324,7 +335,7 @@ cleanup completion, quarantine, or reuse.
 ---
 ## 9. Audit correlation obligations
 Every security event submitted through this interface family MUST include the
-R-AUD-1 correlation set: host ID, boot ID, launch-record ID, allocation-record
+R-AUD-1 correlation set: host ID, boot ID, authorization ID, allocation-record
 ID, session ID, trace ID, execution UID, monotonic and wall-clock timestamps,
 actor, outcome, and stable event ID. Fields that do not exist yet MUST be
 explicitly `null`, not omitted. Kernel process evidence MUST additionally carry

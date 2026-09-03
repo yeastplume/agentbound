@@ -1,6 +1,6 @@
 # Execution-Identity Lifecycle Specification
 
-**Version:** 0.2  
+**Version:** 0.3  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -8,6 +8,7 @@
 
 ## Revision history
 
+- **0.3** — Identifier terminology aligned with manifest schema §4.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Allocator placed inside the `agentbound-lifecycle` daemon; helper references replaced; `loginuid` restated as corroborating evidence with the single R-CON-6 fail rule; host credential scan retained as a reclamation precondition.
 
@@ -34,7 +35,7 @@ Host-local allocation is selected because Phase 1 is a bounded single-host/refer
 Fleet-wide audit disambiguation MUST use this tuple:
 
 ```text
-(host ID, boot ID, launch-record ID)
+(host ID, boot ID, authorization ID)
 ```
 
 Every record that reports an execution UID MUST pair it with that tuple. The durable principal ID and session trace identity MUST also be present where the event schema permits. A numeric UID without these values is insufficient evidence of a particular historical session.
@@ -76,7 +77,7 @@ An allocation record MUST contain at least:
 |---|---|
 | allocation record ID | Globally unique record identifier. |
 | host ID and boot ID | Host identity and boot instance at allocation. |
-| launch-record ID and trace identity | Immutable binding to this session. |
+| authorization ID and trace identity | Immutable binding to this session. |
 | durable principal ID | Principal for which the session is constructed. |
 | execution UID | UID allocated from the reserved range. |
 | primary GID | One GID allocated with the UID. |
@@ -100,7 +101,7 @@ free → allocated → in-use → reclaiming → quarantined → free
 | State | Meaning | Entry rule | Permitted next states |
 |---|---|---|---|
 | `free` | Numeric identity is available for allocation. | Initial verified empty range entry or completed quarantine. | `allocated`. |
-| `allocated` | Identity is reserved to one authorization-manifest digest and pending launch-record ID; the launch binding is committed atomically with the reservation, but no runtime is yet established. | Durable append of allocation record before identity installation. | `in-use`, `reclaiming`. |
+| `allocated` | Identity is reserved to one authorization-manifest digest and pending authorization ID; the launch binding is committed atomically with the reservation, but no runtime is yet established. | Durable append of allocation record before identity installation. | `in-use`, `reclaiming`. |
 | `in-use` | Identity has been installed for a session or may have been installed before a crash. | Constructor installs credentials or recovery finds compatible live scope evidence. | `reclaiming`. |
 | `reclaiming` | No reuse is possible while `agentbound-lifecycle` verifies and removes all managed-domain residue. | Termination, construction rollback, or crash reconciliation. | `quarantined`; remains `reclaiming` on uncertainty. |
 | `quarantined` | Reclamation condition passed; reuse is delayed for late audit correlation. | Recorded successful reclamation proof. | `free`. |
@@ -132,17 +133,17 @@ If any check cannot be completed, has contradictory evidence, or finds a live pr
 
 After the reclamation condition passes, the allocator MUST place the identity in `quarantined`. The quarantine's purpose is to expose late-arriving audit, kernel, gateway, and storage-correlation records before the UID is reused.
 
-The ordinal minimum is: **do not leave quarantine until `agentbound-audit` has sealed all records referencing the launch-record ID.** In addition, a host-configurable quarantine floor applies. The allocator MUST enforce whichever condition completes later. The floor MAY be increased but MUST NOT be shortened automatically under allocation pressure.
+The ordinal minimum is: **do not leave quarantine until `agentbound-audit` has sealed all records referencing the authorization ID.** In addition, a host-configurable quarantine floor applies. The allocator MUST enforce whichever condition completes later. The floor MAY be increased but MUST NOT be shortened automatically under allocation pressure.
 
 ---
 
 ## 5. Export rule and durable authorization
 
-Anything that leaves the declared managed reclamation domain—backups, snapshots, archives, artifacts pushed through a gateway, exported files, replicated storage, and restore media—MUST carry the global durable principal ID and session identifiers, including the launch-record ID and trace identity where applicable. It MUST NOT rely on the numeric execution UID for durable authorization or attribution.
+Anything that leaves the declared managed reclamation domain—backups, snapshots, archives, artifacts pushed through a gateway, exported files, replicated storage, and restore media—MUST carry the global durable principal ID and session identifiers, including the authorization ID and trace identity where applicable. It MUST NOT rely on the numeric execution UID for durable authorization or attribution.
 
 The export metadata SHOULD also carry the host ID, boot ID, manifest digest, object digest, classification/provenance metadata where applicable, and a reference to the sealed launch record. Numeric owner fields MAY be retained as forensic observations but MUST be treated as non-authoritative after export.
 
-`agentbound-gateway` MUST attach the durable principal ID, launch-record ID, trace identity, approved operation identity, and any required provenance metadata to gateway-mediated artifacts and remote operations. It MUST authorize the operation against the session grant, not against the source process's numeric UID alone.
+`agentbound-gateway` MUST attach the durable principal ID, authorization ID, trace identity, approved operation identity, and any required provenance metadata to gateway-mediated artifacts and remote operations. It MUST authorize the operation against the session grant, not against the source process's numeric UID alone.
 
 A storage broker MUST translate an authorized per-session grant into durable storage access and persist global principal/session metadata with created or exported objects. It MUST NOT create a durable ACL whose continuing authorization depends on the reclaimed execution UID. Restore tooling MUST map historical numeric ownership only through exported metadata and a reviewed restoration policy; it MUST NOT reactivate the old UID as authorization.
 
@@ -150,7 +151,7 @@ A storage broker MUST translate an authorized per-session grant into durable sto
 
 ## 6. Audit disambiguation and loginuid
 
-Every `agentbound-audit` record about a session MUST pair `execution_uid` with `launch_record_id` and `boot_id`; fleet-correlatable records MUST additionally carry `host_id`. This rule applies to lifecycle, allocation, kernel-correlation, gateway, broker, and cleanup records.
+Every `agentbound-audit` record about a session MUST pair `execution_uid` with `authorization_id`, `launch_record_digest` (mandatory once the binding is committed), and `boot_id`; fleet-correlatable records MUST additionally carry `host_id`. This rule applies to lifecycle, allocation, kernel-correlation, gateway, broker, and cleanup records.
 
 Kernel PID/PPID values are not durable process identities because PIDs are reused. Records SHOULD include a PID namespace identifier plus process start time or pidfd-derived identity where available. The systemd scope/cgroup is useful corroboration but is not a portable standalone audit key.
 
@@ -259,7 +260,7 @@ The allocator MAY map an execution UID and primary GID to equal numeric values, 
 
 Every reclamation scan MUST create a signed or append-only discovery record with:
 
-- allocation record ID and launch-record ID;
+- allocation record ID and authorization ID;
 - host process credential scan results, including every matching PID, start time, PID namespace, and scope reconciliation;
 - root paths scanned and their manifest registration version;
 - each owned object found, its object type, owner UID/GID, and action taken;
@@ -284,7 +285,7 @@ An operator may place an identity in a manual hold state represented operational
 
 ### 12.6 Allocator audit events
 
-Each allocator event MUST include allocation record ID, launch-record ID, host ID, boot ID, execution UID, primary GID, actor, timestamp, outcome, and state sequence. The event vocabulary MUST include:
+Each allocator event MUST include allocation record ID, authorization ID, host ID, boot ID, execution UID, primary GID, actor, timestamp, outcome, and state sequence. The event vocabulary MUST include:
 
 | Event | Required additional evidence |
 |---|---|

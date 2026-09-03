@@ -1,7 +1,7 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Version:** 0.2
-**Status:** Proposed for WP0 review
+**Version:** 0.3
+**Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built
 **Date:** 28 August 2026
 **Applies to:** Phase 1 milestone 1D control arm
 **Related:** [Phase 1 plan §3.3, §4.3, §5–§8, WP0, and WP4b](../plans/phase-1-reference-implementation.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0002](ADR-0002-gateway-authentication.md); [traceability matrix](traceability-matrix.md); [test catalogue](test-catalogue.md)
@@ -9,7 +9,8 @@
 ## Revision history
 
 - **0.1** — Initial Firecracker control-arm definition and group-level pre-registration.
-- **0.2** — Froze the Linux local-socket and Firecracker/vsock configurations; added vsock CID-lifetime binding, per-atomic-test classification rules, comparative decision rule, per-arm code accounting, and WP0 placeholders.
+- **0.3** — Status reconciled with the architecture README; version pins, guest init, guest audit source, comparative thresholds, confidence method, operator script, VM instance token format, and SLOC comparability rule filled in; open questions reduced to WP1 verification items.
+- **0.2** — Froze the Linux local-socket and Firecracker/vsock configurations; added vsock CID-lifetime binding, per-atomic-test classification rules, comparative decision rule, per-arm code accounting; configuration values left open for 0.3.
 
 ## Context
 
@@ -50,10 +51,26 @@ appear in an effective manifest or result labelled as this ADR's Linux arm.
 
 ### VM arm
 
-The VM arm MUST use **Firecracker**, pinned at the WP0 freeze to one exact
-version. It creates one microVM per session. Firecracker, the host kernel, the
-guest kernel, rootfs image digest, jailer settings, and complete VMM
-configuration MUST be recorded in the pinned-version set before testing.
+The VM arm MUST use **Firecracker v1.16.1** with its bundled `jailer`. It
+creates one microVM per session. The pinned set is:
+
+| Item | Pinned value |
+|---|---|
+| VMM | Firecracker v1.16.1, release binary, SHA-256 recorded |
+| Host kernel (both arms) | Linux 6.12 LTS series, one exact patch release chosen at image build, `CONFIG_SECCOMP_FILTER`, `CONFIG_CGROUP_FREEZER`, `CONFIG_VSOCKETS`, `CONFIG_VHOST_VSOCK`, `CONFIG_AUDIT`, Landlock enabled |
+| Guest kernel | Same 6.12 patch release, Firecracker microvm config, `CONFIG_VIRTIO_VSOCKETS`, `CONFIG_AUDIT` |
+| systemd (host) | 258 stable series, one exact release |
+| Guest rootfs | Minimal Debian-derived image built reproducibly from a committed manifest; ext4, read-only; SHA-256 recorded |
+| Guest init | `agentbound-guest-init`: a static, single-binary init from this repository (subreaper, vsock forwarder, workload exec, audit shipper); its build digest is recorded |
+| Guest audit source | Linux Audit (`auditd` not used); `agentbound-guest-init` reads the audit netlink socket directly and ships records over the single vsock service, tagged with the VM instance token |
+| Jailer | `--chroot-base-dir` per session, dedicated UID/GID per session from the same allocator, `--cgroup-version 2`, `--new-pid-ns`, seccomp default filter, no `--netns` |
+| vCPU / memory | 1 vCPU, 512 MiB, no balloon |
+| Snapshot/restore | disabled |
+
+Every value MUST be written to `pinned-configuration.json` (schema: item,
+value, digest, source) before the first control-arm run, and the file's own
+digest MUST be cited by every control-arm evidence record. A change to any
+item starts a new, separately labelled run set.
 
 The VM device inventory is closed:
 
@@ -68,10 +85,8 @@ accelerator, balloon device, debug channel, device passthrough, or another
 listener. The workspace MUST NOT be concurrently shared except through an
 explicitly authorized and separately recorded channel.
 
-The guest init is **[fixed at WP0 freeze: named init, version, and digest]**.
-The guest audit source is **[fixed at WP0 freeze: named source, version, and
-collection configuration]**. Both MUST be included in the pinned configuration
-and evidence record. Guest root is not host root and MUST have no host
+The guest init and guest audit source are those in the pinned-set table
+above; both MUST be included in the pinned configuration and evidence record. Guest root is not host root and MUST have no host
 credential, capability, management endpoint, device, or host identity.
 
 The VM exposes exactly one vsock path to `agentbound-gateway`. This vsock path
@@ -90,13 +105,16 @@ its results MUST NEVER be pooled with Firecracker results.
 The host endpoint MUST bind every accepted vsock connection to all of:
 
 - the host-observed guest CID;
-- a non-reusable VM instance token;
+- a non-reusable VM instance token: 128 bits from the host CSPRNG, generated
+  by `agentbound-lifecycle` at VM launch, recorded in the launch binding's
+  `host_binding`, passed to the guest only via the Firecracker boot arguments,
+  and never reissued for another instance on the same host and boot ID;
 - the VMM pidfd and VMM process start time;
 - the jailer identity;
 - the active immutable launch record; and
 - the Firecracker configuration digest and pinned-version set.
 
-A guest-supplied CID, trace identifier, or launch-record identifier MUST NOT be
+A guest-supplied CID, trace identifier, or authorization ID MUST NOT be
 authentication evidence. The binding record MUST be created before admission of
 the first typed operation and MUST be immutable while the launch record is
 active. The gateway MUST re-check active launch-record and grant state on every
@@ -203,7 +221,7 @@ entry MUST be executed separately as guest root and guest unprivileged.
 | F-C-01…09: pipe/eventfd barrier; mount namespace; source resolution; root; proc; descriptor closure; UID/LSM/cap/seccomp; record/grant/socket; exec | SE for each point | evaluator fault-injects Linux construction / evaluator fault-injects Firecracker/jailer/guest construction | no runnable partial session, credential, or ambiguous audit record |
 | F-T-01…11: admission; freeze; kill; reap; no-live proof; grant close; broker close; unmount; socket unmount; identity reclaim; record seal | SE for each point | evaluator interrupts Linux teardown / evaluator interrupts termination, CID invalidation, and cleanup | ordered termination, invalidation, and cleanup |
 
-The `…` notation is a mechanical expansion placeholder, not a range that may be
+The `…` notation is fixed mechanical expansion notation, not a range that may be
 silently changed. The catalogue MUST assign every plan bullet one or more IDs
 within the shown scheme, retain this class, name its precise VM realization, and
 state its property. Any catalogue item whose mechanic lacks a VM counterpart
@@ -239,11 +257,19 @@ if both conditions below hold.
 1. Every common boundary test—every identical or substrate-equivalent test—MUST
    reach its expected preventive outcome on the Linux arm, with no unresolved
    preventive-invariant failure.
-2. Across at least five repetitions (`N ≥ 5`) with confidence intervals, Linux
-   MUST beat the Firecracker VM arm by thresholds **[fixed at WP0 freeze]** for
-   p95 session construction-plus-teardown latency, steady-state RAM per session,
-   and scripted operator-task time/steps. The thresholds, confidence method,
-   workload, and operator script MUST be frozen before execution.
+2. Across `N = 10` repetitions per arm on the same host, Linux MUST beat the
+   Firecracker VM arm on **all three** of the following, each judged by the
+   95% bootstrap confidence interval (10 000 resamples) of the paired
+   per-repetition difference lying entirely on the Linux side of the threshold:
+
+   | Measure | Threshold (Linux better by at least) |
+   |---|---|
+   | p95 session construction-plus-teardown latency (D-01 workload, cold start, `requested` → `sealed`) | 50% |
+   | steady-state RSS per idle session after 60 s (Linux: cgroup `memory.current`; VM: VMM RSS + guest `MemTotal − MemAvailable`, reported separately and summed) | 50% |
+   | scripted operator task: "find why session X was denied, terminate it, confirm reclamation" — wall time and step count, run by three operators blind to arm | 25% on both time and steps |
+
+   The workload is the D-01 scenario with the T-6.9-001 fan-out disabled; the
+   operator script is committed alongside the test catalogue before any run.
 
 Any Linux boundary failure selects the VM regardless of performance. If no
 threshold is met by either arm, the result is **“no measured advantage; VM
@@ -300,16 +326,8 @@ lifecycle control, and fair per-session comparison too substantially.
 Rejected. It would leave the central architecture comparison untested and
 prevent milestone 1D from supplying the Phase 2 decision input.
 
-## Open questions for WP0 review
+## Open questions carried to WP1
 
-1. What exact Firecracker version, host and guest kernel versions, rootfs digest,
-   jailer settings, guest init, guest audit source, and tool versions are pinned
-   at the WP0 freeze?
-2. What non-reusable VM-instance-token format and CID-reassignment proof record
-   will the host endpoint retain?
-3. What guest-side witness, if any, can support a future separately
-   pre-registered VM per-process attribution claim?
-4. What fixed effect thresholds, confidence-interval method, workload profile,
-   and operator script define the comparative decision rule?
-5. Can the pinned SLOC tool and accounting boundaries produce a comparable
-   cross-arm figure; if not, how will per-arm disclosure be presented?
+1. Does the pinned 6.12 patch release expose vsock peer-CID reporting sufficient for the host endpoint binding, or does the binding require the VMM's own connection table?
+2. What guest-side witness, if any, can support a future separately pre-registered VM per-process attribution claim?
+3. Are the five SLOC figures comparable across arms once the VMM, jailer, and guest init are counted? If the pinned tool cannot attribute Firecracker's transitive Rust dependencies consistently, cross-arm SLOC is disclosed per arm and excluded from the decision rule (already the rule in the accounting section; WP1 confirms whether the exclusion is triggered).

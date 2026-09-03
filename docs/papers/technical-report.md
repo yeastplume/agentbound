@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR9
+**Version:** 0.5-TR10
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -22,6 +22,7 @@
 - **0.5-TR5** — Execution identity restated as uniquely allocated with verified reclamation and reuse quarantine; ownership/execution separation stated as an invariant with profile-specific realizations rather than a universal "never executes".
 - **0.5-TR6** — Aligned the phase description with the Phase 1 plan: the microVM control arm is a Phase 1 (milestone 1D) comparison for the Unix-governed profile, and Phase 3 extends it to high-assurance profiles; reclamation condition bounded to a managed domain.
 - **0.5-TR7** — Replaced the pre-plan component sketch with the Agentbound decomposition; Phase 2 restated as extending the Phase 1 baseline mechanisms rather than introducing them.
+- **0.5-TR10** — Manifest discussion restated as the two-stage policy-resolver/constructor flow with distinct authority; egress section labels the network topology as the general multi-host form and the local-socket topology as the Phase 1 realization.
 - **0.5-TR9** — Construction step 1 restated as a `clone3` synchronization barrier (no kernel facility creates a stopped child); the two egress topologies are retained as general mechanisms with a note that Phase 1 selects the local-socket topology because network transports do not identify the operation-issuing process; Phase 1 decomposition names the `agentbound-lifecycle` daemon.
 - **0.5-TR8** — WP0 consistency: execution-binding audit fields include inference pool; Phase 1 manifest flow clarified as policy authorization plus allocation-bound launch binding.
 
@@ -321,7 +322,7 @@ resources:
   runtime_max: 2h
 ```
 
-The manifest is not itself the security boundary and must never be interpreted as an entitlement. The constructor accepts only an authenticated initiator, a registered agent identifier, a task/purpose identifier, and a bounded set of requested resources. It resolves all named resources through a server-side catalog, intersects the request with current agent and initiator policy, rejects unknown fields and non-canonical paths, and produces the effective manifest itself. Agent-authored text may request a future session but cannot supply authoritative UID, label, mount, credential, or network values. The resulting immutable launch record supports audit and reproducibility.
+The manifest is not itself the security boundary and must never be interpreted as an entitlement. The request is resolved in two stages by two components with different authority. An **unprivileged policy resolver** accepts only an authenticated initiator, a registered agent identifier, a task/purpose identifier, and a bounded set of requested resources; resolves all named resources through a server-side catalogue; intersects the request with current agent and initiator policy; rejects unknown fields and non-canonical paths; and signs an **authorization manifest** that contains every policy decision but no host allocation—no UID, host path, or credential handle. A **narrow privileged constructor** verifies that signature, atomically reserves an execution identity, projects each authorized intent onto the host, and signs a **launch binding** that references the authorization manifest by digest and may neither add, drop, nor widen anything in it. The verified pair is the effective manifest; the constructor never derives policy and the resolver never touches host state. Agent-authored text may request a future session but cannot supply authoritative UID, label, mount, credential, or network values. The resulting immutable launch record supports audit and reproducibility.
 
 Hostnames in such a manifest are policy names rather than sufficient enforcement objects. DNS rebinding, redirects, CDNs, proxies, IPv6, local sockets, TLS identity, and multi-tenant endpoints make hostname allowlists fragile. Sensitive sessions should normally reach an authenticated gateway or workload identity whose service, tenant, model, retention mode, method, and budget can be verified; network policy should prevent bypassing it.
 
@@ -404,7 +405,9 @@ The model is therefore not security-neutral even though the session identity sur
 
 #### Gateway-only egress is a topology, not a namespace flag
 
-A network namespace creates a separate network stack; by itself it denies nothing. "Gateway-only egress" is a property of a specified graph and its enforcement points, all of which must be present for Invariant 10 to hold:
+A network namespace creates a separate network stack; by itself it denies nothing. "Gateway-only egress" is a property of a specified graph and its enforcement points, all of which must be present for Invariant 10 to hold. Two topologies satisfy it. The **network topology** below is the general form for deployments whose gateway is off-host; it identifies the session, not the process issuing each operation. The **local-socket topology** (described after the additional conditions) is the Phase 1 realization and the only one of the two that supplies the process leg of Invariant 13 as Profile U currently claims it.
+
+Network topology (general, multi-host; not used in Phase 1):
 
 ```text
 session netns

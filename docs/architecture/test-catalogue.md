@@ -1,12 +1,17 @@
 # Phase 1 Test Catalogue
 
-**Version:** 0.1  
+**Version:** 0.2  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Governs:** Agentbound milestones 1A–1D  
 **Companion documents:** [requirements](phase-1-requirements.md), [traceability matrix](traceability-matrix.md), [session lifecycle](session-lifecycle.md), [Phase 1 plan](../plans/phase-1-reference-implementation.md), and [technical report](../papers/technical-report.md)
 
 ---
+
+## Revision history
+
+- **0.1** — Initial WP0 pre-registration.
+- **0.2** — Gateway-free 1A form (`channel_topology: none`) applied to 1A tests; load profiles, correlation deadlines, and repetition seeds fixed; T-6.4 rows rewritten for the local-socket corpus; one-connection-per-process rule in T-6.4-007; control-arm column declared to be populated by ADR-0003; identifier terminology aligned.
 
 ## 1. Purpose and status
 
@@ -30,8 +35,10 @@ not not-applicable.
 
 ## 2. Fixed Phase 1 decisions
 
-The Linux arm MUST use only the local-socket topology. A session MUST have no
-network interface. Its only gateway channel MUST be exactly one explicitly
+A gateway-enabled Linux session (milestone 1B onward, `gateway.channel_topology:
+local-socket`) MUST use only the local-socket topology; a 1A session uses
+`none` and has no channel at all. Every session MUST have no network interface.
+Under `local-socket` the only gateway channel MUST be exactly one explicitly
 bind-mounted, single-purpose `AF_UNIX` `SOCK_SEQPACKET` gateway socket. The
 gateway MUST enable `SO_PASSCRED` and authenticate every received packet using
 its `SCM_CREDENTIALS`, mapping that evidence to the execution identity and
@@ -52,6 +59,11 @@ prejudge the classification.
 
 ## 3. Conventions and common assertions
 
+Every 1A test runs against a `gateway.channel_topology: none` authorization
+manifest; the constructor MUST refuse `local-socket` until the gateway component
+exists. Tests marked 1A/1B run once per form. Steps or assertions that concern
+gateway state are recorded as `not applicable` under `none`, never as passed.
+
 RFC 2119 terms are normative. A test identifier is permanent. `D-xx` denotes a
 plan §5 demonstration; `T-6.x-nnn` an atomic plan §6 adversarial test;
 `F-C-nn` and `F-T-nn` construction and termination fault tests respectively.
@@ -65,7 +77,7 @@ other-principal session), **ANI** (authenticated non-admin initiator), and
 not an implementation filename.
 
 All denials MUST return a safe diagnostic containing the applicable requirement
-ID (or stable policy-rule ID), launch-record ID, and trace ID. Each denial MUST
+ID (or stable policy-rule ID), authorization ID, launch-record digest, and trace ID. Each denial MUST
 also emit `operation.denied` or the more specific lifecycle/derivation event
 named by the row. No diagnostic MAY disclose another session's identifiers.
 
@@ -88,7 +100,7 @@ retry. Every attempt, including retry, failure, and infrastructure abort, MUST
 be retained and linked by test ID, run ID, input digest, and idempotency key.
 
 Repetition counts, kernel/systemd/LSM versions, interface inventory, and test
-seeds MUST be pinned at WP0 freeze. Each row executes its pinned count; where a
+seeds are pinned here: bypass and fault tests run 10 repetitions each; the seed for each repetition is `SHA-256(test_id || repetition_index)` truncated to 64 bits. Each row executes its pinned count; where a
 row participates in the nominal profile it MUST execute at least `N` times.
 An attempt is passing only if its preventive result, required audit event, and
 all required evidence are present. A missing required audit record is a failed
@@ -110,7 +122,7 @@ classification table and no post-result reclassification.
 
 For `N` identically pinned runs with the same canonical request, policy,
 catalogue, workload seed, and fault schedule, launch records MUST be bytewise
-identical after excluding only: launch-record ID, session/trace ID, allocation
+identical after excluding only: authorization ID, session/trace ID, allocation
 record/UID, host and boot ID, wall/monotonic timestamps, pidfd/PID values,
 systemd unit instance, cryptographic signature nonce, and explicit run ID.
 The derivation output, manifest digest, selected runtime, grants, resource
@@ -119,7 +131,7 @@ projection, construction-step sequence, and terminal outcome MUST be identical.
 For identically pinned termination schedules, lifecycle event names, order,
 state transitions, cleanup-result classes, and denial classes MUST be identical
 modulo the listed nondeterministic fields. Every denial MUST carry the
-requirement/policy ID, launch-record ID, and trace ID; every state transition
+requirement/policy ID, authorization ID, launch-record digest, and trace ID; every state transition
 MUST carry its authorized actor and causation ID. The test evidence MUST show
 that the lifecycle daemon, not a systemd-invoked helper, consumed systemd D-Bus
 signals and used the retained pidfd evidence.
@@ -142,8 +154,8 @@ excluded. A reconstruction is correct only when it recovers the full chain
 class/outcome/idempotency key, and reaches the correlator by the correlation
 deadline.
 
-The correlation deadline is **[fixed at WP0 freeze]** after the workload end
-marker for nominal runs and **[fixed at WP0 freeze]** for overload runs. Let
+The correlation deadline is **30 s** after the workload end marker for nominal
+runs and **120 s** for overload runs. Let
 `G` be all in-scope, deduplicated ground-truth effects whose deadlines expire,
 and `C` those correctly reconstructed full chains. Attribution completeness is
 `|C| / |G|`. It MUST be at least **99%** over all classes under the nominal
@@ -153,8 +165,8 @@ change the denominator.
 
 | Profile | Fixed workload mix | Concurrent sessions | Operation rate | Duration | Repetitions |
 |---|---|---:|---:|---:|---:|
-| NOMINAL | local create/modify **[fixed at WP0 freeze]**; lifecycle **[fixed at WP0 freeze]**; finite Git gateway corpus **[fixed at WP0 freeze]** | **[fixed at WP0 freeze]** | **[fixed at WP0 freeze]** effects/s | **[fixed at WP0 freeze]** | `N ≥ 5`, exact `N` **[fixed at WP0 freeze]** |
-| OVERLOAD | same classes, weighted to audit and gateway pressure **[fixed at WP0 freeze]** | **[fixed at WP0 freeze]** | **[fixed at WP0 freeze]** effects/s | **[fixed at WP0 freeze]** | **[fixed at WP0 freeze]** |
+| NOMINAL | per session: 200 local create/modify, 20 process lifecycle events (fork/exec/exit), 10 Git gateway operations (8 `push-staging-ref` permitted, 2 denied); 230 effects | 8 | 20 effects/s aggregate | 300 s | `N = 10` |
+| OVERLOAD | per session: 2 000 local create/modify, 200 lifecycle events, 50 gateway operations (40 permitted, 10 denied) | 32 | 500 effects/s aggregate | 300 s | `N = 5` |
 
 ## 6. Demonstration catalogue (plan §5)
 
@@ -167,7 +179,7 @@ change the denominator.
 | D-05 | 1A | 15 | R-CON-3..5 | USP | shell/runtime substitution | same identity/boundary/scope/audit chain | LR,KA,AR | |
 | D-06 | 1A | 12 | R-ISO-3..4 | USP | child/grandchild process tree | descendants remain contained | KA,LC | |
 | D-07 | 1A | 12 | R-ISO-3..4 | USP | double-fork and daemonize | still supervised and reaped | KA,LC | |
-| D-08 | 1A | 12,21 | R-ISO-4,R-LC-1..4 | USP | lifecycle termination | descendants stop before ordinary grant closure | LC,KA,GA | |
+| D-08 | 1A | 12,21 | R-ISO-4,R-LC-1..4 | USP | lifecycle termination (topology `none` at 1A; `local-socket` re-run at 1B) | descendants stop before ordinary grant closure | LC,KA,GA(1B) | |
 | D-09 | 1B | 10 | R-GW-1..4 | USP | direct protected-service access | deny/fail closed; no network interface exists | KA,DR,GA | |
 | D-10 | 1B | 11,13 | R-GW-3..4,R-AUD-2 | USP | typed Git operation | full attributed gateway operation | LR,GA,AR | |
 | D-11 | 1A | 7 | R-CON-1 | ANI | constructor faults | no runnable session or usable credential | LC,KA,LR | |
@@ -234,7 +246,7 @@ change the denominator.
 | T-6.4-004 | 1B | 10,17 | R-GW-2,R-ISO-2 | CSSP | abstract-namespace sockets of host and sibling sessions | `ECONNREFUSED`; abstract namespace isolated by netns | KA,DR | |
 | T-6.4-005 | 1B | 10 | R-CON-3,R-GW-2 | USP | pre-opened connections and inherited descriptors | none inherited; allowlist verified at exec | KA,LR | |
 | T-6.4-006 | 1B | 10,13 | R-GW-2..3 | USP | `SCM_RIGHTS` on the gateway socket | packet rejected; connection closed; `gateway.descriptor_transfer_rejected` | GA,DR | |
-| T-6.4-007 | 1B | 11,13 | R-GW-3 | CSSP | passed connected gateway descriptor used from another session | allocation mismatch deny; `gateway.process_mismatch` | GA,DR,AR | |
+| T-6.4-007 | 1B | 11,13 | R-GW-3 | USP, CSSP | connected gateway descriptor inherited by a child, and passed to another session | establishing-PID mismatch closes connection; `gateway.process_mismatch` | GA,DR,AR | |
 | T-6.4-008 | 1B | 13 | R-GW-3 | USP | packets with zero or multiple `SCM_CREDENTIALS`, forged fields | reject; connection closed | GA,DR | |
 | T-6.4-009 | 1B | 13 | R-GW-3 | USP | PID reuse against the per-operation check | start-time/pidfd mismatch deny | GA,DR,AR | |
 | T-6.4-010 | 1B | 10 | R-GW-1 | USP | `SOCK_STREAM`/`SOCK_DGRAM` connect to gateway path | `EPROTOTYPE`/refused; no operation admitted | KA,GA,DR | |
@@ -326,7 +338,7 @@ failure evidence, and no unsafe identity reuse.
 | F-C-07 | 1A | 6,7,15 | R-CON-1,R-CON-3..5 | ANI | step 7 UID/LSM/cap/seccomp install | abort; identity safely held/reclaimed | LC,KA,LR | |
 | F-C-08 | 1B | 7,11,13 | R-CON-1,R-CON-7,R-GW-3 | ANI | step 8 record, grant, socket bind | abort; grant/socket unusable | LC,GA,LR | |
 | F-C-09 | 1A | 7 | R-CON-1,R-CON-7 | ANI | step 9 runtime exec | no runtime; failure record sealed | LC,KA,LR | |
-| F-T-01 | 1A | 12,21 | R-ISO-4,R-LC-1 | ANI | step 1 admission closure | new gateway operation denied | LC,GA,DR | |
+| F-T-01 | 1A/1B | 12,21 | R-ISO-4,R-LC-1 | ANI | step 1 admission closure | 1A (`none`): step recorded as not applicable with no gateway state present; 1B: new gateway operation denied | LC,GA(1B),DR | |
 | F-T-02 | 1A | 12 | R-ISO-4 | ANI | step 2 cgroup freeze | containment retained/fail closed | LC,KA | |
 | F-T-03 | 1A | 12 | R-ISO-4 | ANI | step 3 `SIGTERM` and bounded thaw for init reaping | no process escapes; no premature resource release | LC,KA | |
 | F-T-04 | 1A | 12 | R-ISO-4 | ANI | step 4 refreeze and `cgroup.kill`, init pidfd exit wait | identity held until proof | LC,KA | |
@@ -383,7 +395,11 @@ profile/version set. The result MUST preserve negative results and every
 attempt. A test MAY be rerun to diagnose a result, but no later pass erases an
 earlier failure.
 
-WP0 review MUST confirm that every blank control-arm cell is later completed by
-ADR-0003 before any microVM result; that the placeholders in the load profiles
-are fixed before any test run; that every applicable invariant has a named test;
-and that the finite local-socket gateway corpus includes every row in §7.4.
+The **Control arm** column in every table above is intentionally empty in this
+document: the authoritative, populated classification of each test ID is the
+per-test register in [ADR-0003](ADR-0003-control-substrate.md), which MUST be
+complete before any microVM result is recorded. WP0 review MUST confirm that
+every applicable invariant has a named test and that the finite local-socket
+gateway corpus includes every row in §7.4. Load-profile constants and
+correlation deadlines in §5 are frozen by this version; changing them
+requires a revision-history entry before any run.

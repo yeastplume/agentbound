@@ -1,7 +1,7 @@
 # ADR-0002: Gateway channel topology and session authentication
 
 **Status:** Accepted for Phase 1 (topology and mechanism selected); WP1 spike verifies kernel-baseline assumptions listed in Decision 7  
-**Version:** 0.2  
+**Version:** 0.3  
 **Date:** 28 August 2026  
 **Applies to:** Unix-governed profile, milestones 1B–1C; microVM projection per ADR-0003  
 **Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md) §3.3, §4.2, §6.3–6.4; [technical report](../papers/technical-report.md) §3.2, §5; [manifest schema](manifest-schema.md); [component interfaces](component-interfaces.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0003](ADR-0003-control-substrate.md)
@@ -9,6 +9,7 @@
 ## Revision history
 
 - **0.1** — Proposed two mutually exclusive Linux-arm topologies (network Candidate N with mTLS/broker; local-socket Candidate L) and deferred selection to WP1.
+- **0.3** — One connection per process: every packet's credential PID must equal the establishing PID; inherited or passed descriptors close the connection. Identifier terminology aligned with manifest schema §4 (`authorization_id` / `launch_record_digest`).
 - **0.2** — Selected Candidate L for Phase 1. Candidate N withdrawn from Phase 1 because it cannot satisfy the per-operation process leg of Invariant 13; deferred to a future multi-host ADR. Socket type fixed as `SOCK_SEQPACKET`; per-packet `SCM_CREDENTIALS`; descriptor transfer prohibited; `SO_PEERCRED` wording corrected; vsock CID lifetime rules added; WP1 scope narrowed to kernel-baseline verification.
 
 ## Context
@@ -38,7 +39,7 @@ session (no network interface, including loopback)
 1. The session network namespace MUST contain no interface, including loopback, and no route. Seccomp MUST deny every socket family except `AF_UNIX`, and MUST deny `AF_UNIX` `SOCK_STREAM`/`SOCK_DGRAM` `connect` unless the runtime profile explicitly requires local IPC inside the session (recorded in the manifest).
 2. Exactly one gateway socket is bind-mounted into the session at the manifest's `gateway_socket` mount. No other host Unix socket is visible in the mount namespace. The abstract socket namespace is isolated by the session's network namespace.
 3. The socket type MUST be `SOCK_SEQPACKET`. One complete typed operation MUST be carried in exactly one `sendmsg`; the gateway MUST reject any packet that does not parse as exactly one operation and MUST NOT reassemble operations across packets. `SOCK_STREAM` is not permitted because ancillary data attaches to stream segments, not to application messages.
-4. The manifest's `gateway.channel_topology` has exactly one legal value in Phase 1, `local-socket`. `agentbound-launch` MUST fail closed on any other value or on any network-topology field.
+4. The manifest's `gateway.channel_topology` has exactly two legal values in Phase 1: `none` (gateway-free form, the only form constructible at milestone 1A; no channel at all, same no-network boundary) and `local-socket` (this ADR, from 1B). `agentbound-launch` MUST fail closed on any other value or on any network-topology field.
 
 The network topology is **withdrawn from Phase 1**, not rejected in principle. It is the natural mechanism for off-host gateways in later multi-host profiles and will be the subject of a separate ADR whose first obligation is to state honestly which leg of the attribution chain it can and cannot prove.
 
@@ -50,7 +51,7 @@ Authentication of the connection and attribution of each operation are separate 
 
 **Every operation.** The gateway MUST enable `SO_PASSCRED` before reading any data and MUST require exactly one kernel-supplied `SCM_CREDENTIALS` control message per packet. Packets with zero or more than one credential message MUST be rejected. The gateway MUST verify that the credential PID resolves (pidfd or PID+start-time) to a live process whose UID, PID namespace, and cgroup match the connection's bound allocation. On mismatch the operation is denied, the connection is closed, and `gateway.process_mismatch` is emitted. The per-packet credential, not the connection's original peer, is the authoritative process identity recorded against the effect.
 
-**Descriptor transfer.** `SCM_RIGHTS` on the gateway protocol MUST be rejected. For Phase 1's process-attribution claim, an established gateway descriptor MUST NOT be transferred between processes; a packet whose credential PID differs from the connection's establishing PID is permitted only if both resolve to the same allocation (a child of the establishing process), is recorded as a process change, and is the attributed process for that operation. Cross-session use MUST fail the allocation check and is a conformance failure if accepted.
+**One connection per process.** `SCM_RIGHTS` on the gateway protocol MUST be rejected. Every packet's credential PID MUST equal the connection's establishing PID and resolve to the same pidfd/start time; any other credential PID — whether the descriptor was inherited across `fork`, passed, or leaked — closes the connection with `gateway.process_mismatch` and denies the operation. Children and other processes in the session open their own connections, each authenticated per the paragraph above. The gateway cannot distinguish a passed descriptor from an inherited one, so this rule does not depend on knowing how the descriptor was acquired. Cross-allocation use fails the allocation check and is a conformance failure if accepted.
 
 **pidfd unavailability.** If the pinned kernel cannot supply pidfds or process start time for the credential PID, the constructor MUST record the condition as a residual assumption in the launch record and the gateway MUST refuse the connection when the manifest's attribution policy is `required`. It MUST NOT fall back to PID alone silently.
 
@@ -76,7 +77,7 @@ Connection authentication is not permanent authority.
 1. The gateway MUST re-check active launch-record and grant status on **every operation**.
 2. A connection established before a revocation MUST fail its next operation after the revocation record is committed. An operation already admitted is handled per its predeclared policy: complete-and-record, cancel where the adapter supports safe cancellation, or record an indeterminate remote outcome. For the Git staging-ref adapter the policy is **complete-and-record**: a push already accepted by the Git host is not retracted by the gateway; the staging ref remains under branch-protection control and the audit record marks the operation as admitted-before-revocation.
 3. New connections after revocation MUST fail authentication.
-4. Exit of the establishing process does not transfer authority. A subsequent packet from a child process is evaluated per Decision 2. A peer pidfd exit event is logged and MAY close the connection under a stricter manifest policy.
+4. Exit of the establishing process ends the connection's authority: the gateway MUST close the connection on the peer pidfd exit event, and any packet arriving from another PID is rejected per Decision 2.
 5. On entry to termination, `agentbound-lifecycle` MUST first instruct the gateway to **deny admission** of new operations for the launch record (grant records are not yet released), then run the termination protocol in [session lifecycle](session-lifecycle.md) §5, then close indexed connections and release grant records. The gateway MUST acknowledge zero remaining connections before identity reclamation proceeds.
 6. A connection whose launch record is sealed, missing, has a different boot binding, or no longer maps to a live allocation MUST be closed without processing a request.
 7. Gateway restart MUST reconstruct active grants only from the signed launch-record store and `agentbound-lifecycle`'s allocation index. It MUST NOT preserve transport connections across restart.
@@ -87,11 +88,11 @@ Connection authentication is not permanent authority.
 Every connection record and every operation record MUST include:
 
 - topology (`local-socket`) and socket type;
-- launch-record ID, authorization-manifest digest, and launch-binding digest;
+- authorization ID, authorization-manifest digest, launch-binding digest, and launch-record digest;
 - global agent ID, session ID, and trace ID;
 - execution UID, allocation-record ID, host ID, boot ID, PID namespace, scope;
 - establishing peer: UID/GID, PID, start time, pidfd acquisition result;
-- per operation: credential PID, start time, pidfd acquisition result, process-change flag;
+- per operation: credential PID, start time, pidfd acquisition result, and process-mismatch result if any;
 - establishment, last-operation, denial, revocation, and close events with reason;
 - any admitted-before-revocation or indeterminate operation.
 
@@ -114,13 +115,13 @@ WP1 no longer selects a topology. It MUST verify, on the pinned kernel and syste
 |---|---|
 | `SOCK_SEQPACKET` + `SO_PASSCRED` | Exactly one `SCM_CREDENTIALS` per `recvmsg` for one `sendmsg`; oversize packets truncate rather than split |
 | pidfd from credential PID | `pidfd_open` succeeds for live peer; start-time and PID-namespace reads succeed via pidfd; reuse of a recycled PID is detected |
-| Descriptor transfer | `SCM_RIGHTS` rejected; a passed connected descriptor used from another session fails the allocation check |
+| Descriptor transfer | `SCM_RIGHTS` rejected; a connected descriptor inherited by a child or passed to another process fails the establishing-PID check and closes the connection |
 | Abstract socket isolation | Abstract-namespace sockets of the host and sibling sessions are unreachable from the session's network namespace |
 | Revocation latency | Next operation after committed revocation is denied; connections closed at termination before reclamation |
 | Bypass corpus | Plan §6.4 corpus, local-socket realization, passes |
 | TCB accounting | Gateway authentication and mapping code counted under the SLOC rules in `phase-1-requirements.md` §12 |
 | Failure behaviour | Gateway, lifecycle, policy, and audit loss follow manifest-declared stop/quarantine behaviour |
-| Diagnostics | Denial names the requirement ID, launch-record ID, and trace ID without leaking another session's identifiers |
+| Diagnostics | Denial names the requirement ID, authorization ID, launch-record digest, and trace ID without leaking another session's identifiers |
 
 If any item fails on the pinned baseline, this ADR is reopened; the constructor MUST NOT be built against an unverified assumption.
 
@@ -163,5 +164,4 @@ Rejected. Two effect paths enlarge the bypass surface and violate the single-cha
 ## Open questions for WP0 review
 
 1. Should the manifest's attribution policy default to `required` (refuse connections without pidfd evidence) for the entire Linux evaluation arm, so that Invariant 13 is measured without a residual assumption?
-2. Should a permitted same-allocation process change on an established connection (Decision 2, descriptor transfer paragraph) instead be forbidden outright, forcing one connection per process, to simplify the audit model at the cost of connection churn?
-3. Is a guest-side witness for the VM arm worth building in 1D, so that both arms claim the same Invariant 13 leg, or is the pre-registered difference acceptable for the comparative claim?
+2. Is a guest-side witness for the VM arm worth building in 1D, so that both arms claim the same Invariant 13 leg, or is the pre-registered difference acceptable for the comparative claim?

@@ -1,7 +1,7 @@
 # Phase 1 Reference Implementation Plan
 
 **Status:** Draft for review  
-**Plan version:** 0.7
+**Plan version:** 0.8
 **Date:** 28 August 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
@@ -16,6 +16,7 @@
 - **0.3** — Second independent review: resolved the one-adapter/inference-adapter contradiction (Git only in the core; inference adapter and execution-binding control moved to milestone 1C); reworded the integrity non-goal; added adversarial suites for bounded derivation, monotonic delegation, active revocation, and constructor inputs; execution identity restated as "uniquely allocated with verified reclamation and reuse quarantine" with a WP0 lifecycle specification; gateway authentication and the control substrate made required ADRs; control arm fixed as a microVM; internal milestones 1A–1D with stop points; full Profile U conformance target made explicit.
 - **0.4** — Follow-up review: active-revocation evidence split by milestone; control-arm test equivalence pre-registered in ADR-0003; ADR-0002 candidate set reconciled with the egress topology (two mutually exclusive channel topologies, each with tests); Invariant 20 evidence distinguishes absent resource classes; gates numbered §§3.1–3.4; programme framing stated in §1.
 - **0.5** — Stale §4.2 egress bullet replaced with the ADR-0002 topology choice; Branch D cross-reference corrected to technical-report §3.5; ADR-0002 scope extended to peer-credential evidence and connection lifetime.
+- **0.8** — Second WP0 review: gateway-free 1A manifest form; one connection per process; policy component emits the authorization manifest, not the effective manifest; ADR-0003 accepted with pinned configuration and thresholds.
 - **0.7** — WP0 decisions applied: local-socket topology selected and network topology withdrawn from Phase 1 (ADR-0002 0.2); systemd-invoked helper replaced by the `agentbound-lifecycle` daemon; WP0 deliverables extended with the test catalogue and component-interface skeleton; Gate 3 no longer provisional; gate language, bypass-corpus rule, comparative decision rule, and Profile U wording tightened; demo 12 scoped to the effect ontology.
 - **0.6** — WP0 drafts added; effective manifest split into a policy-signed allocation-free authorization manifest and constructor-signed launch binding to remove allocation circularity; execution binding includes inference pool.
 
@@ -117,7 +118,7 @@ initiator + agent principal + session + task/purpose + delegated scope
 
 The gateway exposes **named, typed operations**, not a generic HTTP or CONNECT proxy, and propagates a session trace identity to the protected service.
 
-Gateway authentication is a high-risk mechanism, not an implementation detail. ADR-0002 (version 0.2) selects the **local-socket topology** for Phase 1: the session has **no network interface**; the gateway is reached through exactly one bind-mounted, single-purpose `AF_UNIX SOCK_SEQPACKET` socket; the connection is authenticated by `SO_PEERCRED` plus a peer pidfd, and **every operation** is attributed to a live process by kernel-supplied per-packet `SCM_CREDENTIALS`. `SCM_RIGHTS` is rejected and descriptor transfer between processes is prohibited. The "empty inherited-socket" and "no host Unix sockets" rules have this one named exception, recorded in the manifest.
+Gateway authentication is a high-risk mechanism, not an implementation detail. ADR-0002 (version 0.2) selects the **local-socket topology** for Phase 1: the session has **no network interface**; the gateway is reached through exactly one bind-mounted, single-purpose `AF_UNIX SOCK_SEQPACKET` socket; the connection is authenticated by `SO_PEERCRED` plus a peer pidfd, and **every operation** is attributed to a live process by kernel-supplied per-packet `SCM_CREDENTIALS`. `SCM_RIGHTS` is rejected and each connection is bound to one process: a packet from any other PID, however the descriptor was acquired, closes the connection. The "empty inherited-socket" and "no host Unix sockets" rules have this one named exception, recorded in the manifest.
 
 The network topology (veth, mTLS/proof-of-possession, or host broker) is **withdrawn from Phase 1** because none of its mechanisms identifies the operation-issuing process, so it cannot satisfy the process leg of Invariant 13; it is deferred to a future multi-host ADR. Gate 3 is therefore no longer provisional: it can fail only on evidence. WP1 verifies the kernel-baseline assumptions listed in ADR-0002 Decision 7 (`SOCK_SEQPACKET` credential semantics, pidfd availability, abstract-socket isolation); a failed verification reopens the ADR.
 
@@ -126,7 +127,7 @@ The network topology (veth, mTLS/proof-of-possession, or host broker) is **withd
 The prototype must produce:
 
 - deterministic launch and cleanup behavior: N repeated launches of one authorization manifest (N per test catalogue) produce launch bindings identical modulo the catalogue's listed nondeterministic fields, and every termination reaches `sealed` within the manifest deadline;
-- denial and failure diagnostics that carry the requirement ID, launch-record ID, and trace ID, and leak no other session's identifiers (assertions per test catalogue);
+- denial and failure diagnostics that carry the requirement ID, authorization ID, launch-record digest, and trace ID, and leak no other session's identifiers (assertions per test catalogue);
 - correlated local and gateway audit keyed by launch record and trace identity, with audit-loss counters;
 - measurements of latency, resource overhead, policy complexity, and privileged code size;
 - an invariant-by-invariant result table using the technical report's five result classes, including failures, N/A entries, and residual assumptions with owner and revalidation trigger;
@@ -163,7 +164,8 @@ agentbound
     e.g.  agentbound run --agent finance-agent --task redwood-analysis -- <harness command>
 
 agentbound-policy
-    unprivileged resolver: principal, initiator, task, catalogue → effective manifest
+    unprivileged resolver: principal, initiator, task, catalogue → signed authorization manifest
+    (the constructor adds the launch binding; the verified pair is the effective manifest)
     (Phase 1: a file-backed stub with a stable interface, not an IAM integration)
 
 agentbound-launch
@@ -230,7 +232,7 @@ The initial schema should include:
 
 ```text
 manifest version
-launch-record ID
+authorization ID
 agent global ID and durable ownership projection
 per-session execution identity (launch binding only)
 session trace identity

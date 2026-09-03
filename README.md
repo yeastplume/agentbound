@@ -35,7 +35,7 @@ tests/            Future adversarial conformance and integration tests
 
 ## Current status
 
-The papers are working drafts for external review (position paper 0.9, technical report 0.5-TR9), revised after three independent reviews. The Phase 1 plan is version 0.7. Its WP0 architecture specifications (requirements, manifest schema, session and identity lifecycles, component interfaces, test catalogue, traceability matrix, and three ADRs) are drafts under review after a second independent review round; implementation begins only after that set is frozen.
+The papers are working drafts for external review (position paper 0.9, technical report 0.5-TR10), revised after three independent reviews. The Phase 1 plan is version 0.8. Its WP0 architecture specifications (requirements, manifest schema, session and identity lifecycles, component interfaces, test catalogue, traceability matrix, and three ADRs) are drafts under review after a second independent review round; implementation begins only after that set is frozen.
 
 The shortest honest summary of the current claim: the Unix-governed baseline is an isolation, authority, and attribution profile that makes no information-flow claim; integrity provenance is the nearest practical payoff; confidentiality compartments and multilevel release are later, measured profiles. The formal rules are a specification to implement and test against, not a proven model.
 

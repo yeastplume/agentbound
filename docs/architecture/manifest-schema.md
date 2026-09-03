@@ -1,6 +1,6 @@
 # Agentbound Manifest Schema
 
-**Version:** 0.2
+**Version:** 0.3
 **Status:** Draft for WP0 review
 **Date:** 28 August 2026
 **Applies to:** the Unix-governed reference implementation and its microVM control arm
@@ -11,6 +11,7 @@
 |---|---|---|
 | 0.1 | 28 August 2026 | Initial effective-manifest draft. |
 | 0.2 | 28 August 2026 | Replaces one effective-manifest object with policy-signed authorization and constructor-signed launch-binding objects. |
+| 0.3 | 28 August 2026 | Gateway-free form `channel_topology: none` (the only form constructible at 1A); two distinct identifiers `authorization_id` (policy-issued) and `launch_record_digest` (pair-derived) with a per-use table in §4; correspondence check 5 extended to topology. |
 
 ---
 
@@ -190,14 +191,14 @@ lives in the launch binding and references its authorization-manifest counterpar
 by ID. A field MUST NOT be duplicated as an unconstrained “both” field. The
 constructor MUST verify this one-to-one correspondence:
 
-1. `launch_record_id` values MUST be byte-for-byte equal.
+1. `authorization_id` values MUST be byte-for-byte equal.
 2. The binding's `authorization_manifest_digest` MUST equal the digest verified
    for the authorization manifest.
 3. Every `mount_intent.mount_id` MUST have exactly one `mount_projections`
    entry with that ID, and no projection MAY name another ID.
 4. Every credential-grant intent ID MUST have exactly one issued credential
    grant referencing it, and no issued grant MAY name another ID.
-5. Gateway operation IDs, typed operation content, scopes, and budgets MUST be
+5. `gateway.channel_topology` MUST be honoured exactly: `none` ⇒ no gateway socket, projection, mount, or grant; `local-socket` ⇒ exactly one of each. Gateway operation IDs, typed operation content, scopes, and budgets MUST be
    unchanged; a binding MUST NOT add, drop, substitute, or widen an operation.
 6. Resource classes and policy limits MUST have exactly one resource projection
    each; installed values MUST be no greater than policy values.
@@ -219,7 +220,7 @@ credential_grant_intents
 derivation
 execution_binding
 gateway
-launch_record_id
+authorization_id
 manifest_version
 mount_intents
 resource_limits
@@ -232,7 +233,7 @@ agent
 ```
 
 `manifest_version` MUST equal `agentbound.authorization-manifest.v0.1`.
-`launch_record_id`, `session_trace.session_id`, and `session_trace.trace_id` are
+`authorization_id`, `session_trace.session_id`, and `session_trace.trace_id` are
 policy-issued. The object MUST contain no numeric execution identity, host ID,
 boot ID, scope, PID namespace, resolved host object, credential handle, or raw
 host path.
@@ -294,15 +295,29 @@ Each `mount_intents` entry MUST contain `access` (`read-only` or `read-write`),
 `catalogue_id`, `mount_id`, `required`, and `target_template_id`. It MUST NOT
 contain a raw source, raw target, raw path, or host-object handle.
 
-`gateway.channel_topology` MUST equal `local-socket`. It has exactly one legal
-value in Phase 1. The network topology is dropped from Phase 1 and deferred to
-a future ADR. No authorization manifest, binding, namespace declaration, or
-descriptor rule may select network topology, veth, route, interface, firewall,
-or direct network traffic.
+`gateway.channel_topology` MUST be one of exactly two values:
 
-`gateway.operations` is a non-empty array of typed operation objects. Each MUST
-contain `adapter_catalogue_id`, `budgets`, `operation`, `operation_id`, and
-`scope`. Generic HTTP, CONNECT, arbitrary destination, arbitrary URL, and
+- **`none`** — the gateway-free form. Legal at every milestone and the only
+  form constructible before milestone 1B. `gateway.operations` MUST be `[]`,
+  `gateway.budgets` MUST be `{}`, `credential_grant_intents` MUST be `[]`, and
+  the launch binding MUST contain no `gateway_socket` descriptor, no gateway
+  mount projection, no `gateway_projection` (the member is `null`), and no
+  credential grant. The session still has **no network interface and no
+  reachable host socket**: `none` removes the channel, not the boundary.
+  Every gateway-dependent resource class is `absent` with evidence
+  (requirements R-RES-5).
+- **`local-socket`** — the mediated form (milestone 1B onward), per ADR-0002.
+  `gateway.operations` MUST be non-empty and the binding MUST project exactly
+  one gateway socket.
+
+The network topology is dropped from Phase 1 and deferred to a future ADR. No
+authorization manifest, binding, namespace declaration, or descriptor rule may
+select network topology, veth, route, interface, firewall, or direct network
+traffic under either value.
+
+Under `local-socket`, `gateway.operations` is a non-empty array of typed
+operation objects. Each MUST contain `adapter_catalogue_id`, `budgets`,
+`operation`, `operation_id`, and `scope`. Generic HTTP, CONNECT, arbitrary destination, arbitrary URL, and
 untyped byte-stream operations are invalid. `gateway.budgets` contains the
 closed budget decisions applying to the operation set.
 
@@ -339,7 +354,7 @@ unlimited value.
 ### 3.6 Audit, revocation, and termination retention
 
 `audit` MUST contain `correlation_keys`, `loss_behaviour`, and `required_events`.
-Correlation keys MUST include launch-record ID, session trace ID, agent global
+Correlation keys MUST include authorization ID, session trace ID, agent global
 ID, and, once bound, allocation ID, execution UID, host ID, and boot ID.
 `loss_behaviour` MUST be `stop`, `quarantine`, or `continue-with-loss-counter`.
 
@@ -372,14 +387,14 @@ execution_identity
 gateway_projection
 host_binding
 launch_binding_version
-launch_record_id
+authorization_id
 mount_projections
 namespaces
 resource_projection
 ```
 
 `launch_binding_version` MUST equal `agentbound.launch-binding.v0.1`.
-`launch_record_id` MUST equal the authorization manifest's ID.
+`authorization_id` MUST equal the authorization manifest's ID.
 
 `execution_identity` MUST contain `allocation_id`, `gids`, `mac_context`, and
 `uid`. `uid` is a non-negative integer. `gids` is a non-empty unique array of
@@ -400,11 +415,13 @@ per mount intent and no raw path string.
 `descriptor_allowlist` is closed. Each entry MUST contain `descriptor_id`,
 `kind`, and `purpose`; allowed kinds are `stdin`, `stdout`, `stderr`, `pty`, and
 `gateway_socket`. Every descriptor not listed MUST be closed before exec.
-`gateway_socket` MUST appear exactly once, MUST be `AF_UNIX SOCK_SEQPACKET`, and
-MUST be the descriptor described by `gateway_projection`.
+Under `local-socket`, `gateway_socket` MUST appear exactly once, MUST be
+`AF_UNIX SOCK_SEQPACKET`, and MUST be the descriptor described by
+`gateway_projection`; under `none` it MUST NOT appear.
 
-`gateway_projection` MUST contain `seqpacket: true` and `socket_mount_id`.
-`socket_mount_id` MUST name the single projected local-socket gateway mount.
+Under `local-socket`, `gateway_projection` MUST contain `seqpacket: true` and
+`socket_mount_id`, which MUST name the single projected local-socket gateway
+mount. Under `none`, `gateway_projection` MUST be `null`.
 
 Each `credential_grants` entry MUST contain an issued non-exportable handle and
 its `grant_intent_id`. It MUST reference exactly one authorization-manifest
@@ -425,17 +442,36 @@ object digest is `SHA-256(JCS-UTF8(object))`, represented as `sha256:` plus 64
 lowercase hexadecimal characters. Member ordering is JCS ordering by UTF-16 code
 units; ASCII member names therefore appear in ordinary ascending byte order.
 
-The launch-record identity is
-`SHA-256(authorization_manifest_digest || launch_binding_digest)` over the two
-32-byte binary digest values in that order. It is represented as a SHA-256
-digest when serialized, while `launch_record_id` remains the policy-issued
-record identifier carried in both objects.
+Two identifiers name a session's launch record and MUST NOT be conflated:
+
+- **`authorization_id`** — policy-issued, opaque, unique per authorization
+  decision, present in both signed objects and in every envelope. It exists
+  before any host allocation and is the only identifier available while a
+  request is `requested`, `authorized`, or `constructing`.
+- **`launch_record_digest`** — `SHA-256(authorization_manifest_digest ||
+  launch_binding_digest)` over the two 32-byte binary digest values in that
+  order, serialized as `sha256:` plus 64 lowercase hexadecimal characters. It
+  exists only after the launch binding is committed and is the authoritative,
+  content-bound identity of the completed launch record. Exactly one
+  `launch_record_digest` may ever exist for an `authorization_id`.
+
+| Use | Identifier |
+|---|---|
+| Request idempotency, authorization replay rejection | `authorization_id` |
+| Constructor ownership lease, retry, and rollback ledger | `authorization_id` |
+| Allocator reservation record | `authorization_id` at reservation; `launch_record_digest` recorded on binding commit |
+| Lifecycle state lookup | `authorization_id` (primary key); `launch_record_digest` once bound |
+| Gateway grant index and per-operation authorization | `launch_record_digest` only; a connection whose allocation maps to no committed digest is refused |
+| Audit correlation | both; events before binding commit carry `authorization_id` and `launch_record_digest: null` |
+| Diagnostics before binding commit | `authorization_id` |
+| Effect records, attribution, provenance exported beyond the host | `launch_record_digest` (plus `authorization_id` for correlation) |
+| Seal | `launch_record_digest` |
 
 The policy signature envelope MUST contain exactly `authorization_manifest_digest`,
-`issued_at`, `key_id`, `launch_record_id`, `signature`, and `timestamp_source`.
+`issued_at`, `key_id`, `authorization_id`, `signature`, and `timestamp_source`.
 The constructor signature envelope MUST contain exactly `allocation_id`,
 `authorization_manifest_digest`, `boot_id`, `host_id`, `issued_at`, `key_id`,
-`launch_binding_digest`, `launch_record_id`, and `signature`. Both use detached
+`launch_binding_digest`, `authorization_id`, and `signature`. Both use detached
 Ed25519 signatures. Policy signs only the authorization object; the constructor
 signs only the launch binding after reservation and correspondence checks.
 
@@ -460,7 +496,7 @@ binding, or execution-identity installation—`agentbound-launch` MUST:
 1. Parse request and authorization manifest according to §§2–4; reject
    unsupported versions, duplicates, unknown members, and non-conforming types.
 2. Verify the policy detached signature, authorization digest, signing key,
-   timestamp source, issuance freshness, and launch-record ID binding.
+   timestamp source, issuance freshness, and authorization ID binding.
 3. Resolve every actor, agent, task, approval, catalogue item, resource, runtime,
    adapter, and policy reference uniquely; ambiguity MUST fail.
 4. Confirm policy, derivation, runtime, catalogue, adapter, and agent-authority
@@ -472,12 +508,14 @@ binding, or execution-identity installation—`agentbound-launch` MUST:
    activated grants, budgets, and bounds are consistent with the result.
 7. Confirm every mount intent source and target template exists in the current
    catalogue; obtain only safe descriptor-relative references for later use.
-8. Confirm gateway operations and execution-binding adapters exist in the
-   current catalogue, have typed scopes and budgets, and use only `local-socket`.
+8. Under `local-socket`, confirm gateway operations and execution-binding
+   adapters exist in the current catalogue and have typed scopes and budgets;
+   under `none`, confirm `operations` is `[]` and that no gateway-dependent
+   projection or grant will be produced.
 9. Confirm all resource classes have a valid enforcement projection plan or
    explicit deployment absence evidence; confirm no proposed value widens policy.
 10. **Allocate:** atomically reserve one current, unique, non-quarantined
-    execution identity bound to this authorization digest and launch-record ID.
+    execution identity bound to this authorization digest and authorization ID.
 11. Create the launch binding, verify every §3.1 equality check, sign it, and
     atomically commit the allocation-to-binding association before credentials
     are installed.
@@ -508,19 +546,19 @@ ASCII keys at every object level.
 ### 6.1 Authorization manifest
 
 ```json
-{"actors":{"approvers":[],"initiators":[{"credential_reference":"authn:alice-session-0001","id":"human:alice","relationship":"delegation"}],"owner":null,"scheduler":null},"agent":{"durable_ownership_projection":{"kind":"storage-principal","reference":"storage:engineering-agent"},"global_id":"agent:engineering-agent"},"audit":{"correlation_keys":["launch_record_id","trace_id","agent_global_id","execution_allocation_id","execution_uid_boot"],"loss_behaviour":"quarantine","required_events":["launch","gateway-operation","revocation","termination"]},"credential_grant_intents":[{"expiry_policy":"expiry:session-or-2026-08-28t163000z","grant_id":"grant:git-push-0001","kind":"proof-of-possession","operation_subset":["op:git-push-staging-0001"]}],"derivation":{"agent_authority_version":"agent-authz:v2026-08-28","catalogue_version":"catalogue:v2026-08-28","derivation_input_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","derivation_relation_version":"derive:v0.1","inputs":[{"id":"agent:engineering-agent","kind":"agent","version":"agent-authz:v2026-08-28"},{"id":"human:alice","kind":"initiator","version":"authn:alice-session-0001"},{"id":"task:fix-issue-1234","kind":"task","version":"task:v17"}],"policy_version":"policy:v2026-08-28","requested_budget_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","resolved_resource_ids":["resource:git-service","resource:repo-worktree"]},"execution_binding":{"adapters":["adapter:git"],"endpoint":null,"inference_pool":null,"model":null,"retention_mode":"retention:ephemeral","tenant":null},"gateway":{"budgets":{"gateway_bytes":1048576,"gateway_requests":10},"channel_topology":"local-socket","operations":[{"adapter_catalogue_id":"adapter:git","budgets":{"bytes":1048576,"requests":10},"operation":"git.push-staging-ref","operation_id":"op:git-push-staging-0001","scope":"repo:protected/refs/agentbound/fix-issue-1234/*"}]},"launch_record_id":"launchrec:fix-issue-1234-0001","manifest_version":"agentbound.authorization-manifest.v0.1","mount_intents":[{"access":"read-write","catalogue_id":"mount-source:repo-worktree","mount_id":"mount:workspace","required":true,"target_template_id":"mount-target:workspace"},{"access":"read-write","catalogue_id":"mount-source:gateway-socket","mount_id":"mount:gateway-socket","required":true,"target_template_id":"mount-target:gateway-socket"}],"resource_limits":{"accelerator":{"absence_evidence":"deployment:no-accelerator","enforcement_owner":"none","status":"absent"},"audit_capacity":{"enforcement_owner":"agentbound-audit","limit":10000,"status":"enforced","unit":"events"},"cpu":{"enforcement_owner":"cgroup","limit":1000,"status":"enforced","unit":"milli-cpu"},"delegation_fanout":{"enforcement_owner":"policy","limit":0,"status":"enforced","unit":"children"},"disk_bytes":{"enforcement_owner":"session-image","limit":1073741824,"status":"enforced","unit":"bytes"},"disk_inodes":{"enforcement_owner":"session-image","limit":100000,"status":"enforced","unit":"inodes"},"external_spend":{"absence_evidence":"deployment:no-spend-adapter","enforcement_owner":"none","status":"absent"},"file_descriptors":{"enforcement_owner":"rlimit","limit":256,"status":"enforced","unit":"descriptors"},"io_bandwidth":{"enforcement_owner":"cgroup","limit":10485760,"status":"enforced","unit":"bytes-per-second"},"memory_bytes":{"enforcement_owner":"cgroup","limit":1073741824,"status":"enforced","unit":"bytes"},"model_tokens":{"absence_evidence":"runtime:no-model","enforcement_owner":"none","status":"absent"},"network_bandwidth":{"absence_evidence":"phase1:no-network-topology","enforcement_owner":"none","status":"absent"},"pids":{"enforcement_owner":"cgroup","limit":128,"status":"enforced","unit":"processes"},"request_rate":{"enforcement_owner":"gateway","limit":10,"status":"enforced","unit":"requests"},"storage_bytes":{"enforcement_owner":"gateway","limit":1048576,"status":"enforced","unit":"bytes"}},"revocation":{"approval_expired":"terminate","authority_revoked":"terminate","catalogue_withdrawn":"quiesce","control_plane_unavailable":"continue-degraded","gateway_grant_withdrawn":"terminate","gateway_unavailable":"quiesce","initiator_disabled":"terminate","policy_withdrawn":"terminate","reclassification":"quiesce","task_cancelled":"terminate"},"runtime":{"artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","catalogue_id":"runtime:engineering-agent","invocation_profile":"profile:fix-issue-1234"},"session_trace":{"session_id":"session:fix-issue-1234-0001","trace_id":"trace:fix-issue-1234-0001"},"task":{"approval_references":[],"purpose_id":"task:fix-issue-1234"},"termination_retention":{"audit_retention_class":"retention:wp0","credential_revocation_order":"revoke-before-cleanup","descendant_kill_order":"children-before-parent","reclamation_domain_id":"domain:session-default","termination_triggers":["task_cancelled","approval_expired"],"workspace_retention":"discard"}}
+{"actors":{"approvers":[],"initiators":[{"credential_reference":"authn:alice-session-0001","id":"human:alice","relationship":"delegation"}],"owner":null,"scheduler":null},"agent":{"durable_ownership_projection":{"kind":"storage-principal","reference":"storage:engineering-agent"},"global_id":"agent:engineering-agent"},"audit":{"correlation_keys":["authorization_id","trace_id","agent_global_id","execution_allocation_id","execution_uid_boot"],"loss_behaviour":"quarantine","required_events":["launch","gateway-operation","revocation","termination"]},"authorization_id":"launchrec:fix-issue-1234-0001","credential_grant_intents":[{"expiry_policy":"expiry:session-or-2026-08-28t163000z","grant_id":"grant:git-push-0001","kind":"proof-of-possession","operation_subset":["op:git-push-staging-0001"]}],"derivation":{"agent_authority_version":"agent-authz:v2026-08-28","catalogue_version":"catalogue:v2026-08-28","derivation_input_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","derivation_relation_version":"derive:v0.1","inputs":[{"id":"agent:engineering-agent","kind":"agent","version":"agent-authz:v2026-08-28"},{"id":"human:alice","kind":"initiator","version":"authn:alice-session-0001"},{"id":"task:fix-issue-1234","kind":"task","version":"task:v17"}],"policy_version":"policy:v2026-08-28","requested_budget_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","resolved_resource_ids":["resource:git-service","resource:repo-worktree"]},"execution_binding":{"adapters":["adapter:git"],"endpoint":null,"inference_pool":null,"model":null,"retention_mode":"retention:ephemeral","tenant":null},"gateway":{"budgets":{"gateway_bytes":1048576,"gateway_requests":10},"channel_topology":"local-socket","operations":[{"adapter_catalogue_id":"adapter:git","budgets":{"bytes":1048576,"requests":10},"operation":"git.push-staging-ref","operation_id":"op:git-push-staging-0001","scope":"repo:protected/refs/agentbound/fix-issue-1234/*"}]},"manifest_version":"agentbound.authorization-manifest.v0.1","mount_intents":[{"access":"read-write","catalogue_id":"mount-source:repo-worktree","mount_id":"mount:workspace","required":true,"target_template_id":"mount-target:workspace"},{"access":"read-write","catalogue_id":"mount-source:gateway-socket","mount_id":"mount:gateway-socket","required":true,"target_template_id":"mount-target:gateway-socket"}],"resource_limits":{"accelerator":{"absence_evidence":"deployment:no-accelerator","enforcement_owner":"none","status":"absent"},"audit_capacity":{"enforcement_owner":"agentbound-audit","limit":10000,"status":"enforced","unit":"events"},"cpu":{"enforcement_owner":"cgroup","limit":1000,"status":"enforced","unit":"milli-cpu"},"delegation_fanout":{"enforcement_owner":"policy","limit":0,"status":"enforced","unit":"children"},"disk_bytes":{"enforcement_owner":"session-image","limit":1073741824,"status":"enforced","unit":"bytes"},"disk_inodes":{"enforcement_owner":"session-image","limit":100000,"status":"enforced","unit":"inodes"},"external_spend":{"absence_evidence":"deployment:no-spend-adapter","enforcement_owner":"none","status":"absent"},"file_descriptors":{"enforcement_owner":"rlimit","limit":256,"status":"enforced","unit":"descriptors"},"io_bandwidth":{"enforcement_owner":"cgroup","limit":10485760,"status":"enforced","unit":"bytes-per-second"},"memory_bytes":{"enforcement_owner":"cgroup","limit":1073741824,"status":"enforced","unit":"bytes"},"model_tokens":{"absence_evidence":"runtime:no-model","enforcement_owner":"none","status":"absent"},"network_bandwidth":{"absence_evidence":"phase1:no-network-topology","enforcement_owner":"none","status":"absent"},"pids":{"enforcement_owner":"cgroup","limit":128,"status":"enforced","unit":"processes"},"request_rate":{"enforcement_owner":"gateway","limit":10,"status":"enforced","unit":"requests"},"storage_bytes":{"enforcement_owner":"gateway","limit":1048576,"status":"enforced","unit":"bytes"}},"revocation":{"approval_expired":"terminate","authority_revoked":"terminate","catalogue_withdrawn":"quiesce","control_plane_unavailable":"continue-degraded","gateway_grant_withdrawn":"terminate","gateway_unavailable":"quiesce","initiator_disabled":"terminate","policy_withdrawn":"terminate","reclassification":"quiesce","task_cancelled":"terminate"},"runtime":{"artifact_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","catalogue_id":"runtime:engineering-agent","invocation_profile":"profile:fix-issue-1234"},"session_trace":{"session_id":"session:fix-issue-1234-0001","trace_id":"trace:fix-issue-1234-0001"},"task":{"approval_references":[],"purpose_id":"task:fix-issue-1234"},"termination_retention":{"audit_retention_class":"retention:wp0","credential_revocation_order":"revoke-before-cleanup","descendant_kill_order":"children-before-parent","reclamation_domain_id":"domain:session-default","termination_triggers":["task_cancelled","approval_expired"],"workspace_retention":"discard"}}
 ```
 
 ### 6.2 Launch binding
 
 ```json
-{"authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","constructor":{"agentbound_launch_version_digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","key_id":"key:launch-ed25519-01"},"credential_grants":[{"grant_intent_id":"grant:git-push-0001","issued_handle":"handle:gateway-grant-0001"}],"descriptor_allowlist":[{"descriptor_id":"fd:stdin","kind":"stdin","purpose":"harness-input"},{"descriptor_id":"fd:stdout","kind":"stdout","purpose":"harness-output"},{"descriptor_id":"fd:stderr","kind":"stderr","purpose":"harness-diagnostics"},{"descriptor_id":"fd:gateway","kind":"gateway_socket","purpose":"typed-gateway"}],"execution_identity":{"allocation_id":"allocation:host-a-0001","gids":[200001],"mac_context":null,"uid":200001},"gateway_projection":{"seqpacket":true,"socket_mount_id":"mount:gateway-socket"},"host_binding":{"boot_id":"boot:host-a-0001","host_id":"host:reference-a","pid_namespace_id":"pidns:4026533001","scope_id":"agentbound-session-0001.scope"},"launch_binding_version":"agentbound.launch-binding.v0.1","launch_record_id":"launchrec:fix-issue-1234-0001","mount_projections":[{"access":"read-write","catalogue_version":"catalogue:v2026-08-28","mount_id":"mount:workspace","target_template_projection":"mount-target:workspace"},{"access":"read-write","mount_id":"mount:gateway-socket","resolved_source_handle":"handle:gateway-socket-0001","target_template_projection":"mount-target:gateway-socket"}],"namespaces":{"ipc":"private","mount":"private","pid":"private","user":"private","uts":"private"},"resource_projection":{"accelerator":{"enforcement_owner":"none","status":"absent"},"audit_capacity":{"enforcement_owner":"agentbound-audit","installed_value":10000,"unit":"events"},"cpu":{"enforcement_owner":"cgroup","installed_value":1000,"unit":"milli-cpu"},"delegation_fanout":{"enforcement_owner":"policy","installed_value":0,"unit":"children"},"disk_bytes":{"enforcement_owner":"session-image","installed_value":1073741824,"unit":"bytes"},"disk_inodes":{"enforcement_owner":"session-image","installed_value":100000,"unit":"inodes"},"external_spend":{"enforcement_owner":"none","status":"absent"},"file_descriptors":{"enforcement_owner":"rlimit","installed_value":256,"unit":"descriptors"},"io_bandwidth":{"enforcement_owner":"cgroup","installed_value":10485760,"unit":"bytes-per-second"},"memory_bytes":{"enforcement_owner":"cgroup","installed_value":1073741824,"unit":"bytes"},"model_tokens":{"enforcement_owner":"none","status":"absent"},"network_bandwidth":{"enforcement_owner":"none","status":"absent"},"pids":{"enforcement_owner":"cgroup","installed_value":128,"unit":"processes"},"request_rate":{"enforcement_owner":"gateway","installed_value":10,"unit":"requests"},"storage_bytes":{"enforcement_owner":"gateway","installed_value":1048576,"unit":"bytes"}}}
+{"authorization_id":"launchrec:fix-issue-1234-0001","authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","constructor":{"agentbound_launch_version_digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","key_id":"key:launch-ed25519-01"},"credential_grants":[{"grant_intent_id":"grant:git-push-0001","issued_handle":"handle:gateway-grant-0001"}],"descriptor_allowlist":[{"descriptor_id":"fd:stdin","kind":"stdin","purpose":"harness-input"},{"descriptor_id":"fd:stdout","kind":"stdout","purpose":"harness-output"},{"descriptor_id":"fd:stderr","kind":"stderr","purpose":"harness-diagnostics"},{"descriptor_id":"fd:gateway","kind":"gateway_socket","purpose":"typed-gateway"}],"execution_identity":{"allocation_id":"allocation:host-a-0001","gids":[200001],"mac_context":null,"uid":200001},"gateway_projection":{"seqpacket":true,"socket_mount_id":"mount:gateway-socket"},"host_binding":{"boot_id":"boot:host-a-0001","host_id":"host:reference-a","pid_namespace_id":"pidns:4026533001","scope_id":"agentbound-session-0001.scope"},"launch_binding_version":"agentbound.launch-binding.v0.1","mount_projections":[{"access":"read-write","catalogue_version":"catalogue:v2026-08-28","mount_id":"mount:workspace","target_template_projection":"mount-target:workspace"},{"access":"read-write","mount_id":"mount:gateway-socket","resolved_source_handle":"handle:gateway-socket-0001","target_template_projection":"mount-target:gateway-socket"}],"namespaces":{"ipc":"private","mount":"private","pid":"private","user":"private","uts":"private"},"resource_projection":{"accelerator":{"enforcement_owner":"none","status":"absent"},"audit_capacity":{"enforcement_owner":"agentbound-audit","installed_value":10000,"unit":"events"},"cpu":{"enforcement_owner":"cgroup","installed_value":1000,"unit":"milli-cpu"},"delegation_fanout":{"enforcement_owner":"policy","installed_value":0,"unit":"children"},"disk_bytes":{"enforcement_owner":"session-image","installed_value":1073741824,"unit":"bytes"},"disk_inodes":{"enforcement_owner":"session-image","installed_value":100000,"unit":"inodes"},"external_spend":{"enforcement_owner":"none","status":"absent"},"file_descriptors":{"enforcement_owner":"rlimit","installed_value":256,"unit":"descriptors"},"io_bandwidth":{"enforcement_owner":"cgroup","installed_value":10485760,"unit":"bytes-per-second"},"memory_bytes":{"enforcement_owner":"cgroup","installed_value":1073741824,"unit":"bytes"},"model_tokens":{"enforcement_owner":"none","status":"absent"},"network_bandwidth":{"enforcement_owner":"none","status":"absent"},"pids":{"enforcement_owner":"cgroup","installed_value":128,"unit":"processes"},"request_rate":{"enforcement_owner":"gateway","installed_value":10,"unit":"requests"},"storage_bytes":{"enforcement_owner":"gateway","installed_value":1048576,"unit":"bytes"}}}
 ```
 
 ### 6.3 Policy and constructor envelopes
 
 ```json
-{"constructor":{"allocation_id":"allocation:host-a-0001","authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","boot_id":"boot:host-a-0001","host_id":"host:reference-a","issued_at":"2026-08-28T15:31:00Z","key_id":"key:launch-ed25519-01","launch_binding_digest":"sha256:5555555555555555555555555555555555555555555555555555555555555555","launch_record_id":"launchrec:fix-issue-1234-0001","signature":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"},"policy":{"authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","issued_at":"2026-08-28T15:30:00Z","key_id":"key:policy-ed25519-01","launch_record_id":"launchrec:fix-issue-1234-0001","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp_source":"clock:policy-utc-v0.1"}}
+{"constructor":{"allocation_id":"allocation:host-a-0001","authorization_id":"launchrec:fix-issue-1234-0001","authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","boot_id":"boot:host-a-0001","host_id":"host:reference-a","issued_at":"2026-08-28T15:31:00Z","key_id":"key:launch-ed25519-01","launch_binding_digest":"sha256:5555555555555555555555555555555555555555555555555555555555555555","signature":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"},"policy":{"authorization_id":"launchrec:fix-issue-1234-0001","authorization_manifest_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","issued_at":"2026-08-28T15:30:00Z","key_id":"key:policy-ed25519-01","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp_source":"clock:policy-utc-v0.1"}}
 ```
 
 The examples expose no session-visible Git credential, host path, direct Git

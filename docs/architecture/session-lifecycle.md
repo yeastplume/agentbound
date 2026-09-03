@@ -1,6 +1,6 @@
 # Session Lifecycle Specification
 
-**Version:** 0.2  
+**Version:** 0.3  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -8,6 +8,7 @@
 
 ## Revision history
 
+- **0.3** — Identifier terminology aligned (`authorization_id` pre-binding, `launch_record_digest` post-binding); systemd stated as observation source only.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Replaced the systemd-invoked lifecycle helper with the `agentbound-lifecycle` daemon (D-Bus scope signals plus held pidfds); construction step 1 restated as a `clone3` synchronization barrier; termination protocol reordered so the PID-namespace init reaps before `cgroup.kill`, with a host credential scan and a termination deadline; quiesce redefined as admission denial plus freeze; local-socket topology only; two-stage launch record terminology.
 
@@ -25,7 +26,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 
 ## 2. Session model and identifiers
 
-Each session MUST have one immutable launch-record ID, session trace identity, authorization-manifest digest, launch-binding digest, durable principal ID, execution UID/GID allocation mapping, host ID, boot ID, and systemd scope or equivalent cgroup identity. Before allocation, the execution and launch-binding fields are explicitly absent.
+Each session MUST have one immutable authorization ID, session trace identity, authorization-manifest digest, launch-binding digest, durable principal ID, execution UID/GID allocation mapping, host ID, boot ID, and systemd scope or equivalent cgroup identity. Before allocation, the execution and launch-binding fields are explicitly absent.
 
 The launch record MUST bind the authenticated initiator, task/purpose, approvals, policy and catalogue versions, runtime digest, grants, execution binding where applicable, and termination policy. It MUST be committed before any credential or broker access is usable.
 
@@ -55,9 +56,9 @@ A session status API MUST expose the current state, the latest transition event,
 | From → to | Authorized actor | Audit event | Idempotency and retry | Failure cleanup | Observable status |
 |---|---|---|---|---|---|
 | none → `requested` | authenticated `agentbound` client or scheduler | `session.requested` | Client retry uses an idempotency key; duplicate key returns existing request result. | Persist no partial request on validation failure. | request ID and `requested`/`rejected`. |
-| `requested` → `authorized` | `agentbound-policy` | `session.authorized` | Same canonical inputs produce one manifest/launch-record ID; conflicting replay is rejected. | Discard uncommitted derivation data. | `authorized` or `rejected`. |
+| `requested` → `authorized` | `agentbound-policy` | `session.authorized` | Same canonical inputs produce one manifest/authorization ID; conflicting replay is rejected. | Discard uncommitted derivation data. | `authorized` or `rejected`. |
 | `requested`/`authorized` → `rejected` | `agentbound-policy` | `session.rejected` | Terminal for the request key; a corrected request requires a new key. | No UID or grant may be allocated. | `rejected` and reason class. |
-| `authorized` → `constructing` | `agentbound-launch` | `session.construction_started` | Compare-and-set on launch-record ID; only one constructor owns an attempt. | Release reservations if ownership cannot be established. | `constructing`. |
+| `authorized` → `constructing` | `agentbound-launch` | `session.construction_started` | Compare-and-set on authorization ID; only one constructor owns an attempt. | Release reservations if ownership cannot be established. | `constructing`. |
 | `authorized`/`constructing` → `aborted` | initiator/approver under policy, systemd recovery, or `agentbound-lifecycle` | `session.aborted` | Repeated abort converges on rollback and sealed outcome. | Kill barrier-blocked child, revoke provisional grants, release resources. | `aborted` then final cleanup state. |
 | `constructing` → `active` | `agentbound-launch` | `session.activated` | Commit is once-only; retry observes committed launch record rather than execing twice. | If acknowledgment is uncertain, recovery treats session as constructing until scope and record reconcile. | `active`. |
 | `constructing` → `construction-failed` | `agentbound-launch` or fault injector | `session.construction_failed` | Rollback actions are individually idempotent and may be retried. | Execute reverse-order rollback; retain identity if safe release cannot be proven. | `construction-failed`. |
@@ -89,7 +90,7 @@ An actor MAY request a transition but `agentbound-lifecycle` MUST authorize and 
 | 8 | Make credentials or broker access usable only after every boundary is in place and the launch record is committed. | Revoke/close provisional broker or credential grant; record issuance and revocation outcome. | Credential/gateway grant issuance and audit binding. |
 | 9 | Exec the runtime last. | If exec fails, kill/reap child and execute all reverse-order cleanup. | Runtime `exec`. |
 
-The constructor MUST create the cgroup/systemd scope, resource limits, the single `SOCK_SEQPACKET` gateway-socket mount, and audit/session provenance as prerequisites incorporated in these steps; a required prerequisite failure MUST cause `construction-failed`.
+The constructor MUST create the cgroup/systemd scope, resource limits, the single `SOCK_SEQPACKET` gateway-socket mount when `gateway.channel_topology` is `local-socket` (and no gateway socket, mount, projection, or grant when it is `none`), and audit/session provenance as prerequisites incorporated in these steps; a required prerequisite failure MUST cause `construction-failed`.
 
 Credentials, `agentbound-gateway` authority, and broker access MUST become usable **only after** the launch record is committed. The runtime MUST be exec'd last. `agentbound-launch` MUST drop launch-only privileges before that exec. A launch record committed for a failed exec MUST be sealed with a failure outcome, not deleted.
 
@@ -180,7 +181,7 @@ An orphan is a live scope, cgroup, mount, grant, or allocator allocation lacking
 
 ## 8. Required audit events
 
-Every event below MUST include: `host_id`, `boot_id`, `launch_record_id`, `allocation_record_id`, session and trace identities, `execution_uid`, timestamp, actor, and outcome. Where allocation or execution fields do not yet exist, they MUST be explicitly `null` rather than omitted. Process events additionally require PID-namespace identity and process start time or pidfd-derived identity where supported; unavailable pidfd evidence is a recorded residual assumption, never replaced by PID alone. Events MUST also include a stable event ID and causation/correlation ID.
+Every event below MUST include: `host_id`, `boot_id`, `authorization_id`, `launch_record_digest` (`null` before the launch binding is committed, mandatory after), `allocation_record_id`, session and trace identities, `execution_uid`, timestamp, actor, and outcome. Where allocation or execution fields do not yet exist, they MUST be explicitly `null` rather than omitted. Process events additionally require PID-namespace identity and process start time or pidfd-derived identity where supported; unavailable pidfd evidence is a recorded residual assumption, never replaced by PID alone. Events MUST also include a stable event ID and causation/correlation ID.
 
 | Event name | Additional required fields |
 |---|---|
@@ -213,12 +214,12 @@ Every event below MUST include: `host_id`, `boot_id`, `launch_record_id`, `alloc
 
 1. `agentbound-policy` MUST derive authority before `agentbound-launch` obtains an execution identity or creates a scope.
 2. An approval, policy, catalogue, or runtime decision used to enter `authorized` MUST be recorded by immutable reference. A later caller MUST NOT substitute a newer or differently encoded value into an already authorized attempt.
-3. At most one constructor attempt MAY own a launch-record ID at a time. The ownership lease MUST be durable enough that a restart can distinguish a live owner from an abandoned attempt.
+3. At most one constructor attempt MAY own a authorization ID at a time. The ownership lease MUST be durable enough that a restart can distinguish a live owner from an abandoned attempt.
 4. Only `agentbound-lifecycle` MAY advance an active session toward quiescing, termination, cleanup, or identity release. systemd supplies scope observations only; the `agentbound` CLI and revocation triggers request action through its authorized interface; `agentbound-lifecycle` alone decides, serializes, and performs the transition.
 5. A failed transition MUST be fail closed with respect to new authority. In particular, a failed revocation check MUST NOT enable a new `agentbound-gateway` operation.
 6. A state transition MUST preserve a causal link to the initiating request, policy decision, revocation signal, systemd event, or recovery observation that caused it.
 7. An observer MAY see a lagging status replica, but the status API MUST label its observation sequence and MUST offer an authoritative record reference for privileged observers.
-8. A session MUST NOT transition from `quiescing`, `terminated`, `construction-failed`, or `aborted` back to `active`. A resumed task is a new session with a new launch-record ID and execution identity.
+8. A session MUST NOT transition from `quiescing`, `terminated`, `construction-failed`, or `aborted` back to `active`. A resumed task is a new session with a new authorization ID and execution identity.
 9. A session whose authority is narrowed during `continue-degraded` MUST record a replacement effective grant set. It MUST NOT retain the superseded grant merely because existing processes hold it.
 10. A manual operator override MAY select a more restrictive action than the manifest, including termination. It MUST NOT select a less restrictive action unless an independently authorized policy decision is recorded.
 
@@ -239,7 +240,7 @@ Safe reason codes MUST be stable machine-readable values. Human-readable detail 
 
 ### 9.3 Construction rollback ledger
 
-`agentbound-launch` MUST create a rollback ledger before the first privileged construction action. Each entry MUST identify the action, resource handle, expected reverse action, completion state, and launch-record ID. The ledger MAY be stored with the launch record or in a separately integrity-protected constructor journal.
+`agentbound-launch` MUST create a rollback ledger before the first privileged construction action. Each entry MUST identify the action, resource handle, expected reverse action, completion state, and authorization ID. The ledger MAY be stored with the launch record or in a separately integrity-protected constructor journal.
 
 | Resource class | Required rollback proof |
 |---|---|
@@ -258,7 +259,7 @@ Rollback MUST proceed in reverse dependency order where doing so preserves conta
 
 A policy-governed attachment is not an implicit lifecycle transition. `agentbound` MAY request observe, inject, approve, interrupt, or control rights, but each is separately authorized and audited. During quiescing, no new attachment MAY be admitted. Existing observers MAY remain only if the manifest allows them; existing injectors and controllers MUST lose authority to initiate new child or gateway activity.
 
-An attachment event MUST carry the session launch-record ID, attaching actor, attachment mode, trace identity, and outcome. A terminal stream or PTY descriptor MUST be treated as a capability: it MUST be closed on termination and MUST NOT be inherited by a later session that reuses a UID.
+An attachment event MUST carry the session authorization ID, attaching actor, attachment mode, trace identity, and outcome. A terminal stream or PTY descriptor MUST be treated as a capability: it MUST be closed on termination and MUST NOT be inherited by a later session that reuses a UID.
 
 ### 9.5 Lifecycle evidence retention
 
@@ -273,7 +274,7 @@ Before reporting an implementation as conformant with this specification, the im
 | Check | Required assertion |
 |---|---|
 | Duplicate request | Repeating a client request with its idempotency key creates no second manifest, scope, UID allocation, or runtime. |
-| Concurrent launch | Competing constructors cannot activate two scopes for one launch-record ID. |
+| Concurrent launch | Competing constructors cannot activate two scopes for one authorization ID. |
 | Boundary-before-runtime | At every injected construction failure point, no runtime instruction executes before the relevant boundary and audit binding exist. |
 | Grant-after-record | A gateway/broker refuses an operation until it can identify a committed launch record and active session state. |
 | Descendant control | Fork, double-fork, daemonization, and orphaning do not evade the supervised cgroup, PID namespace, or termination procedure. |
