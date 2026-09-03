@@ -1,6 +1,6 @@
 # Agentbound Component Interfaces
 **Version:** 0.2  
-**Status:** Draft for WP0 review — skeleton; wire formats are WP1 outputs  
+**Status:** Frozen (WP0) — skeleton; wire formats are WP1 outputs  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed reference implementation  
 **Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md), [manifest schema](manifest-schema.md), [session lifecycle](session-lifecycle.md), [execution-identity lifecycle](execution-identity-lifecycle.md), [ADR-0001](ADR-0001-execution-identity.md), [ADR-0002](ADR-0002-gateway-authentication.md), and [Phase 1 requirements](phase-1-requirements.md)

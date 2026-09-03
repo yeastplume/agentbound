@@ -1,7 +1,7 @@
 # WP0 open-question disposition register
 
 **Version:** 0.2  
-**Status:** Freeze input — every open question in the WP0 set is listed here with exactly one disposition  
+**Status:** Frozen (WP0) — every open question in the WP0 set is listed here with exactly one disposition  
 **Date:** 28 August 2026  
 **Related:** [architecture README](README.md) freeze condition; all WP0 documents
 

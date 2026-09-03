@@ -4,23 +4,25 @@ This directory contains WP0 implementation specifications and architecture decis
 
 ## WP0 specification set and status
 
+**WP0 is frozen.** Every artefact below is at its frozen version; ADRs retain their accepted status. A change to any frozen artefact requires a revision-history entry and, where the change touches a technical-report invariant, plan gate, profile claim, or milestone allocation, the cross-document propagation rule at the end of this page.
+
 Decision status (is the architecture settled?) and specification completeness (are the parameters filled in?) are distinct; both are shown.
 
 | Artefact | Version | Decision status | Specification completeness |
 |---|---|---|---|
-| [Phase 1 normative requirements](phase-1-requirements.md) | 0.5 | draft for WP0 review | complete; all questions answered |
-| [Authorization manifest and launch binding schema](manifest-schema.md) | 0.5 | draft for WP0 review | complete, with gateway-free 1A form and worked examples; all questions answered |
-| [Session lifecycle and failure states](session-lifecycle.md) | 0.5 | draft for WP0 review | complete; one WP1 item (LC-2) |
-| [Execution-identity lifecycle](execution-identity-lifecycle.md) | 0.5 | draft for WP0 review | complete; one WP1 item (ID-1) |
-| [Component interfaces (skeleton)](component-interfaces.md) | 0.2 | security-relevant decisions frozen | wire formats and versioning negotiation deferred to WP1 by design |
-| [Test catalogue](test-catalogue.md) | 0.4 | pre-registration frozen at this version | load profiles, deadlines, seeds fixed; fixtures and commands are WP1 outputs by design |
-| [Invariant-to-test traceability matrix](traceability-matrix.md) | 0.4 | draft for WP0 review | complete; requirement-coverage check performed (§8) |
-| [Open-question disposition register](open-question-register.md) | 0.2 | freeze input | all 32 WP0 questions disposed: 28 answered in their owning documents, 4 assigned to named WP1 items |
+| [Phase 1 normative requirements](phase-1-requirements.md) | 0.5 | frozen (WP0) | complete; all questions answered |
+| [Authorization manifest and launch binding schema](manifest-schema.md) | 0.5 | frozen (WP0) | complete, with gateway-free 1A form and worked examples; all questions answered |
+| [Session lifecycle and failure states](session-lifecycle.md) | 0.5 | frozen (WP0) | complete; one WP1 item (LC-2) |
+| [Execution-identity lifecycle](execution-identity-lifecycle.md) | 0.5 | frozen (WP0) | complete; one WP1 item (ID-1) |
+| [Component interfaces (skeleton)](component-interfaces.md) | 0.2 | frozen (WP0); security-relevant decisions | wire formats and versioning negotiation deferred to WP1 by design |
+| [Test catalogue](test-catalogue.md) | 0.4 | frozen (WP0); pre-registration | load profiles, deadlines, seeds fixed; fixtures and commands are WP1 outputs by design |
+| [Invariant-to-test traceability matrix](traceability-matrix.md) | 0.4 | frozen (WP0) | complete; requirement-coverage check performed (§8) |
+| [Open-question disposition register](open-question-register.md) | 0.2 | frozen (WP0) | all 32 WP0 questions disposed: 28 answered in their owning documents, 4 assigned to named WP1 items |
 | [ADR-0001](ADR-0001-execution-identity.md) execution identity | — | **accepted** (revised) | lifecycle details in the identity-lifecycle specification |
 | [ADR-0002](ADR-0002-gateway-authentication.md) gateway topology and authentication | 0.4 | **accepted for Phase 1**, conditional on the Decision 7 kernel-baseline verification in WP1 | mechanism complete; one connection per process |
 | [ADR-0003](ADR-0003-control-substrate.md) control substrate | 0.5 | **accepted for Phase 1** | configuration, thresholds, confidence method, and classification rules filled; image digests recorded in `pinned-configuration.json` at image build; per-ID `control-arm-register.md` is a 1D prerequisite; two WP1 items (VM-1, VM-2) |
 
-**Freeze condition.** WP0 freezes when the review of this version raises no CERTAIN-class defect and each open question is either answered or assigned a WP1 verification item. The second condition is met by the [open-question register](open-question-register.md); the WP1 verification set is ADR-0002 Decision 7 plus register items VM-1, VM-2, LC-2, ID-1. Declaring the freeze is a project decision recorded by changing every artefact's status line from "draft for WP0 review" to "frozen (WP0)" in one commit.
+**Freeze record.** Both freeze conditions were met at commit `fae6912` (no CERTAIN-class defect in the third independent review; every open question answered or assigned to a WP1 item in the [open-question register](open-question-register.md)). The WP1 verification set is ADR-0002 Decision 7 plus register items VM-1, VM-2, LC-2, ID-1; a failed item reopens the owning ADR or specification before the constructor is built.
 
 ## Mandatory implementation contracts
 

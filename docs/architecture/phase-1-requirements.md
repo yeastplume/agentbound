@@ -1,7 +1,7 @@
 # Phase 1 Normative Requirements
 
 **Version:** 0.5  
-**Status:** Draft for WP0 review  
+**Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
 **Source of invariants:** [technical report](../papers/technical-report.md) §7, profile U column  

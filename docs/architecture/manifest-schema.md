@@ -1,7 +1,7 @@
 # Agentbound Manifest Schema
 
 **Version:** 0.5
-**Status:** Draft for WP0 review
+**Status:** Frozen (WP0)
 **Date:** 28 August 2026
 **Applies to:** the Unix-governed reference implementation and its microVM control arm
 

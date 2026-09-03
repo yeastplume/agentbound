@@ -1,7 +1,7 @@
 # Session Lifecycle Specification
 
 **Version:** 0.5  
-**Status:** Draft for WP0 review  
+**Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
 **Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md), [technical report](../papers/technical-report.md), [ADR-0001](ADR-0001-execution-identity.md)

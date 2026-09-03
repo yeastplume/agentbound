@@ -1,7 +1,7 @@
 # Phase 1 Test Catalogue
 
 **Version:** 0.4  
-**Status:** Draft for WP0 review  
+**Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** Agentbound milestones 1A–1D  
 **Companion documents:** [requirements](phase-1-requirements.md), [traceability matrix](traceability-matrix.md), [session lifecycle](session-lifecycle.md), [Phase 1 plan](../plans/phase-1-reference-implementation.md), and [technical report](../papers/technical-report.md)

@@ -1,7 +1,7 @@
 # Phase 1 invariant-to-test traceability matrix
 
 **Version:** 0.4  
-**Status:** Draft for WP0 review  
+**Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Conformance target:** [technical report](../papers/technical-report.md) §7, Unix-governed profile U  
 **Requirements:** [Phase 1 normative requirements](phase-1-requirements.md)  
