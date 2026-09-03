@@ -1,6 +1,6 @@
 # WP1 evidence — `identity-store`
 
-**Covers:** open-question register item **ID-1** (allocator-store implementation: append-only, compare-and-set, crash consistency); implementation spike **LC-1** allocator half (identity lifecycle §3.1–§3.3, §4 state machine; R-ID-*); plan WP1 spike "per-session execution identity allocation" (allocation half — durable-ownership projection is exercised by `mount-construct` C7-1 and lifecycle reclamation is WP2).
+**Covers:** open-question register item **ID-1** (allocator-store implementation: append-only, compare-and-set, crash consistency); implementation spike **LC-1** allocator half (identity lifecycle §3.1–§3.3, §4 state machine; R-ID-*); plan WP1 spike "per-session execution identity allocation" (allocation half — the execution-identity projection, i.e. UID transition, `no_new_privs`, and bounding-set disposal, is exercised by `mount-construct` C7-1; the durable-ownership projection and lifecycle reclamation are carried to WP2, see the register).
 **Baseline:** VM 110, Linux `6.12.107+deb13-cloud-amd64`; SQLite 3.46 (bundled via `rusqlite 0.32`), `journal_mode=WAL`, `synchronous=FULL`, single-writer `BEGIN IMMEDIATE` transactions, ext4 on virtio-scsi.
 **Spike:** `spikes/identity-store/`. **Raw transcript:** `raw/identity-store.txt`. **Command:** `spikes/run.sh identity-store`.
 
