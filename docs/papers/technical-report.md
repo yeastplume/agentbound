@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR6  
+**Version:** 0.5-TR7  
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -21,6 +21,7 @@
 - **0.5-TR4** — Added an explicit statement that the formalism is an unproven specification and listed what remains open; made the same caveat part of the conformance definition.
 - **0.5-TR5** — Execution identity restated as uniquely allocated with verified reclamation and reuse quarantine; ownership/execution separation stated as an invariant with profile-specific realizations rather than a universal "never executes".
 - **0.5-TR6** — Aligned the phase description with the Phase 1 plan: the microVM control arm is a Phase 1 (milestone 1D) comparison for the Unix-governed profile, and Phase 3 extends it to high-assurance profiles; reclamation condition bounded to a managed domain.
+- **0.5-TR7** — Replaced the pre-plan component sketch with the Agentbound decomposition; Phase 2 restated as extending the Phase 1 baseline mechanisms rather than introducing them.
 
 ---
 
@@ -829,21 +830,23 @@ The complete evaluation is a research programme, not one minimal prototype. It s
 
 ### 10.1 Components
 
+The reference implementation uses the decomposition fixed in the Phase 1 plan:
+
 ```text
-agent-principald   organizational principal/session policy resolver
-agent-login        privileged, narrow session constructor
-agent-shell        ordinary shell or minimal LLM loop
-agent-audit        launch-record and Linux Audit correlator
-agent-declassify   optional trusted release boundary
+agentbound          CLI/API client: requests, observes, attaches to, terminates sessions
+agentbound-policy   unprivileged resolver: principal, initiator, task, catalogue → manifest
+agentbound-launch   narrow privileged constructor; separate post-launch lifecycle helper
+agentbound-gateway  session-authenticating gateway with typed operation adapters
+agentbound-audit    launch record + kernel audit + gateway log correlator
 ```
 
-The implementation can use local configuration rather than enterprise IAM and should avoid claiming production readiness.
+No custom shell or runtime is built: workloads are existing artefacts (`/bin/sh`, a scripted loop, an existing harness). Trusted validators and release services (Section 3.4–3.5) are later-phase components and are not part of the Phase 1 decomposition. The implementation can use local configuration rather than enterprise IAM and should avoid claiming production readiness.
 
 ### 10.2 Phases
 
 **Phase 1 — Unix-governed execution boundary.** A staged programme with four milestones and stop points (see the Phase 1 plan). 1A: global agent identity, per-session execution identity, the constructor, namespaces and cgroups, private per-session state, capability disposal and `no_new_privs`, same-principal isolation, delegation narrowing, revocation, descriptor discipline, and cgroup-wide termination. 1B: gateway-only egress, one typed Git operation, trace identity, the protected-object integrity slice, and correlated audit. 1C: an inference adapter, a real harness, and execution-binding control. 1D: a **microVM control arm** for the Unix-governed profile, with pre-registered test equivalence, so the comparative claim is made against a stronger substrate. This phase tests whether the principal/session/process ontology improves on a conventional agent sandbox without depending on MLS, and whether it justifies itself against a microVM.
 
-**Phase 2 — compartments, memory, and remote effects.** Add MCS or equivalent compartments, partitioned and versioned durable memory, contamination-safe delegation and peer messaging, brokered credentials, integrity staging and promotion, policy-change behavior, and external spend/fan-out budgets.
+**Phase 2 — compartments, memory, and remote effects.** Add MCS or equivalent compartments, partitioned and versioned durable memory, and contamination-safe delegation and peer messaging on mediated edges. Extend the Phase 1 baselines: brokered credentials to compartment-aware services; the protected-object integrity slice to general staging, validation, and promotion paths including structured memory; active revocation to reclassification and label-change behaviour; and gateway budgets to richer external-resource governance across many operations and services.
 
 **Phase 3 — multilevel and high-assurance comparison.** Add full MLS and analyzed policy, declassification workflows and throughput measurement, cross-host and collaborative-storage tests, and shared-inference/accelerator isolation. Repeat and extend the Phase 1D microVM comparison for the compartmented and multilevel profiles, where labeled storage, gateways, and release must be preserved across the VM boundary. This phase compares high-assurance options rather than assuming shared-host MLS is the default.
 

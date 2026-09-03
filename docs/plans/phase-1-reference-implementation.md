@@ -1,7 +1,7 @@
 # Phase 1 Reference Implementation Plan
 
 **Status:** Draft for review  
-**Plan version:** 0.4  
+**Plan version:** 0.5  
 **Date:** 28 August 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
@@ -15,6 +15,7 @@
 - **0.2** — Incorporated three independent reviews: Phase 1 claim narrowed to isolation, authority, credential confinement, descendant control, and attribution of mediated effects, with information-flow invariants marked not applicable; per-session execution identity committed (ADR-0001); gateway-only egress topology specified; components collapsed to four plus a CLI; a thin integrity slice added; container/microVM control arm made a required evaluation arm; integration contract and adoption "step 0" added.
 - **0.3** — Second independent review: resolved the one-adapter/inference-adapter contradiction (Git only in the core; inference adapter and execution-binding control moved to milestone 1C); reworded the integrity non-goal; added adversarial suites for bounded derivation, monotonic delegation, active revocation, and constructor inputs; execution identity restated as "uniquely allocated with verified reclamation and reuse quarantine" with a WP0 lifecycle specification; gateway authentication and the control substrate made required ADRs; control arm fixed as a microVM; internal milestones 1A–1D with stop points; full Profile U conformance target made explicit.
 - **0.4** — Follow-up review: active-revocation evidence split by milestone; control-arm test equivalence pre-registered in ADR-0003; ADR-0002 candidate set reconciled with the egress topology (two mutually exclusive channel topologies, each with tests); Invariant 20 evidence distinguishes absent resource classes; gates numbered §§3.1–3.4; programme framing stated in §1.
+- **0.5** — Stale §4.2 egress bullet replaced with the ADR-0002 topology choice; Branch D cross-reference corrected to technical-report §3.5; ADR-0002 scope extended to peer-credential evidence and connection lifetime.
 
 ---
 
@@ -203,7 +204,7 @@ The Linux implementation should evaluate:
 - a minimal seccomp profile where it adds testable value;
 - explicit file-descriptor allowlisting and closure;
 - gateway authentication mechanism selected by ADR-0002 from: (network topology) mTLS or proof-of-possession credentials provisioned per session, or a host-side broker with a verified veth-peer-to-execution-identity mapping; (local-socket topology) peer credentials over a single explicitly mounted `AF_UNIX` socket with no session network interface; bearer tokens are excluded as the primary mechanism;
-- the gateway-only egress topology (netns → single veth → host nftables/eBPF → gateway; no `CAP_NET_RAW`; socket-family seccomp);
+- the mutually exclusive gateway channel topology selected by ADR-0002 (§3.3): either the network topology (netns → single veth → host nftables/eBPF → gateway; no `CAP_NET_RAW`; socket-family seccomp; no Unix sockets) or the local-socket topology (no network interface; one explicitly mounted single-purpose `AF_UNIX` socket authenticated by peer credentials);
 - immutable, signed effective launch record with stated trust anchor and clock;
 - session trace identity propagated through the gateway; Linux audit plus gateway audit correlation;
 - Git credential hidden from the session; pushes brokered by the gateway to a staging ref only;
@@ -572,7 +573,7 @@ Deliverables:
 - effective-manifest schema and canonical encoding;
 - session lifecycle and failure-state specification;
 - **execution-identity lifecycle specification** (ADR-0001 open items): host-local versus fleet-wide uniqueness; allocation source; the declared managed reclamation domain and its *condition* (no live process, owned object, or grant within the domain) rather than a fixed period; the rule that exports beyond the domain never rely on the numeric UID; discovery or elimination of owned objects at reclamation; disambiguation of audit history by execution UID plus boot/session identity; crash-recovery and exhaustion behaviour; interaction with backups and persistent files carrying numeric ownership;
-- **ADR-0002** gateway authentication: selection between the network and local-socket channel topologies of §3.3 and the mechanism within the chosen topology (may be provisional pending the WP1 spike, but the candidate set, topology exclusivity, and selection criteria are fixed here);
+- **ADR-0002** gateway authentication: selection between the network and local-socket channel topologies of §3.3 and the mechanism within the chosen topology (may be provisional pending the WP1 spike, but the candidate set, topology exclusivity, and selection criteria are fixed here). For the local-socket topology the ADR must name the authoritative kernel evidence (`SO_PEERCRED`, and a peer pidfd where available—a pathname-protected socket alone is insufficient), how the gateway binds that evidence to the immutable launch record, and connection-lifetime behaviour: connections established before versus after revocation; caller exit after establishment; descriptor passing within the session; whether any process under the execution identity may invoke each operation; and how stale connections are invalidated at termination;
 - **ADR-0003** control substrate: named microVM implementation, configuration, the held-constant list, and the pre-registered test-equivalence classification of every demonstration and suite item;
 - pre-registered thresholds: interface inventory, adversary-capability matrix, required attribution completeness, maximum policy-exception rate, privileged-code reviewability bound, pinned kernel/systemd/LSM versions;
 - invariant-to-test traceability matrix covering every profile U invariant.
@@ -676,7 +677,7 @@ Prioritize if shared-kernel or device risks remain unacceptable. Preserve the sa
 
 ### Branch D — Trusted release and full MLS
 
-Prioritize only with a concrete classified or regulated workflow whose required information flows and review economics can be measured, and treat the release-economics targets of technical-report §11 as a go/no-go condition. Do not adopt full MLS merely because the paper describes it.
+Prioritize only with a concrete classified or regulated workflow whose required information flows and review economics can be measured, and treat the release-economics targets of technical-report §3.5 (and their conformance status in §11) as a go/no-go condition. Do not adopt full MLS merely because the paper describes it.
 
 ---
 
