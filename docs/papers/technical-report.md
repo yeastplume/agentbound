@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR5  
+**Version:** 0.5-TR6  
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -20,6 +20,7 @@
 - **0.5-TR3** — Incorporated three independent reviews: typed formalism and authorization-derivation relation replacing universal intersection; per-session execution identity made normative; gateway-only egress topology specified; constructor ordering and post-launch privileged TCB stated honestly; invariants profile-scoped and classified as prevention, detection, or assumption; attribution narrowed to mediated effects; model treated as an approved execution binding; structured versus semantic memory promotion separated; foundational confidentiality and integrity models cited.
 - **0.5-TR4** — Added an explicit statement that the formalism is an unproven specification and listed what remains open; made the same caveat part of the conformance definition.
 - **0.5-TR5** — Execution identity restated as uniquely allocated with verified reclamation and reuse quarantine; ownership/execution separation stated as an invariant with profile-specific realizations rather than a universal "never executes".
+- **0.5-TR6** — Aligned the phase description with the Phase 1 plan: the microVM control arm is a Phase 1 (milestone 1D) comparison for the Unix-governed profile, and Phase 3 extends it to high-assurance profiles; reclamation condition bounded to a managed domain.
 
 ---
 
@@ -32,7 +33,7 @@ The report remains self-contained at the level needed to implement and test the 
 ### Normative terminology
 
 - **Agent principal:** a durable organizational security principal with a stable global identity, an accountable owner, potential authority and clearance, partitioned durable state, credential/model/tool policy, delegation constraints, retention rules, and lifecycle policy. The durable principal is a policy, ownership, and audit identity. A host UID that owns durable state is a local projection of it. The identity that owns durable state and the identity under which a session acts must be distinguishable to whatever enforces the session boundary; in the Unix-governed profile the owning UID does not run session processes.
-- **Execution identity:** the uniquely allocated local credential (UID, supplementary groups, and where applicable MAC type) under which one session's processes execute. It is allocated per session, never shared between concurrent sessions, and reclaimed only under a verified condition (no live process, no owned object, no audit record that depends on the numeric identity alone) followed by a reuse quarantine; audit records pair it with launch, boot, and session identifiers so that finite UIDs can be reclaimed without ambiguity. Durable state is reached through per-session grants (bind mounts, ACLs, descriptors, or a storage broker), not by running as the owner.
+- **Execution identity:** the uniquely allocated local credential (UID, supplementary groups, and where applicable MAC type) under which one session's processes execute. It is allocated per session, never shared between concurrent sessions, and reclaimed only when a verified condition holds across a **declared managed domain** (session namespaces and mounts, manifest-registered host paths, runtime and workspace stores, broker grants, IPC namespaces, and cgroup state)—no live process, no owned object, no grant—followed by a reuse quarantine; anything exported beyond that domain must not rely on the numeric UID for durable authorization; audit records pair it with launch, boot, and session identifiers so that finite UIDs can be reclaimed without ambiguity. Durable state is reached through per-session grants (bind mounts, ACLs, descriptors, or a storage broker), not by running as the owner.
 - **Session:** a task-scoped realization of one agent principal, bound to an authenticated initiator, purpose, approvals, activated authority, confidentiality and integrity state, visible world, execution identity, credentials, budgets, process tree, outputs, and audit identity.
 - **Execution:** an ordinary process within a session. A cognitive runtime, shell, compiler, retrieval command, or model client is an execution, not an independent security principal unless separately provisioned as one.
 - **Model and execution binding:** a model is a cognitive implementation invoked by an execution. The session identity is stable across model replacement, but the model, endpoint, provider tenant, adapters or fine-tuned weights, retention mode, and inference pool together form an **approved execution binding**. Changing any element of the binding is a policy-controlled, auditable event that requires a compatibility decision, because it changes the session's information sources, sinks, and trusted computing base.
@@ -417,7 +418,7 @@ Additional conditions:
 
 - the session holds no `CAP_NET_RAW` or `CAP_NET_ADMIN`; seccomp forbids unneeded socket families (`AF_PACKET`, `AF_VSOCK`, `AF_NETLINK` beyond what the runtime needs, and raw sockets);
 - the inherited descriptor set contains no pre-opened sockets or connections;
-- no host Unix-domain sockets, loopback services, container-runtime sockets, or local proxies are mounted or reachable inside the session's world;
+- no host Unix-domain sockets, loopback services, container-runtime sockets, or local proxies are mounted or reachable inside the session's world. The one permitted alternative is a **local-socket topology** in which the session has no network interface at all and reaches the gateway through exactly one explicitly mounted, single-purpose `AF_UNIX` socket authenticated by peer credentials; the two topologies are mutually exclusive and each carries its own bypass tests;
 - the gateway is not a generic HTTP or CONNECT proxy. It exposes named operations with typed arguments, authorizes destination, method, body semantics, tenant, and response size per operation, authenticates its upstream TLS peer, and binds a signed per-session identity and audience to every request;
 - Landlock TCP `bind`/`connect` rules and hostname allowlists are defense in depth, not the boundary: they cover neither UDP/QUIC, vsock, existing descriptors, DNS behavior, nor TLS identity.
 
@@ -840,11 +841,11 @@ The implementation can use local configuration rather than enterprise IAM and sh
 
 ### 10.2 Phases
 
-**Phase 1 — Unix-governed execution boundary.** Implement global agent identity and local projection, the constructor, namespaces and cgroups, private per-session state, capability disposal and `no_new_privs`, same-principal isolation, descriptor discipline, cgroup-wide termination, a basic credential/egress gateway, and correlated launch/process audit. This phase tests whether the principal/session/process ontology improves a conventional agent sandbox without depending on MLS.
+**Phase 1 — Unix-governed execution boundary.** A staged programme with four milestones and stop points (see the Phase 1 plan). 1A: global agent identity, per-session execution identity, the constructor, namespaces and cgroups, private per-session state, capability disposal and `no_new_privs`, same-principal isolation, delegation narrowing, revocation, descriptor discipline, and cgroup-wide termination. 1B: gateway-only egress, one typed Git operation, trace identity, the protected-object integrity slice, and correlated audit. 1C: an inference adapter, a real harness, and execution-binding control. 1D: a **microVM control arm** for the Unix-governed profile, with pre-registered test equivalence, so the comparative claim is made against a stronger substrate. This phase tests whether the principal/session/process ontology improves on a conventional agent sandbox without depending on MLS, and whether it justifies itself against a microVM.
 
 **Phase 2 — compartments, memory, and remote effects.** Add MCS or equivalent compartments, partitioned and versioned durable memory, contamination-safe delegation and peer messaging, brokered credentials, integrity staging and promotion, policy-change behavior, and external spend/fan-out budgets.
 
-**Phase 3 — multilevel and comparative evaluation.** Add full MLS and analyzed policy, declassification workflows and throughput measurement, cross-host and collaborative-storage tests, shared-inference/accelerator isolation, and a parallel microVM-per-session implementation. This phase compares high-assurance options rather than assuming shared-host MLS is the default.
+**Phase 3 — multilevel and high-assurance comparison.** Add full MLS and analyzed policy, declassification workflows and throughput measurement, cross-host and collaborative-storage tests, and shared-inference/accelerator isolation. Repeat and extend the Phase 1D microVM comparison for the compartmented and multilevel profiles, where labeled storage, gateways, and release must be preserved across the VM boundary. This phase compares high-assurance options rather than assuming shared-host MLS is the default.
 
 ### 10.3 Demonstration programme
 

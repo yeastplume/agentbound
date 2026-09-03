@@ -2,7 +2,7 @@
 
 ## A Security Ontology for Governed Agent Sessions
 
-**Version:** 0.8  
+**Version:** 0.9  
 **Date:** 28 August 2026  
 **Status:** Working position paper for external review  
 **Companion:** [`technical-report.md`](technical-report.md)  
@@ -17,6 +17,7 @@
 - **0.6** — Incorporated three independent reviews: durable principal identity separated from per-session execution identity; the information-admission claim scoped to mediated edges and the Unix-governed profile stated as a non-information-flow profile; intersection presented as the common case of a derivation relation; model treated as an approved execution binding; attribution scoped to mediated effects; integrity provenance foregrounded as the near-term payoff; the hostile-reviewer objection stated and answered.
 - **0.7** — Trimming pass: removed mechanism detail owned by the companion report and consolidated the rules; added an explicit statement that the formalism is an unproven specification.
 - **0.8** — Softened "never runs code" to a profile-realized separation of owning and acting identity; execution identity restated as uniquely allocated with verified reclamation.
+- **0.9** — Evaluation path aligned with the staged Phase 1 programme; Phase 3 comparison scoped to high-assurance profiles.
 
 ---
 
@@ -318,7 +319,7 @@ The companion technical report defines a three-phase evaluation:
 
 - **Phase 1:** Unix-governed identity, construction, same-principal isolation, resources, credential confinement, gateway-only egress, termination, attribution of mediated effects, one thin integrity slice, and a microVM control arm for the comparative claim, in four milestones with stop points. Phase 1 makes no information-flow claim.
 - **Phase 2:** integrity provenance and partitioned/versioned memory first; then compartments, contamination-safe communication on mediated edges, revocation, and external budgets.
-- **Phase 3:** full MLS, declassification throughput, storage continuity, shared inference, and comparison with microVM-per-session.
+- **Phase 3:** full MLS, declassification throughput, storage continuity, shared inference, and extension of the microVM comparison to the compartmented and multilevel profiles.
 
 The most important falsification questions are:
 
