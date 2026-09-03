@@ -13,7 +13,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | 1 `SOCK_SEQPACKET` + `SO_PASSCRED` | **PASS** | [seqpacket-creds](seqpacket-creds.md) D7-1a–c | ADR-0002 Decision 1 |
 | 2 pidfd from credential PID | **PASS + FINDING F-1** | [seqpacket-creds](seqpacket-creds.md) D7-2a–d | ADR-0002 Decision 2: comparison key should be the pidfs inode, start time corroborating only |
 | 3 Descriptor transfer | **PASS** | [seqpacket-creds](seqpacket-creds.md) D7-3a–b, X-1 | ADR-0002 Decision 2 |
-| 4 Abstract socket isolation | pending | — | ADR-0002 Decision 1; requirements R-GW |
+| 4 Abstract socket isolation | **PASS** | [netns-seccomp](netns-seccomp.md) D7-4a–c | ADR-0002 Decision 1; requirements R-GW |
 | 5 Revocation latency | pending (mechanism portion); operation denial is WP2 | — | ADR-0002 Decision 4 |
 | 6 Bypass corpus | WP2 (needs gateway) | — | ADR-0002 |
 | 7 TCB accounting | WP2 (needs gateway code); SLOC tool pinned under VM-2 | — | requirements §12 |
@@ -28,8 +28,8 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | systemd scope + PID-namespace init containment; `cgroup.kill`, D-state tasks | pending | — | session lifecycle §5 |
 | Namespace/mount/procfs construction in §2.1 order; mount-descriptor resolution | pending | — | session lifecycle §3 |
 | Descriptor closure and runtime launch ordering | pending | — | session lifecycle §3 |
-| Socket-family seccomp and abstract-socket isolation in an empty netns | pending | — | requirements R-CON; ADR-0002 D7-4 |
-| ADR-0002 Decision 7 verification | in progress (items 1–3 done) | above | ADR-0002 |
+| Socket-family seccomp and abstract-socket isolation in an empty netns | **PASS + FINDING F-2** | [netns-seccomp](netns-seccomp.md) NS-*, SC-* | requirements R-CON; ADR-0002 D7-4 |
+| ADR-0002 Decision 7 verification | in progress (items 1–4 done) | above | ADR-0002 |
 | `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | pending | — | session lifecycle §4; component interfaces |
 | Git staging-ref adapter and protected-branch behaviour | pending | — | plan §3.3 |
 | `loginuid` and audit correlation, loss behaviour under load | pending | — | requirements R-CON-6; identity lifecycle §6 |
@@ -50,3 +50,4 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | # | Finding | Owning document | Status |
 |---|---|---|---|
 | F-1 | `/proc` start time has 10 ms granularity; a PID recycled within one tick has an identical start time. The pidfs inode / held pidfd is the reliable instance key. | ADR-0002 Decision 2 | recorded; amendment pending |
+| F-2 | An inherited sysfs mount shows the host's network interfaces inside an empty netns. R-CON-2 covers `/proc` only. Add: no inherited sysfs in the session root; mount sysfs, if at all, after the netns exists. | requirements R-CON-2; session lifecycle §3 step 5; test catalogue T-6.1 | recorded; amendment pending |

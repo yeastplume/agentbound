@@ -1,0 +1,24 @@
+# spike: netns-seccomp
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: 0d50290
+# date: 2026-09-03T13:37:59Z
+# args: 
+
+spike netns-seccomp; uid=0
+host: interfaces=2, @ab-host bound, /tmp/ab-spike-gw/gateway.sock bound
+RESULT NS-0.stale-sysfs-shows-host-interfaces PASS /sys/class/net before remount listed 2 interfaces from the HOST netns (FINDING: constructor must mount a fresh sysfs or none; procfs/sysfs from the parent leak host network topology)
+RESULT NS-1.empty-netns PASS RTM_GETLINK: interfaces=1 (lo only) lo_up=false
+RESULT D7-4a.host-abstract-unreachable PASS connect(@ab-host) errno=111 (ECONNREFUSED=111)
+RESULT D7-4b.sibling-abstract-unreachable PASS connect(@ab-sibling) errno=111
+RESULT D7-4c.abstract-namespace-is-per-netns PASS bind(@ab-host) inside session rc=0 (name free in this netns although host holds it)
+RESULT NS-2.gateway-socket-only-via-projection PASS after pivot_root: connect(/gateway.sock)=0 connect(original host path)=2 (ENOENT=2)
+RESULT NS-3.pathname-crosses-netns-by-design PASS pathname Unix socket reachable across netns; isolation of pathname sockets is the mount namespace's job
+RESULT SC-1.seccomp-tsync-installed PASS seccomp(SET_MODE_FILTER, TSYNC) errno=0; no_new_privs=1
+RESULT SC-2.non-unix-families-EPERM PASS AF_INET=1 AF_INET6=1 AF_NETLINK=1 AF_PACKET=1 AF_VSOCK=1 AF_BLUETOOTH=1 AF_ALG=1
+RESULT SC-3.af_unix-allowed PASS AF_UNIX seqpacket+stream still permitted
+RESULT SC-4.filter-applies-across-threads PASS thread socket(AF_INET) errno=1; second TSYNC install with a live thread rc=0
+RESULT SC-5.socketpair-not-a-bypass PASS socketpair(AF_INET) errno=95 (kernel rejects: AF_INET has no socketpair; AF_UNIX socketpair remains available and is fine — it is netns-less and cannot reach anything)
+RESULT NS-4.host-unaffected PASS host reaches @ab-host; session mounts did not propagate
+done
+
+# exit: 0
