@@ -4,7 +4,26 @@ Evidence for the Phase 1 plan WP1 exit condition: *every ADR-0002 Decision 7 ite
 
 **Pinned baseline (as run):** VM 110 `agentbound-dev` — Linux `6.12.107+deb13-cloud-amd64`, systemd `257.13-1~deb13u1`, Debian 13 genericcloud image SHA-512 `8ea9faae…6371f50` (full digest in the operator's home-server runbook), 4 vCPU / 8 GiB, nested KVM available. Spikes are throwaway Rust under `spikes/`; raw transcripts under `raw/`.
 
-Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the owning document is recommended), **pending**, **WP2** (verifiable only with implementation components; listed for completeness).
+Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the owning document is recommended), **WP2** (verifiable only with implementation components; listed for completeness).
+
+## WP1 exit status
+
+Every WP1 item has a recorded result: 10 spikes, 103 individual checks — 102 PASS and one deliberate FAIL (D7-2d, the start-time-only reuse check that motivates F-1) — and no ADR reopened. Eight findings (F-1–F-8) were recorded; none changes a mechanism decision, all are wording, ordering-guidance, or accounting amendments to frozen documents, to be applied as revision entries before WP2 begins (table at the end). Two items remain classified WP2 by construction (D7 items 6, 8, 9 need the gateway; the typed-operation half of item 5 likewise).
+
+| Spike | Checks | Result |
+|---|---|---|
+| [seqpacket-creds](seqpacket-creds.md) | D7 items 1–3, forge test, PID-reuse | PASS; F-1 |
+| [netns-seccomp](netns-seccomp.md) | D7 item 4, empty netns, socket-family seccomp | PASS; F-2 |
+| [scope-kill](scope-kill.md) | scope containment, freeze/kill, D-state, D-Bus, kills-first race | PASS; F-3, F-4, F-5 |
+| [frozen-peer](frozen-peer.md) | LC-2, D7 item 5 mechanism half | PASS |
+| [audit-loginuid](audit-loginuid.md) | loginuid semantics, audit join fields, loss counters | PASS; F-6 |
+| [mount-construct](mount-construct.md) | openat2/open_tree/move_mount ordering, proc/sysfs, close_range, exec | PASS |
+| [identity-store](identity-store.md) | ID-1, LC-1 allocator: CAS, chain, crash rounds, recovery | PASS |
+| [git-staging](git-staging.md) | R-GW-5 ref policy, bundle import, host protection | PASS |
+| [vsock-cid](vsock-cid.md) | VM-1 against Firecracker v1.16.1; boot check | PASS; F-7 |
+| [sloc-arms](sloc-arms.md) | VM-2 with tokei over both arms | PASS; F-8 |
+
+Reproduction: `spikes/run.sh <name>` from a checkout with SSH access to the baseline VM; each raw transcript in `raw/` carries host, kernel, systemd, commit, and date headers.
 
 ## ADR-0002 Decision 7
 
@@ -16,7 +35,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | 4 Abstract socket isolation | **PASS** | [netns-seccomp](netns-seccomp.md) D7-4a–c | ADR-0002 Decision 1; requirements R-GW |
 | 5 Revocation latency | **PASS** (mechanism half); typed-operation half is WP2 | [frozen-peer](frozen-peer.md) D7-5a–b | ADR-0002 Decision 4 |
 | 6 Bypass corpus | WP2 (needs gateway) | — | ADR-0002 |
-| 7 TCB accounting | WP2 (needs gateway code); SLOC tool pinned under VM-2 | — | requirements §12 |
+| 7 TCB accounting | WP2 (needs gateway code); counting tool and accounting rules established under VM-2 | [sloc-arms](sloc-arms.md) | requirements §12 |
 | 8 Failure behaviour | WP2 (needs components) | — | session lifecycle §6 |
 | 9 Diagnostics | WP2 (needs gateway) | — | component interfaces |
 
@@ -29,7 +48,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | Namespace/mount/procfs construction in §2.1 order; mount-descriptor resolution | **PASS** | [mount-construct](mount-construct.md) R6-*, C1–C5 | session lifecycle §3 |
 | Descriptor closure and runtime launch ordering | **PASS** | [mount-construct](mount-construct.md) C6–C7 | session lifecycle §3 |
 | Socket-family seccomp and abstract-socket isolation in an empty netns | **PASS + FINDING F-2** | [netns-seccomp](netns-seccomp.md) NS-*, SC-* | requirements R-CON; ADR-0002 D7-4 |
-| ADR-0002 Decision 7 verification | in progress (items 1–5 done; 6–9 are WP2) | above | ADR-0002 |
+| ADR-0002 Decision 7 verification | **complete for WP1** (items 1–5 PASS; 6–9 classified WP2 — they need gateway code) | above | ADR-0002 |
 | `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | **PASS + FINDINGS F-4, F-5** | [scope-kill](scope-kill.md) C-* | session lifecycle §4; component interfaces |
 | Git staging-ref adapter and protected-branch behaviour | **PASS** | [git-staging](git-staging.md) | plan §3.3 |
 | `loginuid` and audit correlation, loss behaviour under load | **PASS + FINDING F-6** | [audit-loginuid](audit-loginuid.md) | requirements R-CON-6; identity lifecycle §6 |
