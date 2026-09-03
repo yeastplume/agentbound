@@ -1,0 +1,26 @@
+# spike: vsock-cid
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: 71e89a8+dirty
+# date: 2026-09-03T14:28:21Z
+# args: 
+
+firecracker: Firecracker v1.16.1; sha256 2fd0171309af7e24…
+guest kernel: vmlinux-6.1.128 sha256 27a8310b9a727517… (Firecracker CI artefact; the pinned 6.12 guest kernel is a WP2 build item)
+nested KVM: api 12
+config: single vsock device guest_cid=42, no drives, no network (ADR-0003 device set)
+RESULT VM1-1.unix-peer-is-vmm-not-guest PASS SO_PEERCRED on the accepted bridge socket: pid=16900 (firecracker pid 16900) uid=0; no guest credential is present on the host socket, as ADR-0003 states
+RESULT VM1-2.guest-local-cid-equals-configured-guest_cid PASS guest reports IOCTL_VM_SOCKETS_GET_LOCAL_CID=42; VMM config guest_cid=42
+RESULT VM1-3.unoffered-port-refused PASS guest connect to host port 5001 (no host listener): second_port_5001_rc=-1 errno=104 (ECONNRESET=104: firecracker found no v.sock_5001)
+RESULT VM1-4.guest-cannot-bind-forged-cid PASS guest bind(svm_cid=999): bind_forged_cid_999_rc=-1 errno=99 (EADDRNOTAVAIL=99: guest may only use its own CID or ANY)
+RESULT VM1-5.second-connection-attributable-to-same-vmm-instance PASS second connection peer pid=16900; second_connection rc=0
+RESULT VM1-6.vmm-exit-observable PASS firecracker exit code 0; the CID mapping can be invalidated only after this (ADR-0003 CID lifetime)
+--- disposition ---
+The host AF_VSOCK endpoint is NOT what Firecracker exposes: the host sees a per-VMM Unix socket bridge.
+Host-observed guest CID therefore = the CID the daemon configured for the VMM whose process owns the bridge connection (SO_PEERCRED pid → VMM → guest_cid), not a value carried by the connection.
+  guest: guest kernel=6.1.128 local_cid=42 ioctl_rc=0 connect_5000_rc=0 errno=2
+  guest: second_port_5001_rc=-1 errno=104
+  guest: bind_forged_cid_999_rc=-1 errno=99
+  guest: done
+RESULT VM1-7.microvm-boot-to-exit-wallclock PASS 625 ms wall-clock for VMM start, guest boot, vsock attempts (no listener → fast fail), guest reboot, VMM exit
+
+# exit: 0

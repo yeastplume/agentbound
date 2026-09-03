@@ -16,6 +16,10 @@ tar -C "$REPO" -cf - spikes | "${SSH[@]}" 'rm -rf /root/wp1 && mkdir -p /root/wp
   echo "# date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "# args: $*"
   echo
-  "${SSH[@]}" "export PATH=\$HOME/.cargo/bin:\$PATH; cd /root/wp1/spikes/$SPIKE && cargo build --release -q 2>&1 && ./target/release/$SPIKE $*" 2>&1
+  if [ -x "$REPO/spikes/$SPIKE/run.sh" ]; then
+    "${SSH[@]}" "cd /root/wp1/spikes/$SPIKE && ./run.sh $*" 2>&1
+  else
+    "${SSH[@]}" "export PATH=\$HOME/.cargo/bin:\$PATH; cd /root/wp1/spikes/$SPIKE && cargo build --release -q 2>&1 && ./target/release/$SPIKE $*" 2>&1
+  fi
   echo; echo "# exit: ${PIPESTATUS[0]:-$?}"
 } | tee "$RAW/$SPIKE.txt"

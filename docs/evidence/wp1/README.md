@@ -33,13 +33,13 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | **PASS + FINDINGS F-4, F-5** | [scope-kill](scope-kill.md) C-* | session lifecycle §4; component interfaces |
 | Git staging-ref adapter and protected-branch behaviour | **PASS** | [git-staging](git-staging.md) | plan §3.3 |
 | `loginuid` and audit correlation, loss behaviour under load | **PASS + FINDING F-6** | [audit-loginuid](audit-loginuid.md) | requirements R-CON-6; identity lifecycle §6 |
-| Minimal control-arm launcher | pending (boot check only in WP1) | — | ADR-0003 |
+| Minimal control-arm launcher | **PASS** (boot check; nested KVM available on VM 110) | [vsock-cid](vsock-cid.md) VM1-7 | ADR-0003 |
 
 ## Open-question register items
 
 | Item | Status | Evidence | Reopens on failure |
 |---|---|---|---|
-| VM-1 vsock peer-CID reporting | pending | — | ADR-0002 Decision 6 (binding via VMM connection table) |
+| VM-1 vsock peer-CID reporting | **PASS + FINDING F-7** — no host `AF_VSOCK` endpoint with Firecracker; CID derived via VMM `SO_PEERCRED`/pidfd | [vsock-cid](vsock-cid.md) | ADR-0003 (wording) |
 | VM-2 cross-arm SLOC comparability | pending | — | ADR-0003 (per-arm disclosure only) |
 | LC-1 allocator/constructor implementation spike | **PASS** — allocator: [identity-store](identity-store.md); constructor/freeze/kill/pidfd/scope: [scope-kill](scope-kill.md), [mount-construct](mount-construct.md) | — | identity lifecycle §3 |
 | LC-2 frozen cgroup holding a `SOCK_SEQPACKET` connection | **PASS** — no delay; §6 stands | [frozen-peer](frozen-peer.md) LC2-1–5 | session lifecycle §6 |
@@ -55,3 +55,4 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | F-4 | PID-namespace init ignores external `SIGTERM`; `systemctl stop` stalls for `DefaultTimeoutStopSec` (90 s) unless `TimeoutStopUSec` is set at `StartTransientUnit` (cannot be set later on a scope). | session lifecycle §3 scope prerequisites, §4 | recorded; amendment pending |
 | F-5 | `UnitRemoved` is emitted at unit GC (~1.5 s later); `PropertiesChanged`/`ActiveState` and the held pidfd are the prompt triggers. | session lifecycle §4 (guidance only) | recorded; no obligation change |
 | F-6 | Pinned kernel lacks `CONFIG_AUDIT_LOGINUID_IMMUTABLE`: `loginuid` is re-settable by `CAP_AUDIT_CONTROL` (never held by sessions). Replace "write-once" with the capability-conditional statement; note the host-global `lost` counter. | R-CON-6; identity lifecycle §6; technical report §5; ADR-0003 kernel row | recorded; amendment pending |
+| F-7 | Firecracker's vsock is a Unix-socket bridge; the host sees the VMM process as peer, not a guest CID. Bind via `SO_PEERCRED`→VMM pidfd→configured `guest_cid`; daemon must own the bridge socket path. | ADR-0003 "VM identity, CID lifetime, and vsock admission" | recorded; wording amendment pending |
