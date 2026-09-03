@@ -1,6 +1,6 @@
 # Session Lifecycle Specification
 
-**Version:** 0.3  
+**Version:** 0.4  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -8,6 +8,7 @@
 
 ## Revision history
 
+- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. D-state escalation path; LC-2 carried to WP1.
 - **0.3** — Identifier terminology aligned (`authorization_id` pre-binding, `launch_record_digest` post-binding); systemd stated as observation source only.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Replaced the systemd-invoked lifecycle helper with the `agentbound-lifecycle` daemon (D-Bus scope signals plus held pidfds); construction step 1 restated as a `clone3` synchronization barrier; termination protocol reordered so the PID-namespace init reaps before `cgroup.kill`, with a host credential scan and a termination deadline; quiesce redefined as admission denial plus freeze; local-socket topology only; two-stage launch record terminology.
@@ -133,7 +134,7 @@ For every normal stop, cancellation, revocation requiring termination, construct
 
 Denying new operation admission is mandatory on entry and is distinct from releasing grant records. `agentbound-lifecycle` MUST NOT release gateway/credential records before descendant termination is complete unless early revocation is needed to contain an immediate remote effect. In that exception it MUST record the ordering deviation, revoke early, and continue process termination.
 
-`cgroup.kill` sends `SIGKILL` to current cgroup members; it neither reaps zombies nor terminates an uninterruptible D-state task, and membership is containment evidence rather than proof against a task that left the cgroup (hence step 5). `agentbound-lifecycle` MUST use a configurable bounded wait for cgroup emptiness, PID-namespace-init exit, and relevant pidfds. If a task remains live at the bound, it MUST mark the session `termination-incomplete`, retain all identity allocation and grants needed for safe containment decisions, and continue observation or operator escalation. A manifest-declared **termination deadline** bounds this state: a session still `termination-incomplete` at the deadline is a **non-pass** for the affected test and a mandatory operator escalation; the identity remains held regardless. It MUST NEVER release an execution identity while a live process remains in its declared managed reclamation domain.
+`cgroup.kill` sends `SIGKILL` to current cgroup members; it neither reaps zombies nor terminates an uninterruptible D-state task, and membership is containment evidence rather than proof against a task that left the cgroup (hence step 5). `agentbound-lifecycle` MUST use a configurable bounded wait for cgroup emptiness, PID-namespace-init exit, and relevant pidfds. If a task remains live at the bound, it MUST mark the session `termination-incomplete`, retain all identity allocation and grants needed for safe containment decisions, and continue observation or operator escalation. A manifest-declared **termination deadline** bounds this state: a session still `termination-incomplete` at the deadline is a **non-pass** for the affected test and emits `session.escalation_required` naming the held pidfds; the operator's only permitted actions are continued observation or a host reboot, and the identity remains held across reboot via the allocator store. It MUST NEVER release an execution identity while a live process remains in its declared managed reclamation domain.
 
 ---
 
@@ -296,13 +297,8 @@ A configuration that omits a required dependency for a claimed property MUST mar
 
 ---
 
-## 10. Open questions for WP0 review
+## 10. Open questions
 
-1. What exact systemd and kernel version set defines the supported semantics for `cgroup.freeze`, `cgroup.kill`, pidfds, and scope recovery?
-2. On the pinned baseline, does a frozen cgroup hold a `SOCK_SEQPACKET` connection open in a way that delays the gateway's zero-connection acknowledgement, and should quiesce therefore close idle gateway connections before freezing?
-3. What trust anchor, correction procedure, and retention policy seal the launch-record store?
-4. Which control-plane outage modes may safely use `continue-degraded`, and what minimum local evidence is required?
-5. How is audit-pipeline backpressure represented in the manifest and status API?
-6. What operator escalation path handles persistent D-state tasks without violating the identity hold rule?
-7. Which lifecycle events must be synchronously durable before an externally visible status may advance?
-8. How will the microVM control arm map these states while preserving the substrate-independent lifecycle semantics?
+Seven of the eight WP0 questions are answered in the [open-question register](open-question-register.md) (version set pinned in ADR-0003; store trust anchor and commit points in component interfaces; `continue-degraded` limited to policy-service and sub-threshold audit degradation; backpressure via `audit.loss_behaviour`, `audit_capacity`, and status counters; D-state escalation in §5; microVM state mapping in ADR-0003). One is carried to WP1:
+
+- **LC-2** — does a frozen cgroup hold a `SOCK_SEQPACKET` connection open in a way that delays the gateway's zero-connection acknowledgement? If so, quiesce closes idle gateway connections before freezing and §6 is revised.

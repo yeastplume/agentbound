@@ -1,6 +1,6 @@
 # Phase 1 Normative Requirements
 
-**Version:** 0.3  
+**Version:** 0.4  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
@@ -9,6 +9,7 @@
 
 ## Revision history
 
+- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Evaluation-arm manifests: attribution `required`, audit-loss *stop*; `nosuid,nodev` plus image digest; per-key approval sequence; sixth SLOC figure.
 - **0.3** — R-ID-8 restated with the two identifiers; R-GW-1 covers `channel_topology: none` at 1A; pinned versions aligned with ADR-0003 0.3.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Local-socket topology only (ADR-0002 0.2); `agentbound-lifecycle` daemon replaces the systemd-invoked helper; `loginuid` made corroborating evidence with one fail rule; storage bounds restated for tmpfs/images; quiesce redefined; termination deadline; SLOC accounting rules; attribution metric referenced to the test catalogue; bypass-corpus rule made non-tautological; resource-class milestone matrix; comparative decision rule referenced to ADR-0003.
@@ -55,7 +56,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **R-ID-3 (1A) [Inv 3].** `Auth_session` MUST be produced by `agentbound-policy` through the derivation relation of the technical report, MUST be a subset of `Auth_agent` and of the task's policy-permitted authority, and MUST be recorded with every derivation input identity and version in the launch record.
 
-**R-ID-4 (1A) [Inv 3].** Derivation MUST fail closed on any unauthenticated, expired, revoked, replayed, or unknown input, and MUST emit an audit event naming the failed input. Approval objects MUST carry an expiry and a nonce or sequence that prevents replay.
+**R-ID-4 (1A) [Inv 3].** Derivation MUST fail closed on any unauthenticated, expired, revoked, replayed, or unknown input, and MUST emit an audit event naming the failed input. Approval objects MUST carry an expiry and a per-approver-key monotonic sequence; `agentbound-policy` MUST persist the highest accepted sequence per key in its append-only store and reject any lower or equal value.
 
 **R-ID-5 (1A) [Inv 3].** A recipient-issued grant (for example a scoped token supplied by a service) MUST NOT expand `Auth_session` beyond `Auth_agent`.
 
@@ -91,11 +92,11 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **R-CON-3 (1A) [Inv 6, 15].** Before `exec`, the constructor MUST close every descriptor not on the allowlist, MUST install the execution identity and supplementary groups, MUST drop the capability bounding set to the manifest's set (empty by default), MUST set `no_new_privs`, and MUST apply the Landlock and seccomp policies named in the manifest. Seccomp filters MUST be installed with `SECCOMP_FILTER_FLAG_TSYNC`.
 
-**R-CON-4 (1A) [Inv 6].** The session's world MUST contain no set-UID or set-GID executables, no file capabilities, no writable path into the cgroup hierarchy, no systemd or container-runtime socket, and no broker socket other than the one named by the channel topology.
+**R-CON-4 (1A) [Inv 6].** The session's world MUST contain no set-UID or set-GID executables (every session mount is `nosuid,nodev` and the runtime image digest is verified against the catalogue), no file capabilities, no writable path into the cgroup hierarchy, no systemd or container-runtime socket, and no broker socket other than the one named by the channel topology.
 
 **R-CON-5 (1A) [Inv 15].** Every launch-only capability (`CAP_SETUID`, `CAP_SETGID`, `CAP_SYS_ADMIN`, `CAP_AUDIT_CONTROL`, `CAP_MAC_ADMIN`, and any other held) MUST be dropped before untrusted code executes. The evaluation report MUST enumerate the post-launch privileged operations of `agentbound-lifecycle`.
 
-**R-CON-6 (1A) [Inv 13].** `loginuid` is **corroborating** audit metadata, not the authoritative session attribution key; that key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). The constructor MUST attempt to set `loginuid` in the child before `exec` when the pinned host baseline permits it and the child's value is unset; the result (set, immutable, already-set, denied) MUST be recorded in the launch binding. When the manifest's attribution policy is `required` and `loginuid` cannot be set, construction MUST fail; otherwise the condition is a recorded residual assumption. No other behaviour is permitted.
+**R-CON-6 (1A) [Inv 13].** `loginuid` is **corroborating** audit metadata, not the authoritative session attribution key; that key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). The constructor MUST attempt to set `loginuid` in the child before `exec` when the pinned host baseline permits it and the child's value is unset; the result (set, immutable, already-set, denied) MUST be recorded in the launch binding. When the manifest's attribution policy is `required` (mandatory for every Linux evaluation-arm manifest) and `loginuid` cannot be set, construction MUST fail; otherwise the condition is a recorded residual assumption. No other behaviour is permitted.
 
 **R-CON-7 (1A).** Credentials and broker access MUST become usable only after every boundary is in place and the launch record is committed. The runtime MUST be exec'd last.
 
@@ -183,7 +184,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **R-AUD-2 (1B) [Inv 13].** For the defined effect ontology (local objects in the session's world, process lifecycle events, gateway operations), `agentbound-audit` MUST reconstruct `initiator → agent → session → process → effect` and the report MUST state the fraction reconstructed, computed by the metric definition and load profiles in the [test catalogue](test-catalogue.md), against the threshold in §12.
 
-**R-AUD-3 (1A) [Inv 13].** `agentbound-audit` MUST expose loss counters. The manifest MUST declare audit-loss behaviour (*stop*, *quarantine*, or *continue-with-counter*); the profile that claims attribution SHOULD select *stop* or *quarantine*.
+**R-AUD-3 (1A) [Inv 13].** `agentbound-audit` MUST expose loss counters. The manifest MUST declare audit-loss behaviour (*stop*, *quarantine*, or *continue-with-counter*); the profile that claims attribution SHOULD select *stop* or *quarantine*. Every evaluation-arm manifest MUST declare *stop*; *continue-with-counter* is exercised only by T-6.9-007 and reported separately.
 
 **R-AUD-4 (1A).** The launch-record store MUST be append-only with a stated trust anchor, clock source, retention, and correction procedure; corrections MUST be new records referencing the original, never edits.
 
@@ -211,7 +212,7 @@ These values are fixed before any test runs and MAY be changed only by a recorde
 | Adversary matrix | One row per suite, capabilities as in §2 | R-THREAT-1 |
 | Bypass corpus | 100% of enumerated tests reach their expected preventive outcome for the gate to pass; any reproducible bypass fails the gate; unexplained nondeterminism is a failure pending investigation; repetitions pinned in the test catalogue; every attempt retained | Inv 6, 10, 12, 17 |
 | Attribution completeness | ≥ 99% correct full-chain reconstructions / in-scope ground-truth effects under the catalogue's nominal profile; 100% over the finite gateway-operation corpus per run; overload profile reported with loss counters; denominator, dedup, and correlation deadline per test catalogue | R-AUD-2 |
-| Privileged-code reviewability bound | `agentbound-launch` + `agentbound-lifecycle` (including allocator) + gateway authentication path ≤ 6 000 **direct** SLOC. SLOC accounting: pinned counting tool and version; five separately reported figures — direct privileged SLOC, generated SLOC, transitive dependency SLOC in privileged processes, configuration/rule SLOC (seccomp, Landlock, systemd units, D-Bus policy), and SLOC in a language without memory safety by default (allowed only with a listed justification per file). The bound applies to the first figure; all five are published | R-CON-8 |
+| Privileged-code reviewability bound | `agentbound-launch` + `agentbound-lifecycle` (including allocator) + gateway authentication path ≤ 6 000 **direct** SLOC. SLOC accounting: pinned counting tool and version; five separately reported figures — direct privileged SLOC, generated SLOC, transitive dependency SLOC in privileged processes, configuration/rule SLOC (seccomp, Landlock, systemd units, D-Bus policy), and SLOC in a language without memory safety by default (allowed only with a listed justification per file). The bound applies to the first figure; all five are published, plus a sixth unbounded figure, gateway core SLOC (dispatch and adapters), which is reviewed line by line but not bounded in Phase 1 | R-CON-8 |
 | Policy-exception rate | Zero manifest fields overridden by administrators outside the catalogue during the evaluation run; every privileged manual repair recorded | Gate 4 |
 | Fault-injection coverage | Every fault point in the test catalogue's finite inventory (F-C-01…09, F-T-01…11) injected at least once; after each, no live process, usable grant, mount, or unsealed record; sealed failed records are the only permitted remnant; reconciliation completes within the catalogue deadline | R-CON-1, R-ISO-4 |
 | Pinned versions | Linux 6.12 LTS series (exact patch release recorded; `openat2`, new mount API, pidfd, `SOCK_SEQPACKET` credentials verified per ADR-0002 Decision 7), systemd 258 series (exact release recorded), LSM policy digest, Firecracker v1.16.1 and the ADR-0003 `pinned-configuration.json` digest (control arm), Git host version; recorded in the evaluation report and unchanged within a run | all |
@@ -230,10 +231,6 @@ These values are fixed before any test runs and MAY be changed only by a recorde
 
 ---
 
-## 14. Open questions for WP0 review
+## 14. Open questions
 
-1. Should the gateway core (operation dispatch, excluding adapters) join the authentication path inside the 6 000-line direct bound?
-2. Should R-AUD-3 mandate *stop* for the Linux arm during evaluation so that attribution completeness is measured without loss, with *continue-with-counter* measured separately?
-3. Does R-ID-4's replay protection for approvals need a server-side nonce store, or is a signed sequence sufficient for Phase 1's file-backed policy stub?
-4. Should R-CON-4's "no set-ID executables" be enforced by mounting the base filesystem `nosuid` (simple, coarse) or by image verification (stronger, more work)?
-5. Should the manifest attribution policy default to `required` for the whole Linux evaluation arm (ADR-0002 open question 1)?
+None. The five WP0 questions are answered in the [open-question register](open-question-register.md) and written into R-ID-4, R-CON-4, R-CON-6, R-AUD-3, and §12.

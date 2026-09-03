@@ -1,6 +1,6 @@
 # Agentbound Manifest Schema
 
-**Version:** 0.3
+**Version:** 0.4
 **Status:** Draft for WP0 review
 **Date:** 28 August 2026
 **Applies to:** the Unix-governed reference implementation and its microVM control arm
@@ -12,6 +12,7 @@
 | 0.1 | 28 August 2026 | Initial effective-manifest draft. |
 | 0.2 | 28 August 2026 | Replaces one effective-manifest object with policy-signed authorization and constructor-signed launch-binding objects. |
 | 0.3 | 28 August 2026 | Gateway-free form `channel_topology: none` (the only form constructible at 1A); two distinct identifiers `authorization_id` (policy-issued) and `launch_record_digest` (pair-derived) with a per-use table in §4; correspondence check 5 extended to topology. |
+| 0.4 | 28 August 2026 | Open questions disposed per the open-question register; answers written into the normative text. `mac_context` null in Profile U; invocation-profile digest recorded. |
 
 ---
 
@@ -280,7 +281,7 @@ Raw universal capability strings are forbidden. The result MUST be no broader
 than agent authority, task/policy permission, and initiator delegation bounds.
 
 `runtime.artifact_digest` MUST be `sha256:<lowercase-hex>`.
-`runtime.invocation_profile` is a catalogue name, not a caller command-line.
+`runtime.invocation_profile` is a catalogue name, not a caller command-line; the catalogue entry holds the argv template and environment allowlist, and the constructor records that entry's digest in the binding's `constructor` member.
 The constructor MUST resolve executable and arguments only from that profile.
 
 `execution_binding` MUST contain `adapters`, `endpoint`, `inference_pool`,
@@ -398,7 +399,7 @@ resource_projection
 
 `execution_identity` MUST contain `allocation_id`, `gids`, `mac_context`, and
 `uid`. `uid` is a non-negative integer. `gids` is a non-empty unique array of
-no more than 32 non-negative integers. `mac_context` is `null` or an opaque,
+no more than 32 non-negative integers. `mac_context` MUST be `null` in Profile U (a non-null value is a construction failure in Phase 1); in other profiles it is an opaque,
 policy-approved context. The identity is unique for active sessions and reusable
 only after verified reclamation and quarantine under ADR-0001.
 
@@ -567,17 +568,6 @@ outside the typed operation scope and MUST fail.
 
 ---
 
-## 7. Open questions for WP0 review
+## 7. Open questions
 
-1. Which concrete schema language (JSON Schema, CDDL, or both) should be the
-   machine-readable companion to this normative data model?
-2. What authoritative clock, freshness tolerance, and key-rotation procedure
-   should govern the policy and constructor signature envelopes?
-3. Does the first implementation reserve `mac_context` as `null`, or require a
-   concrete MAC projection before any non-Unix-governed profile is admitted?
-4. Which resource classes are explicitly absent in the first deployment, and
-   what evidence is required before an omitted class may be declared absent?
-5. What immutable representation should record a policy-approved runtime command
-   without allowing a caller to inject executable paths or arguments?
-6. Which launch-record retention class is sufficient to disambiguate execution
-   UID reuse while minimizing retention of potentially sensitive audit data?
+None. The six WP0 questions are answered in the [open-question register](open-question-register.md): JSON Schema 2020-12 normative (schemas are WP1 outputs; this prose governs until 1A); clock and freshness per component interfaces §4; `mac_context` null in Profile U; absent classes per R-RES-5; invocation profile digest recorded; retention until identity leaves quarantine and every numeric-UID reference is reconciled.

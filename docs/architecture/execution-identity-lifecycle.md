@@ -1,6 +1,6 @@
 # Execution-Identity Lifecycle Specification
 
-**Version:** 0.3  
+**Version:** 0.4  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -8,6 +8,7 @@
 
 ## Revision history
 
+- **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Reference range 200000–299999; ID-1 carried to WP1.
 - **0.3** — Identifier terminology aligned with manifest schema §4.
 - **0.1** — Initial WP0 draft.
 - **0.2** — Allocator placed inside the `agentbound-lifecycle` daemon; helper references replaced; `loginuid` restated as corroborating evidence with the single R-CON-6 fail rule; host credential scan retained as a reclamation precondition.
@@ -59,7 +60,7 @@ UID range: 200000–299999 inclusive
 GID range: 200000–299999 inclusive
 ```
 
-The range is configurable only through host administrator configuration before allocation begins. It MUST be disjoint from local human, service, and durable-principal ownership UIDs/GIDs. `agentbound-policy` requests no numeric UID, GID, path, or group from an untrusted request; `agentbound-launch` obtains the allocation only after it verifies and accepts a committed authorization manifest; it then emits the allocation-bound launch binding.
+The reference range is 200000–299999 (100 000 identities), configurable only through host administrator configuration before allocation begins. It MUST be disjoint from local human, service, and durable-principal ownership UIDs/GIDs. `agentbound-policy` requests no numeric UID, GID, path, or group from an untrusted request; `agentbound-launch` obtains the allocation only after it verifies and accepts a committed authorization manifest; it then emits the allocation-bound launch binding.
 
 The allocator MUST reject a configured range that overlaps known durable-owner mappings, existing system/service accounts, or another active allocator range. Host provisioning MUST reserve the range from ordinary account-management tooling.
 
@@ -304,13 +305,8 @@ Each allocator event MUST include allocation record ID, authorization ID, host I
 
 ---
 
-## 13. Open questions for WP0 review
+## 13. Open questions
 
-1. Is the default range large enough for the expected concurrency and quarantine backlog on the reference host?
-2. What exact allocator-store implementation supplies append-only integrity, atomic compare-and-set, backup, and recovery properties?
-3. Which host paths must the manifest require as registered to make the managed domain reviewable without becoming unbounded?
-4. Which object types are allowed to be transferred rather than deleted during reclamation, and who authorizes that transfer?
-5. How does backup tooling preserve required global/session metadata and prevent numeric-owner-based restore authorization?
-6. What constitutes authoritative confirmation from each broker and `agentbound-gateway` implementation when it is unavailable during reclamation?
-7. What configured quarantine floor and audit-sealing semantics are adequate for the reference deployment?
-8. Which MAC allocation fields belong in the shared allocator record when the compartmented profile is evaluated?
+Seven of the eight WP0 questions are answered in the [open-question register](open-question-register.md) (reference range 200000–299999; registered paths are exactly the workspace image, runtime tmpfs, launch-record store, allocator store, and audit spool; only the workspace image may be transferred; backup metadata carries `authorization_id`, `launch_record_digest`, and durable-principal ID; no substitute confirmation when a broker or gateway is unavailable; quarantine floor 24 h plus audit sealing; no MAC fields in Profile U). One is carried to WP1:
+
+- **ID-1** — allocator-store prototype (candidate: single-writer SQLite in WAL mode with a hash-chained record table) verified crash-consistent under the F-C/F-T fault points; failure selects an alternative store and revises §3.

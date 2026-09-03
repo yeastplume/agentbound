@@ -1,13 +1,14 @@
 # ADR-0002: Gateway channel topology and session authentication
 
 **Status:** Accepted for Phase 1 (topology and mechanism selected); WP1 spike verifies kernel-baseline assumptions listed in Decision 7  
-**Version:** 0.3  
+**Version:** 0.4  
 **Date:** 28 August 2026  
 **Applies to:** Unix-governed profile, milestones 1B–1C; microVM projection per ADR-0003  
 **Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md) §3.3, §4.2, §6.3–6.4; [technical report](../papers/technical-report.md) §3.2, §5; [manifest schema](manifest-schema.md); [component interfaces](component-interfaces.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0003](ADR-0003-control-substrate.md)
 
 ## Revision history
 
+- **0.4** — Decision 1 heading names both legal topology values; attribution policy `required` for the evaluation arm; open questions closed via the register.
 - **0.1** — Proposed two mutually exclusive Linux-arm topologies (network Candidate N with mTLS/broker; local-socket Candidate L) and deferred selection to WP1.
 - **0.3** — One connection per process: every packet's credential PID must equal the establishing PID; inherited or passed descriptors close the connection. Identifier terminology aligned with manifest schema §4 (`authorization_id` / `launch_record_digest`).
 - **0.2** — Selected Candidate L for Phase 1. Candidate N withdrawn from Phase 1 because it cannot satisfy the per-operation process leg of Invariant 13; deferred to a future multi-host ADR. Socket type fixed as `SOCK_SEQPACKET`; per-packet `SCM_CREDENTIALS`; descriptor transfer prohibited; `SO_PEERCRED` wording corrected; vsock CID lifetime rules added; WP1 scope narrowed to kernel-baseline verification.
@@ -28,7 +29,7 @@ No single conventional mechanism does this:
 
 Version 0.1 of this ADR kept a network topology (Candidate N) open alongside the local-socket topology (Candidate L). Review showed that N's authentication mechanisms (per-session mTLS, veth-mapping broker) can reach session-level attribution only. Keeping N while requiring the process leg made the ADR's own selection criterion decide the question implicitly. This revision decides it explicitly.
 
-## Decision 1: Phase 1 uses the local-socket topology only
+## Decision 1: Phase 1 permits no channel or the local-socket topology only
 
 ```text
 session (no network interface, including loopback)
@@ -53,7 +54,7 @@ Authentication of the connection and attribution of each operation are separate 
 
 **One connection per process.** `SCM_RIGHTS` on the gateway protocol MUST be rejected. Every packet's credential PID MUST equal the connection's establishing PID and resolve to the same pidfd/start time; any other credential PID — whether the descriptor was inherited across `fork`, passed, or leaked — closes the connection with `gateway.process_mismatch` and denies the operation. Children and other processes in the session open their own connections, each authenticated per the paragraph above. The gateway cannot distinguish a passed descriptor from an inherited one, so this rule does not depend on knowing how the descriptor was acquired. Cross-allocation use fails the allocation check and is a conformance failure if accepted.
 
-**pidfd unavailability.** If the pinned kernel cannot supply pidfds or process start time for the credential PID, the constructor MUST record the condition as a residual assumption in the launch record and the gateway MUST refuse the connection when the manifest's attribution policy is `required`. It MUST NOT fall back to PID alone silently.
+**pidfd unavailability.** If the pinned kernel cannot supply pidfds or process start time for the credential PID, the constructor MUST record the condition as a residual assumption in the launch record and the gateway MUST refuse the connection when the manifest's attribution policy is `required`. It MUST NOT fall back to PID alone silently. For every Linux evaluation-arm run the attribution policy is `required`, so Invariant 13 is measured without this residual assumption; a production manifest choosing `best-effort` records the assumption.
 
 ## Decision 3: caller and operation authority
 
@@ -161,7 +162,6 @@ Rejected. They control opening the path but provide no durable process identity 
 
 Rejected. Two effect paths enlarge the bypass surface and violate the single-channel property.
 
-## Open questions for WP0 review
+## Open questions
 
-1. Should the manifest's attribution policy default to `required` (refuse connections without pidfd evidence) for the entire Linux evaluation arm, so that Invariant 13 is measured without a residual assumption?
-2. Is a guest-side witness for the VM arm worth building in 1D, so that both arms claim the same Invariant 13 leg, or is the pre-registered difference acceptable for the comparative claim?
+None. Both WP0 questions are answered in the [open-question register](open-question-register.md) (attribution policy `required` for the evaluation arm; no guest-side witness in Phase 1). Kernel-baseline items are in Decision 7.

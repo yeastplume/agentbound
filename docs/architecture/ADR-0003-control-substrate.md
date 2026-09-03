@@ -1,6 +1,6 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Version:** 0.3
+**Version:** 0.4
 **Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built
 **Date:** 28 August 2026
 **Applies to:** Phase 1 milestone 1D control arm
@@ -8,6 +8,7 @@
 
 ## Revision history
 
+- **0.4** — Unblinding and operator-familiarity recording; per-ID `control-arm-register.md` as a 1D prerequisite; open questions disposed via the register.
 - **0.1** — Initial Firecracker control-arm definition and group-level pre-registration.
 - **0.3** — Status reconciled with the architecture README; version pins, guest init, guest audit source, comparative thresholds, confidence method, operator script, VM instance token format, and SLOC comparability rule filled in; open questions reduced to WP1 verification items.
 - **0.2** — Froze the Linux local-socket and Firecracker/vsock configurations; added vsock CID-lifetime binding, per-atomic-test classification rules, comparative decision rule, per-arm code accounting; configuration values left open for 0.3.
@@ -67,7 +68,7 @@ creates one microVM per session. The pinned set is:
 | vCPU / memory | 1 vCPU, 512 MiB, no balloon |
 | Snapshot/restore | disabled |
 
-Every value MUST be written to `pinned-configuration.json` (schema: item,
+Before the first 1D run the per-ID expanded classification register (one row per test-catalogue ID) MUST be generated from the group rules in this ADR and committed as `control-arm-register.md`; it is an execution prerequisite of milestone 1D, and no reclassification is permitted after it is committed. Every value MUST be written to `pinned-configuration.json` (schema: item,
 value, digest, source) before the first control-arm run, and the file's own
 digest MUST be cited by every control-arm evidence record. A change to any
 item starts a new, separately labelled run set.
@@ -266,7 +267,7 @@ if both conditions below hold.
    |---|---|
    | p95 session construction-plus-teardown latency (D-01 workload, cold start, `requested` → `sealed`) | 50% |
    | steady-state RSS per idle session after 60 s (Linux: cgroup `memory.current`; VM: VMM RSS + guest `MemTotal − MemAvailable`, reported separately and summed) | 50% |
-   | scripted operator task: "find why session X was denied, terminate it, confirm reclamation" — wall time and step count, run by three operators blind to arm | 25% on both time and steps |
+   | scripted operator task: "find why session X was denied, terminate it, confirm reclamation" — wall time and step count, run by three operators blind to arm; operational artefacts (unit names, process trees, latency) may reveal the substrate, so the report MUST record any observed unblinding and each operator's prior familiarity with either arm | 25% on both time and steps |
 
    The workload is the D-01 scenario with the T-6.9-001 fan-out disabled; the
    operator script is committed alongside the test catalogue before any run.
@@ -328,6 +329,8 @@ prevent milestone 1D from supplying the Phase 2 decision input.
 
 ## Open questions carried to WP1
 
+Items 1 and 3 are WP1 verification items *VM-1* and *VM-2* in the [open-question register](open-question-register.md); item 2 is answered there.
+
 1. Does the pinned 6.12 patch release expose vsock peer-CID reporting sufficient for the host endpoint binding, or does the binding require the VMM's own connection table?
-2. What guest-side witness, if any, can support a future separately pre-registered VM per-process attribution claim?
+2. *(answered — no witness in Phase 1; the pre-registered arm difference stands; see the [open-question register](open-question-register.md))*
 3. Are the five SLOC figures comparable across arms once the VMM, jailer, and guest init are counted? If the pinned tool cannot attribute Firecracker's transitive Rust dependencies consistently, cross-arm SLOC is disclosed per arm and excluded from the decision rule (already the rule in the accounting section; WP1 confirms whether the exclusion is triggered).

@@ -1,6 +1,6 @@
 # Phase 1 Test Catalogue
 
-**Version:** 0.2  
+**Version:** 0.3  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Governs:** Agentbound milestones 1A–1D  
@@ -10,6 +10,7 @@
 
 ## Revision history
 
+- **0.3** — Control-arm column points to the committed per-ID register as a 1D prerequisite.
 - **0.1** — Initial WP0 pre-registration.
 - **0.2** — Gateway-free 1A form (`channel_topology: none`) applied to 1A tests; load profiles, correlation deadlines, and repetition seeds fixed; T-6.4 rows rewritten for the local-socket corpus; one-connection-per-process rule in T-6.4-007; control-arm column declared to be populated by ADR-0003; identifier terminology aligned.
 
@@ -398,7 +399,8 @@ earlier failure.
 The **Control arm** column in every table above is intentionally empty in this
 document: the authoritative, populated classification of each test ID is the
 per-test register in [ADR-0003](ADR-0003-control-substrate.md), which MUST be
-complete before any microVM result is recorded. WP0 review MUST confirm that
+expanded into the committed per-ID `control-arm-register.md` before any microVM
+result is recorded (ADR-0003 execution prerequisite). WP0 review MUST confirm that
 every applicable invariant has a named test and that the finite local-socket
 gateway corpus includes every row in §7.4. Load-profile constants and
 correlation deadlines in §5 are frozen by this version; changing them
