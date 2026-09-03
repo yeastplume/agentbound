@@ -1,6 +1,6 @@
 # Execution-Identity Lifecycle Specification
 
-**Version:** 0.6  
+**Version:** 0.7  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -14,6 +14,7 @@
 - **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Reference range 200000–299999; ID-1 carried to WP1.
 - **0.5** — Normative text now states the 24 h quarantine floor (§4.2, administrator may only increase) and the closed five-path registered host domain (§4.1).
 - **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. loginuid paragraph split; Oxford spelling.
+- **0.7** — WP1 finding F-6 ([evidence](../evidence/wp1/audit-loginuid.md)): §6 `loginuid` described as capability-conditional rather than write-once, matching the pinned kernel's configuration. Attribution key unchanged.
 
 
 ---
@@ -159,7 +160,7 @@ Every `agentbound-audit` record about a session MUST pair `execution_uid` with `
 
 Kernel PID/PPID values are not durable process identities because PIDs are reused. Records SHOULD include a PID namespace identifier plus process start time or pidfd-derived identity where available. The systemd scope/cgroup is useful corroboration but is not a portable standalone audit key.
 
-Per technical-report §5, `loginuid` is useful for preserving the account that originally gained access and is inherited by descendants, but it is write-once, inherited across `clone`, and governed by host audit policy; it is therefore **corroborating** evidence only. The authoritative session attribution key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). `agentbound-launch` MUST attempt to set `loginuid` in the barrier-blocked child before exec when the pinned baseline permits it and the child's value is unset. It MUST record the result (set, immutable, already-set, denied) in the launch binding. The single fail rule is R-CON-6 of the requirements: construction fails only when the manifest attribution policy is `required` and the value cannot be set; otherwise the condition is a recorded residual assumption. It MUST NOT silently attribute an inherited value to another actor.
+Per technical-report §5, `loginuid` is useful for preserving the account that originally gained access and is inherited by descendants, but it is inherited across `clone`, governed by host audit policy, and unchangeable only by processes lacking `CAP_AUDIT_CONTROL` (kernel-enforced immutability requires `CONFIG_AUDIT_LOGINUID_IMMUTABLE`, absent from the pinned Debian 13 kernel); it is therefore **corroborating** evidence only. The authoritative session attribution key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). `agentbound-launch` MUST attempt to set `loginuid` in the barrier-blocked child before exec when the pinned baseline permits it and the child's value is unset. It MUST record the result (set, immutable, already-set, denied) in the launch binding. The single fail rule is R-CON-6 of the requirements: construction fails only when the manifest attribution policy is `required` and the value cannot be set; otherwise the condition is a recorded residual assumption. It MUST NOT silently attribute an inherited value to another actor.
 
 The effective UID records the execution identity, not the durable principal. The signed/append-only launch record is the authoritative mapping between them.
 
@@ -310,6 +311,6 @@ Each allocator event MUST include allocation record ID, authorization ID, host I
 
 ## 13. Open questions
 
-Seven of the eight WP0 questions are answered in the [open-question register](open-question-register.md) (reference range 200000–299999; registered paths are exactly the workspace image, runtime tmpfs, launch-record store, allocator store, and audit spool; only the workspace image may be transferred; backup metadata carries `authorization_id`, `launch_record_digest`, and durable-principal ID; no substitute confirmation when a broker or gateway is unavailable; quarantine floor 24 h plus audit sealing; no MAC fields in Profile U). One is carried to WP1:
+Seven of the eight WP0 questions are answered in the [open-question register](open-question-register.md) (reference range 200000–299999; registered paths are exactly the workspace image, runtime tmpfs, launch-record store, allocator store, and audit spool; only the workspace image may be transferred; backup metadata carries `authorization_id`, `launch_record_digest`, and durable-principal ID; no substitute confirmation when a broker or gateway is unavailable; quarantine floor 24 h plus audit sealing; no MAC fields in Profile U). One was carried to WP1 and is now answered:
 
-- **ID-1** — allocator-store prototype (candidate: single-writer SQLite in WAL mode with a hash-chained record table) verified crash-consistent under the F-C/F-T fault points; failure selects an alternative store and revises §3.
+- **ID-1** — allocator-store prototype (candidate: single-writer SQLite in WAL mode with a hash-chained record table) verified crash-consistent under the F-C/F-T fault points ([evidence](../evidence/wp1/identity-store.md)): 150 `SIGKILL` rounds, 2 815 acknowledged commits, none lost, chain intact; §3 stands.

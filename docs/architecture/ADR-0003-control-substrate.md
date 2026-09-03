@@ -1,6 +1,6 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Version:** 0.8
+**Version:** 0.9
 **Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built
 **Date:** 28 August 2026
 **Applies to:** Phase 1 milestone 1D control arm
@@ -16,6 +16,7 @@
 - **0.6** — Post-freeze editorial maintenance (no normative change): catalogue described as frozen; typo.
 - **0.7** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Configuration and comparability rules split; owns the microVM, VM-attribution, and register rationale.
 - **0.8** — systemd pin changed from the 258 series to the 257 series as shipped by Debian 13, the reference host distribution; no Phase 1 facility differs between them. Pinned-value change to a frozen artefact, made before any WP1 evidence is recorded.
+- **0.9** — WP1 findings F-6, F-7, F-8 ([evidence](../evidence/wp1/)): kernel row records the absent `CONFIG_AUDIT_LOGINUID_IMMUTABLE`; vsock admission section states the Unix-socket-bridge model and derives the CID from the owning VMM instance, with daemon ownership of the bridge path; SLOC accounting names `tokei 13.0.0-alpha.8` and three symmetric attribution rules; open questions 1 and 3 closed. No binding element removed, no decision-rule change.
 
 
 ## Context
@@ -63,7 +64,7 @@ creates one microVM per session. The pinned set is:
 | Item | Pinned value |
 |---|---|
 | VMM | Firecracker v1.16.1, release binary, SHA-256 recorded |
-| Host kernel (both arms) | Linux 6.12 LTS series, one exact patch release chosen at image build, `CONFIG_SECCOMP_FILTER`, `CONFIG_CGROUP_FREEZER`, `CONFIG_VSOCKETS`, `CONFIG_VHOST_VSOCK`, `CONFIG_AUDIT`, Landlock enabled |
+| Host kernel (both arms) | Linux 6.12 LTS series, one exact patch release chosen at image build, `CONFIG_SECCOMP_FILTER`, `CONFIG_CGROUP_FREEZER`, `CONFIG_VSOCKETS`, `CONFIG_VHOST_VSOCK`, `CONFIG_AUDIT`, Landlock enabled; `CONFIG_AUDIT_LOGINUID_IMMUTABLE` is **not** enabled in Debian 13's kernel (WP1 finding F-6), so `loginuid` immutability rests on sessions never holding `CAP_AUDIT_CONTROL` |
 | Guest kernel | Same 6.12 patch release, Firecracker microvm config, `CONFIG_VIRTIO_VSOCKETS`, `CONFIG_AUDIT` |
 | systemd (host) | 257 stable series as shipped by Debian 13, one exact release recorded. *Rationale:* the reference host is a Debian 13 VM; every systemd facility Phase 1 depends on (`cgroup.freeze`/`cgroup.kill` via scopes, pidfd-based process tracking, scope `UnitRemoved`/`PropertiesChanged` signals) is present and unchanged in 257, and a stable distribution pin is more reproducible than a hand-backported 258 |
 | Guest rootfs | Minimal Debian-derived image built reproducibly from a committed manifest; ext4, read-only; SHA-256 recorded |
@@ -103,9 +104,9 @@ its results MUST NEVER be pooled with Firecracker results.
 
 ### VM identity, CID lifetime, and vsock admission
 
-The host endpoint MUST bind every accepted vsock connection to all of:
+Firecracker exposes its vsock device to the host as a Unix-socket bridge: a guest connection to host port *P* arrives as an `AF_UNIX` connection from the VMM process to `<uds_path>_P`; no `AF_VSOCK` endpoint and no guest CID are present on the host side of that connection (WP1 finding F-7, [evidence](../evidence/wp1/vsock-cid.md)). `agentbound-lifecycle` MUST own the bridge socket directory and give each VM instance its own `uds_path`, so that only that VMM can connect to it. The host endpoint MUST bind every accepted bridge connection to all of:
 
-- the host-observed guest CID;
+- the guest CID configured for the VMM instance that owns the connection, established from `SO_PEERCRED` on the accepted connection and the held VMM pidfd (a CID is never read from the connection itself);
 - a non-reusable VM instance token: 128 bits from the host CSPRNG, generated
   by `agentbound-lifecycle` at VM launch, recorded in the launch binding's
   `host_binding`, passed to the guest only via the Firecracker boot arguments,
@@ -234,8 +235,8 @@ RSS**, reported separately and summed for the VM arm. The report MUST state the 
 measured as a supported lifecycle capability.
 
 Trusted-code size MUST be reported per arm under identical, tool-pinned SLOC
-rules. The report MUST separately count direct privileged code, generated code,
-transitive dependencies, configuration-rule code, and unsafe-language code. VM
+rules. The pinned tool is `tokei 13.0.0-alpha.8`, counting code lines only. The report MUST separately count direct privileged code, generated code,
+transitive dependencies, configuration-rule code, and unsafe-language code. Three accounting rules apply to both arms (WP1 finding F-8, [evidence](../evidence/wp1/sloc-arms.md)): the transitive figure counts source *present* in each crate resolved by `cargo tree -e normal` from the pinned lockfile and stated feature set, with a source-*compiled* figure reported secondarily where build introspection yields it; generated code inside third-party crates is identified by a published per-arm allowlist of generated paths, since upstreams commit generator output as ordinary source; and the dependency feature set for each binary is pinned alongside the lockfile. VM
 trusted code MUST include the VMM, jailer, guest init, and configuration as well
 as launcher and gateway-related trusted components. If these accounting rules
 cannot yield comparable measurements, code size MUST NOT be used as a cross-arm
@@ -318,8 +319,8 @@ prevent milestone 1D from supplying the Phase 2 decision input.
 
 ## Open questions carried to WP1
 
-Items 1 and 3 are WP1 verification items *VM-1* and *VM-2* in the [open-question register](open-question-register.md); item 2 is answered there.
+Items 1 and 3 were WP1 verification items *VM-1* and *VM-2* in the [open-question register](open-question-register.md) and are now answered; item 2 was answered there earlier.
 
-1. Does the pinned 6.12 patch release expose vsock peer-CID reporting sufficient for the host endpoint binding, or does the binding require the VMM's own connection table?
+1. *(answered by WP1, VM-1 — the binding uses the VMM connection: Firecracker's vsock is a Unix-socket bridge and the CID is derived from the owning VMM instance; wording in the vsock admission section updated accordingly)*
 2. *(answered — no witness in Phase 1; the pre-registered arm difference stands; see the [open-question register](open-question-register.md))*
-3. Are the five SLOC figures comparable across arms once the VMM, jailer, and guest init are counted? If the pinned tool cannot attribute Firecracker's transitive Rust dependencies consistently, cross-arm SLOC is disclosed per arm and excluded from the decision rule (already the rule in the accounting section; WP1 confirms whether the exclusion is triggered).
+3. *(answered by WP1, VM-2 — attribution is consistent across arms under the rules now in the accounting section; the exclusion from the decision rule stands on the numbers themselves: Firecracker v1.16.1 direct 77 904 + jailer 3 494, transitive ≈2.82 M of which ≈1.29 M is C/C++/assembly from AWS-LC via `aws-lc-rs`, used only for randomness; see the [evidence](../evidence/wp1/sloc-arms.md))*

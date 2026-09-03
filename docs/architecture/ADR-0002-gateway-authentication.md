@@ -1,7 +1,7 @@
 # ADR-0002: Gateway channel topology and session authentication
 
 **Status:** Accepted for Phase 1 (topology and mechanism selected); WP1 spike verifies kernel-baseline assumptions listed in Decision 7  
-**Version:** 0.6  
+**Version:** 0.7  
 **Date:** 28 August 2026  
 **Applies to:** Unix-governed profile, milestones 1B–1C; microVM projection per ADR-0003  
 **Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md) §3.3, §4.2, §6.3–6.4; [technical report](../papers/technical-report.md) §3.2, §5; [manifest schema](manifest-schema.md); [component interfaces](component-interfaces.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0003](ADR-0003-control-substrate.md)
@@ -14,6 +14,7 @@
 - **0.4** — Decision 1 heading names both legal topology values; attribution policy `required` for the evaluation arm; open questions closed via the register.
 - **0.5** — Post-freeze editorial maintenance (no normative change): Decision 1 heading; per-packet and one-connection rules merged into one check; "session scope" used consistently.
 - **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Decisions split into one rule per sentence; network-topology rationale reduced to one sentence.
+- **0.7** — WP1 finding F-1 ([evidence](../evidence/wp1/seqpacket-creds.md)): process-instance comparison key is the pidfs inode; start time made corroborating because `/proc` start time has 10 ms granularity. Binding tuple and diagnostics fields extended accordingly; no other obligation changed.
 
 
 ## Context
@@ -51,9 +52,9 @@ The network topology is **withdrawn from Phase 1**, not rejected in principle. I
 
 Authentication of the connection and attribution of each operation are separate steps with separate evidence.
 
-**Connection establishment.** Immediately after `accept`, the gateway MUST read `SO_PEERCRED`. The gateway MUST resolve the reported PID to a pidfd (`pidfd_open`) and read its start time and PID-namespace identity. If the process has exited or the start time does not match, the connection MUST be closed unauthenticated. The gateway binds `(pidfd, start time, UID, GID, PID namespace, session scope, boot ID)` to exactly one active execution-identity allocation and launch record via `agentbound-lifecycle`'s authoritative index. A UID that maps to no active allocation, or to an allocation in `reclaiming` or `quarantined`, MUST be refused.
+**Connection establishment.** Immediately after `accept`, the gateway MUST read `SO_PEERCRED`. The gateway MUST resolve the reported PID to a pidfd (`pidfd_open`) and read the pidfd's process-instance identity (the pidfs inode, `fstat(pidfd).st_ino`, unique per process instance on the pinned baseline), its start time, and its PID-namespace identity. If the process has exited or the instance identity does not match, the connection MUST be closed unauthenticated. Start time is corroborating only: `/proc` reports it at `CLK_TCK` granularity (10 ms), so a PID recycled within one tick can present an identical start time (WP1 finding F-1). The gateway binds `(pidfd, pidfs inode, start time, UID, GID, PID namespace, session scope, boot ID)` to exactly one active execution-identity allocation and launch record via `agentbound-lifecycle`'s authoritative index. A UID that maps to no active allocation, or to an allocation in `reclaiming` or `quarantined`, MUST be refused.
 
-**Every operation.** The gateway MUST enable `SO_PASSCRED` before reading any data. Each packet MUST carry exactly one kernel-supplied `SCM_CREDENTIALS` control message. Packets with zero or more than one MUST be rejected. The credential PID MUST equal the connection's establishing PID. It MUST resolve to the same pidfd/start time, UID, PID namespace, and session scope as the connection's bound allocation. Any mismatch denies the operation, closes the connection, and emits `gateway.process_mismatch`. The per-packet credential is the process identity recorded against the effect.
+**Every operation.** The gateway MUST enable `SO_PASSCRED` before reading any data. Each packet MUST carry exactly one kernel-supplied `SCM_CREDENTIALS` control message. Packets with zero or more than one MUST be rejected. The credential PID MUST equal the connection's establishing PID. It MUST resolve to the same process instance (pidfs inode; pidfd and start time corroborate), UID, PID namespace, and session scope as the connection's bound allocation. Any mismatch denies the operation, closes the connection, and emits `gateway.process_mismatch`. The per-packet credential is the process identity recorded against the effect.
 
 **One connection per process.** The rule above means one connection serves exactly one process. A descriptor inherited across `fork`, passed, or leaked fails the PID check on its first packet. The gateway need not know how the descriptor was acquired. `SCM_RIGHTS` on the gateway protocol MUST be rejected. Children and other processes in the session open their own connections, each authenticated at establishment. Cross-allocation use fails the allocation check and is a conformance failure if accepted.
 
@@ -95,8 +96,8 @@ Every connection record and every operation record MUST include:
 - authorization ID, authorization-manifest digest, launch-binding digest, and launch-record digest;
 - global agent ID, session ID, and trace ID;
 - execution UID, allocation-record ID, host ID, boot ID, PID namespace, scope;
-- establishing peer: UID/GID, PID, start time, pidfd acquisition result;
-- per operation: credential PID, start time, pidfd acquisition result, and process-mismatch result if any;
+- establishing peer: UID/GID, PID, pidfs inode, start time, pidfd acquisition result;
+- per operation: credential PID, pidfs inode, start time, pidfd acquisition result, and process-mismatch result if any;
 - establishment, last-operation, denial, revocation, and close events with reason;
 - any admitted-before-revocation or indeterminate operation.
 

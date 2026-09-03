@@ -1,6 +1,6 @@
 # Phase 1 Normative Requirements
 
-**Version:** 0.8  
+**Version:** 0.9  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
@@ -17,6 +17,7 @@
 - **0.6** — Post-freeze editorial maintenance (no normative change): R-CON-1 rollback list names the gateway-socket projection instead of a firewall rule; host firewall removed from the trusted list.
 - **0.7** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. R-ISO-4 and §12 prose split; Oxford spelling.
 - **0.8** — §12 pinned-version row follows ADR-0003 0.8 (systemd 257 series).
+- **0.9** — WP1 findings F-2 and F-6: R-CON-2 forbids an inherited host `sysfs` (fresh instance after the netns only); R-CON-6 states the capability-conditional immutability of `loginuid` on the pinned kernel and the constructor's unset-`loginuid` precondition. Evidence in `docs/evidence/wp1/`.
 
 
 ---
@@ -93,7 +94,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **R-CON-1 (1A) [Inv 7].** Construction MUST follow the ordering in technical-report §2.1 as specified in the [session lifecycle](session-lifecycle.md) §3, using a `clone3` synchronization barrier (no kernel facility creates a stopped child). Any step that cannot be completed MUST abort the launch. An aborted launch MUST roll back every completed irreversible step. An aborted launch MUST leave no runnable process, usable credential, live grant, mounted resource, gateway-socket projection, or unsealed launch record.
 
-**R-CON-2 (1A) [Inv 7].** The mount namespace MUST be marked recursively private before any bind. `pivot_root` MUST be used (not `chroot`). `proc` MUST be mounted only after the PID namespace exists. Host `/proc` MUST NOT be visible.
+**R-CON-2 (1A) [Inv 7].** The mount namespace MUST be marked recursively private before any bind. `pivot_root` MUST be used (not `chroot`). `proc` MUST be mounted only after the PID namespace exists. Host `/proc` MUST NOT be visible. The session root MUST NOT contain an inherited host `sysfs` mount; if `sysfs` is mounted at all, it MUST be a fresh instance mounted after the network namespace exists, so that only the session's interfaces are visible.
 
 **R-CON-3 (1A) [Inv 6, 15].** Before `exec`, the constructor MUST close every descriptor not on the allowlist. Before `exec`, the constructor MUST install the execution identity and supplementary groups. Before `exec`, the constructor MUST drop the capability bounding set to the manifest's set (empty by default). Before `exec`, the constructor MUST set `no_new_privs`. Before `exec`, the constructor MUST apply the Landlock and seccomp policies named in the manifest. Seccomp filters MUST be installed with `SECCOMP_FILTER_FLAG_TSYNC`.
 
@@ -101,7 +102,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **R-CON-5 (1A) [Inv 15].** Every launch-only capability (`CAP_SETUID`, `CAP_SETGID`, `CAP_SYS_ADMIN`, `CAP_AUDIT_CONTROL`, `CAP_MAC_ADMIN`, and any other held) MUST be dropped before untrusted code executes. The evaluation report MUST enumerate the post-launch privileged operations of `agentbound-lifecycle`.
 
-**R-CON-6 (1A) [Inv 13].** `loginuid` is **corroborating** audit metadata, not the authoritative session attribution key; that key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). The constructor MUST attempt to set `loginuid` in the child before `exec` when the pinned host baseline permits it and the child's value is unset; the result (set, immutable, already-set, denied) MUST be recorded in the launch binding. When the manifest's attribution policy is `required` (mandatory for every Linux evaluation-arm manifest) and `loginuid` cannot be set, construction MUST fail; otherwise the condition is a recorded residual assumption. No other behaviour is permitted.
+**R-CON-6 (1A) [Inv 13].** `loginuid` is **corroborating** audit metadata, not the authoritative session attribution key; that key is the signed launch record correlated with (execution UID, boot ID, PID namespace, process start time or pidfd). The constructor MUST attempt to set `loginuid` in the child before `exec` when the pinned host baseline permits it and the child's value is unset; the result (set, immutable, already-set, denied) MUST be recorded in the launch binding. `loginuid` cannot be changed by a process lacking `CAP_AUDIT_CONTROL`, which no session process holds; kernel-level immutability after setting depends on `CONFIG_AUDIT_LOGINUID_IMMUTABLE`, which the pinned Debian 13 kernel does not enable, so the constructor itself MUST run with `loginuid` unset (service context, no PAM) or every launch takes the `already-set` branch. When the manifest's attribution policy is `required` (mandatory for every Linux evaluation-arm manifest) and `loginuid` cannot be set, construction MUST fail; otherwise the condition is a recorded residual assumption. No other behaviour is permitted.
 
 **R-CON-7 (1A).** Credentials and broker access MUST become usable only after every boundary is in place and the launch record is committed. The runtime MUST be exec'd last.
 

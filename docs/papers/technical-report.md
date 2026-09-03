@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR11
+**Version:** 0.5-TR12
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -26,6 +26,7 @@
 - **0.5-TR9** — Construction step 1 restated as a `clone3` synchronization barrier (no kernel facility creates a stopped child); the two egress topologies are retained as general mechanisms with a note that Phase 1 selects the local-socket topology because network transports do not identify the operation-issuing process; Phase 1 decomposition names the `agentbound-lifecycle` daemon.
 - **0.5-TR10** — Manifest discussion restated as the two-stage policy-resolver/constructor flow with distinct authority; egress section labels the network topology as the general multi-host form and the local-socket topology as the Phase 1 realization.
 - **0.5-TR11** — Editorial tightening under docs/STYLE.md: ownership section shortened; dense paragraphs split; material owned by the architecture set reduced to references; no invariant or requirement changed.
+- **0.5-TR12** — §5 `loginuid` sentence corrected per WP1 finding F-6: immutability is capability-conditional on the pinned kernel; launcher must run with `loginuid` unset.
 
 
 ---
@@ -573,7 +574,7 @@ initiating human/service
                     → labeled object or service
 ```
 
-Linux Audit’s login UID is useful because it is intended to track the account that originally gained access and is inherited by child processes.[^loginuid] Setting it requires `CAP_AUDIT_CONTROL`; because `loginuid` is set once and inherited, a long-lived launcher must set it in an unset child immediately before `exec`, and must handle systems that make it immutable. The effective UID identifies the per-session execution identity after the credential transition, and a mapping from execution identity to durable principal and session is part of the launch record. PID/PPID identify the execution, but PIDs are reused; a PID namespace plus process start time or a pidfd is needed to make process identity unambiguous. SELinux source and target contexts identify mandatory domains. A cgroup or systemd scope supplies a stable session grouping even as individual processes come and go, but it is not a portable audit key.
+Linux Audit’s login UID is useful because it is intended to track the account that originally gained access and is inherited by child processes.[^loginuid] Setting it requires `CAP_AUDIT_CONTROL`; because `loginuid` is inherited and, once set, can be changed only by a `CAP_AUDIT_CONTROL` holder (or by no one, on kernels built with `CONFIG_AUDIT_LOGINUID_IMMUTABLE`), a long-lived launcher must itself run with `loginuid` unset and set it in the child immediately before `exec`; the reference implementation's WP1 evidence records that Debian 13's kernel does not enable the immutable option. The effective UID identifies the per-session execution identity after the credential transition, and a mapping from execution identity to durable principal and session is part of the launch record. PID/PPID identify the execution, but PIDs are reused; a PID namespace plus process start time or a pidfd is needed to make process identity unambiguous. SELinux source and target contexts identify mandatory domains. A cgroup or systemd scope supplies a stable session grouping even as individual processes come and go, but it is not a portable audit key.
 
 Kernel audit is **correlation evidence, not causal attribution**. It records numeric identifiers and event-time observations; it does not encode agent, session, purpose, or remote delegation, its delivery is lossy under load, and a single authorized TLS or database connection can carry many semantic operations it cannot distinguish. The primary attribution mechanism is therefore the signed launch record plus a **session trace identity** propagated through every gateway operation and logged by the remote service; kernel audit corroborates and fills in local effects.
 

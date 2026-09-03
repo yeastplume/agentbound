@@ -1,6 +1,6 @@
 # WP0 open-question disposition register
 
-**Version:** 0.4  
+**Version:** 0.5  
 **Status:** Frozen (WP0) — every open question in the WP0 set is listed here with exactly one disposition  
 **Date:** 28 August 2026  
 **Related:** [architecture README](README.md) freeze condition; all WP0 documents
@@ -11,6 +11,7 @@
 - **0.2** — External review: three answers (24 h quarantine floor, closed five-path domain, `continue-degraded` restriction with split outage triggers) were present only in open-question summaries; now written into the normative sections of the identity lifecycle §4.1–4.2, session lifecycle §6, manifest schema §3.6, requirements R-LC-2/3, and test catalogue T-6.8-006/011–013.
 - **0.3** — Post-freeze editorial maintenance (no normative change): LC-1 classified as an implementation spike verifying an answered question; canonical WP1 verification set stated once.
 - **0.4** — Session-lifecycle Q1 answer follows ADR-0003 0.8 (systemd 257 series).
+- **0.5** — WP1 complete: the four W1 items (VM-1, VM-2, LC-2, ID-1) carry their recorded results and evidence links; none took its failure branch. Owning documents amended per findings F-1–F-8 (see `docs/evidence/wp1/README.md`).
 
 ## Purpose
 
@@ -20,6 +21,7 @@ Dispositions:
 
 - **A** — answered; the owning document has been edited to state the answer and the question is removed from its open list.
 - **W1** — assigned to WP1; the verification item is named and the failure consequence stated. The question remains listed in the owning document under "carried to WP1".
+- **W1 ✓** — WP1 item verified; result and evidence linked. Where the failure branch was not taken, the owning document is unchanged except for any recorded finding.
 
 ## ADR-0002 — gateway topology and authentication
 
@@ -32,9 +34,9 @@ Dispositions:
 
 | # | Question | Disposition | Answer / WP1 item |
 |---|---|---|---|
-| 1 | vsock peer-CID reporting on 6.12 | **W1** | WP1 item *VM-1*: verify that the host `AF_VSOCK` endpoint reports the guest CID for each accepted connection and that the CID matches the VMM's configured `guest_cid`. Failure: binding uses the VMM connection table and the ADR records the change. |
+| 1 | vsock peer-CID reporting on 6.12 | **W1 ✓** | **Result:** with Firecracker there is no host `AF_VSOCK` endpoint; the binding uses the VMM's bridge connection (`SO_PEERCRED` → held VMM pidfd → configured `guest_cid`). ADR-0003 0.9 wording amended (finding F-7); no binding element removed. [Evidence](../evidence/wp1/vsock-cid.md). Original item: *VM-1*: verify that the host `AF_VSOCK` endpoint reports the guest CID for each accepted connection and that the CID matches the VMM's configured `guest_cid`. Failure: binding uses the VMM connection table and the ADR records the change. |
 | 2 | Guest-side witness | **A** | Same as ADR-0002 Q2: none in Phase 1. |
-| 3 | Cross-arm SLOC comparability | **W1** | WP1 item *VM-2*: run the pinned SLOC tool over Firecracker v1.16.1, jailer, guest init, and configuration; report whether transitive-dependency attribution is consistent with the Linux arm. Failure: per-arm disclosure only, excluded from the decision rule (already the rule). |
+| 3 | Cross-arm SLOC comparability | **W1 ✓** | **Result:** `tokei 13.0.0-alpha.8` attributes both arms consistently; the exclusion is not triggered. ADR-0003 0.9 pins the tool and three accounting rules (finding F-8). [Evidence](../evidence/wp1/sloc-arms.md). Original item: *VM-2*: run the pinned SLOC tool over Firecracker v1.16.1, jailer, guest init, and configuration; report whether transitive-dependency attribution is consistent with the Linux arm. Failure: per-arm disclosure only, excluded from the decision rule (already the rule). |
 
 ## Requirements
 
@@ -62,7 +64,7 @@ Dispositions:
 | # | Question | Disposition | Answer / WP1 item |
 |---|---|---|---|
 | 1 | systemd/kernel version set for freeze/kill/pidfd semantics | **A** | Pinned in ADR-0003 and requirements §12: Linux 6.12 LTS series, systemd 257 series (Debian 13). The architectural question is answered by pinning the baseline; verifying the pinned baseline's behaviour is the WP1 implementation spike *LC-1* (plan WP1 list), which is not an unresolved WP0 question. |
-| 2 | Frozen cgroup holding a `SOCK_SEQPACKET` connection open | **W1** | WP1 item *LC-2*: measure whether a frozen peer delays the gateway's zero-connection acknowledgement. Failure: quiesce closes idle gateway connections before freezing and the lifecycle §6 text is revised. |
+| 2 | Frozen cgroup holding a `SOCK_SEQPACKET` connection open | **W1 ✓** | **Result:** no delay; a frozen peer's connection is closed by the gateway without the peer's participation and §6 stands unchanged. [Evidence](../evidence/wp1/frozen-peer.md). Original item: *LC-2*: measure whether a frozen peer delays the gateway's zero-connection acknowledgement. Failure: quiesce closes idle gateway connections before freezing and the lifecycle §6 text is revised. |
 | 3 | Trust anchor, correction, retention for the launch-record store | **A** | Component interfaces §4–5: append-only, hash-chained, fsync commit, correction by new record referencing the original; retention per manifest-schema Q6 above. |
 | 4 | Which outage modes may use `continue-degraded` | **A** | Only *policy-service unavailable* and *audit-pipeline degraded below stop threshold*, and only when the manifest declared it. `agentbound-lifecycle` unavailable is never `continue-degraded`: sessions keep running under their installed boundary but no new authority is issued and no transition is possible until it returns. |
 | 5 | Audit backpressure representation | **A** | Manifest `audit.loss_behaviour` plus `audit_capacity` resource class; status API exposes `audit_queue_depth`, `audit_dropped_total`, and the loss-behaviour state. |
@@ -75,7 +77,7 @@ Dispositions:
 | # | Question | Disposition | Answer / WP1 item |
 |---|---|---|---|
 | 1 | Default range sufficient? | **A** | Reference range 200000–299999 (100 000 identities). With the nominal profile's 8 concurrent sessions and overload's 32, and a quarantine floor of 24 h, exhaustion is unreachable in Phase 1; exhaustion behaviour is still tested by T-6.9-001 with an artificially small range. |
-| 2 | Allocator-store implementation | **W1** | WP1 item *ID-1*: prototype the append-only store with compare-and-set (candidate: single-writer SQLite in WAL mode with a hash-chained record table, owned by `agentbound-lifecycle`), verifying crash-consistency under the F-C/F-T fault points. Failure: alternative store; identity lifecycle §3 revised. |
+| 2 | Allocator-store implementation | **W1 ✓** | **Result:** candidate store (single-writer SQLite WAL, hash-chained, CAS) survived 150 `SIGKILL` rounds with zero acked-commit loss; §3 stands. [Evidence](../evidence/wp1/identity-store.md). Original item: *ID-1*: prototype the append-only store with compare-and-set (candidate: single-writer SQLite in WAL mode with a hash-chained record table, owned by `agentbound-lifecycle`), verifying crash-consistency under the F-C/F-T fault points. Failure: alternative store; identity lifecycle §3 revised. |
 | 3 | Registered host paths for the managed domain | **A** | Exactly: the per-session workspace image, the per-session runtime tmpfs, the launch-record store, the allocator store, and the audit spool. No other host path may carry a session UID; discovery scans these and the process table only. |
 | 4 | Objects transferred rather than deleted | **A** | Only the session workspace image, transferred as a whole to the durable-principal ownership projection by the reclamation policy named in the manifest's `termination_retention`; everything else is deleted. |
 | 5 | Backup tooling | **A** | Backups of the workspace image carry the `authorization_id`, `launch_record_digest`, and durable-principal ID as image metadata; restore tooling MUST resolve ownership from that metadata and MUST NOT grant access by numeric UID (already R-ID-7). |
@@ -88,11 +90,11 @@ Dispositions:
 | Owning document | Answered | Assigned to WP1 |
 |---|---:|---:|
 | ADR-0002 | 2 | 0 |
-| ADR-0003 | 1 | 2 (VM-1, VM-2) |
+| ADR-0003 | 1 | 2 (VM-1 ✓, VM-2 ✓) |
 | Requirements | 5 | 0 |
 | Manifest schema | 6 | 0 |
-| Session lifecycle | 7 | 1 (LC-2) |
-| Execution-identity lifecycle | 7 | 1 (ID-1) |
+| Session lifecycle | 7 | 1 (LC-2 ✓) |
+| Execution-identity lifecycle | 7 | 1 (ID-1 ✓) |
 | **Total** | **28** | **4** |
 
 The canonical WP1 verification set is: the ADR-0002 Decision 7 items; register items VM-1, VM-2, LC-2, ID-1; and the implementation spike LC-1 (pinned-baseline `cgroup.freeze`/`cgroup.kill`/pidfd/scope-recovery behaviour), which verifies an answered question rather than resolving an open one. Every item names the document it reopens on failure. This list is authoritative; the architecture README and the plan's WP1 section refer to it.

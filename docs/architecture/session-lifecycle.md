@@ -1,6 +1,6 @@
 # Session Lifecycle Specification
 
-**Version:** 0.6  
+**Version:** 0.7  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -14,6 +14,7 @@
 - **0.4** — Open questions disposed per the open-question register; answers written into the normative text. D-state escalation path; LC-2 carried to WP1.
 - **0.5** — §6: `continue-degraded` restricted to `policy_service_unavailable` and `audit_pipeline_degraded_below_stop_threshold`; trigger table rewritten; generic control-plane trigger split into policy-service, audit-pipeline, and lifecycle-daemon outages (the last not manifest-selectable).
 - **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. §5 deadline paragraph split; Oxford spelling.
+- **0.7** — WP1 findings F-2, F-3, F-4, F-5 ([evidence](../evidence/wp1/)): §3 step 5 forbids inherited `sysfs`; scope creation sets `TimeoutStopUSec` at `StartTransientUnit`; §4 names `PropertiesChanged`/pidfd as prompt triggers and `UnitRemoved` as confirmation; §5 step 4 does not wait for the frozen state before `cgroup.kill`. No state, event, or deadline changed.
 
 
 ---
@@ -88,13 +89,13 @@ An actor MAY request a transition but `agentbound-lifecycle` MUST authorize and 
 | 2 | Unshare mount namespace and recursively mark mounts private before any bind operation. | Destroy child mount namespace by killing child; verify no propagation to host. | Namespace and mount setup. |
 | 3 | Resolve mount sources descriptor-relatively with `openat2` safe resolution or mount FDs; never re-walk string paths. | Close source and mount FDs; unregister provisional path references. | Namespace/mount setup and constructor-input path/TOCTOU tests. |
 | 4 | Build restricted tree and enter it with `pivot_root`, never `chroot`. | Unmount restricted tree from host-side tracked mount FD; destroy child. | Namespace and mount setup. |
-| 5 | Mount `proc` only after PID namespace exists; never expose host `/proc`. | Unmount session procfs before namespace destruction. | Namespace and mount setup. |
+| 5 | Mount `proc` only after PID namespace exists; never expose host `/proc`. Mount `sysfs`, if at all, as a fresh instance only after the network namespace exists; never carry an inherited host `sysfs` into the session root. | Unmount session procfs before namespace destruction. | Namespace and mount setup. |
 | 6 | Close every descriptor outside the effective manifest allowlist, including reintroduction paths through `SCM_RIGHTS`, `/proc/self/fd`, and memfd. | Close remaining tracked descriptors; kill child if closure cannot be proven. | Privilege disposal and constructor-input descriptor tests. |
 | 7 | Install execution identity, supplementary groups, LSM context, capability bounding set, `no_new_privs`, Landlock, and seccomp in an order tested for the selected LSM policy. | Kill child; revoke identity allocation only after reclamation condition; remove provisional LSM/grant state. | Execution-identity allocation; namespace/mount; privilege disposal. |
 | 8 | Make credentials or broker access usable only after every boundary is in place and the launch record is committed. | Revoke/close provisional broker or credential grant; record issuance and revocation outcome. | Credential/gateway grant issuance and audit binding. |
 | 9 | Exec the runtime last. | If exec fails, kill/reap child and execute all reverse-order cleanup. | Runtime `exec`. |
 
-The constructor MUST create the cgroup/systemd scope, resource limits, the single `SOCK_SEQPACKET` gateway-socket mount when `gateway.channel_topology` is `local-socket` (and no gateway socket, mount, projection, or grant when it is `none`), and audit/session provenance as prerequisites incorporated in these steps; a required prerequisite failure MUST cause `construction-failed`.
+The constructor MUST create the cgroup/systemd scope with `TimeoutStopUSec` set at `StartTransientUnit` time (a PID-namespace init discards an external `SIGTERM` unless it installs a handler, so an operator or systemd `stop` of a scope without this property waits `DefaultTimeoutStopSec`, 90 s, before `SIGKILL`; systemd does not permit setting it on a scope afterwards), resource limits, the single `SOCK_SEQPACKET` gateway-socket mount when `gateway.channel_topology` is `local-socket` (and no gateway socket, mount, projection, or grant when it is `none`), and audit/session provenance as prerequisites incorporated in these steps; a required prerequisite failure MUST cause `construction-failed`.
 
 Credentials, `agentbound-gateway` authority, and broker access MUST become usable **only after** the launch record is committed. The runtime MUST be exec'd last. `agentbound-launch` MUST drop launch-only privileges before that exec. A launch record committed for a failed exec MUST be sealed with a failure outcome, not deleted.
 
@@ -115,7 +116,7 @@ Its enumerated privileged operations are:
 5. allocate, reclaim, quarantine, and release execution identities (ADR-0001); and
 6. reconcile persisted state after restart (§7).
 
-The daemon subscribes to systemd's D-Bus `UnitRemoved` and `PropertiesChanged` signals for session scopes and holds the PID-namespace-init pidfd as an independent liveness source; either signal triggers the §5 protocol. If systemd kills a scope before the daemon acts, the daemon MUST still execute the full protocol. It MUST record `session.ordering_deviation` with the systemd event that pre-empted it. The daemon accepts requests from the `agentbound` CLI only through a policy-authorized request and from authenticated revocation triggers. It MUST record the invoking actor and delegated authority. It MUST NOT accept arbitrary cgroup paths, mount paths, UIDs, or shell commands from any caller. Peer identity and authorization for each caller are specified in [component interfaces](component-interfaces.md).
+The daemon subscribes to systemd's D-Bus `UnitRemoved` and `PropertiesChanged` signals for session scopes and holds the PID-namespace-init pidfd as an independent liveness source; either signal triggers the §5 protocol. `PropertiesChanged` with `ActiveState` in `inactive` or `failed`, and the held pidfd, are the prompt triggers; systemd emits `UnitRemoved` only at unit garbage collection, seconds later, so the daemon MUST treat it as confirmation rather than wait for it. If systemd kills a scope before the daemon acts, the daemon MUST still execute the full protocol. It MUST record `session.ordering_deviation` with the systemd event that pre-empted it. The daemon accepts requests from the `agentbound` CLI only through a policy-authorized request and from authenticated revocation triggers. It MUST record the invoking actor and delegated authority. It MUST NOT accept arbitrary cgroup paths, mount paths, UIDs, or shell commands from any caller. Peer identity and authorization for each caller are specified in [component interfaces](component-interfaces.md).
 
 ---
 
@@ -126,7 +127,7 @@ For every normal stop, cancellation, revocation requiring termination, construct
 1. mark the session terminating and instruct `agentbound-gateway` to deny admission of new operations without yet releasing grant records;
 2. freeze the session cgroup so no process can fork while the protocol runs;
 3. deliver `SIGTERM` to the workload via the PID-namespace init and thaw briefly within a bounded window so init can reap exited children;
-4. freeze again and kill the cgroup with `cgroup.kill`; wait for the init pidfd to signal exit;
+4. request a second freeze and write `cgroup.kill` without waiting for `cgroup.events` to report `frozen 1` (a cgroup with an uninterruptible member never reaches the frozen state; `cgroup.kill` acts on frozen and unfrozen members alike); wait on cgroup emptiness and the init pidfd under the bounded wait below;
 5. confirm that `cgroup.procs` is empty, the init has exited and been reaped, and the host credential scan of the [identity lifecycle](execution-identity-lifecycle.md) §4.1 finds no process under the execution UID/GIDs;
 6. release `agentbound-gateway` grant records and close indexed connections; the gateway MUST acknowledge zero connections;
 7. close broker access and any session credential capability;
@@ -306,6 +307,6 @@ A configuration that omits a required dependency for a claimed property MUST mar
 
 ## 10. Open questions
 
-Seven of the eight WP0 questions are answered in the [open-question register](open-question-register.md) (version set pinned in ADR-0003; store trust anchor and commit points in component interfaces; `continue-degraded` limited to policy-service and sub-threshold audit degradation; backpressure via `audit.loss_behaviour`, `audit_capacity`, and status counters; D-state escalation in §5; microVM state mapping in ADR-0003). One is carried to WP1:
+Seven of the eight WP0 questions are answered in the [open-question register](open-question-register.md) (version set pinned in ADR-0003; store trust anchor and commit points in component interfaces; `continue-degraded` limited to policy-service and sub-threshold audit degradation; backpressure via `audit.loss_behaviour`, `audit_capacity`, and status counters; D-state escalation in §5; microVM state mapping in ADR-0003). One was carried to WP1 and is now answered:
 
-- **LC-2** — does a frozen cgroup hold a `SOCK_SEQPACKET` connection open in a way that delays the gateway's zero-connection acknowledgement? If so, quiesce closes idle gateway connections before freezing and §6 is revised.
+- **LC-2** — does a frozen cgroup hold a `SOCK_SEQPACKET` connection open in a way that delays the gateway's zero-connection acknowledgement? **No** ([evidence](../evidence/wp1/frozen-peer.md)): the gateway closes and drains the frozen peer's connection without the peer's participation; §6 stands unchanged.

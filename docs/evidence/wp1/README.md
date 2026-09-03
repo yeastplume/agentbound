@@ -8,7 +8,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 
 ## WP1 exit status
 
-Every WP1 item has a recorded result: 10 spikes, 103 individual checks — 102 PASS and one deliberate FAIL (D7-2d, the start-time-only reuse check that motivates F-1) — and no ADR reopened. Eight findings (F-1–F-8) were recorded; none changes a mechanism decision, all are wording, ordering-guidance, or accounting amendments to frozen documents, to be applied as revision entries before WP2 begins (table at the end). Two items remain classified WP2 by construction (D7 items 6, 8, 9 need the gateway; the typed-operation half of item 5 likewise).
+Every WP1 item has a recorded result: 10 spikes, 103 individual checks — 102 PASS and one deliberate FAIL (D7-2d, the start-time-only reuse check that motivates F-1) — and no ADR reopened. Eight findings (F-1–F-8) were recorded; none changes a mechanism decision, all are wording, ordering-guidance, or accounting amendments to frozen documents, and all have been applied as revision entries (table at the end: requirements 0.9, session lifecycle 0.7, identity lifecycle 0.7, ADR-0002 0.7, ADR-0003 0.9, technical report 0.5-TR12). Two items remain classified WP2 by construction (D7 items 6, 8, 9 need the gateway; the typed-operation half of item 5 likewise).
 
 | Spike | Checks | Result |
 |---|---|---|
@@ -64,15 +64,15 @@ Reproduction: `spikes/run.sh <name>` from a checkout with SSH access to the base
 | LC-2 frozen cgroup holding a `SOCK_SEQPACKET` connection | **PASS** — no delay; §6 stands | [frozen-peer](frozen-peer.md) LC2-1–5 | session lifecycle §6 |
 | ID-1 allocator-store crash consistency | **PASS** — candidate design holds; §3 not reopened | [identity-store](identity-store.md) ID-9–11 | identity lifecycle §3 |
 
-## Findings requiring document amendments before WP2
+## Findings and their document amendments
 
 | # | Finding | Owning document | Status |
 |---|---|---|---|
-| F-1 | `/proc` start time has 10 ms granularity; a PID recycled within one tick has an identical start time. The pidfs inode / held pidfd is the reliable instance key. | ADR-0002 Decision 2 | recorded; amendment pending |
-| F-2 | An inherited sysfs mount shows the host's network interfaces inside an empty netns. R-CON-2 covers `/proc` only. Add: no inherited sysfs in the session root; mount sysfs, if at all, after the netns exists. | requirements R-CON-2; session lifecycle §3 step 5; test catalogue T-6.1 | recorded; amendment pending |
-| F-3 | `cgroup.freeze` never reaches `frozen 1` while a D-state member exists; §5 step 4 must not wait for the frozen state before `cgroup.kill`. | session lifecycle §5 step 4 | recorded; amendment pending |
-| F-4 | PID-namespace init ignores external `SIGTERM`; `systemctl stop` stalls for `DefaultTimeoutStopSec` (90 s) unless `TimeoutStopUSec` is set at `StartTransientUnit` (cannot be set later on a scope). | session lifecycle §3 scope prerequisites, §4 | recorded; amendment pending |
-| F-5 | `UnitRemoved` is emitted at unit GC (~1.5 s later); `PropertiesChanged`/`ActiveState` and the held pidfd are the prompt triggers. | session lifecycle §4 (guidance only) | recorded; no obligation change |
-| F-6 | Pinned kernel lacks `CONFIG_AUDIT_LOGINUID_IMMUTABLE`: `loginuid` is re-settable by `CAP_AUDIT_CONTROL` (never held by sessions). Replace "write-once" with the capability-conditional statement; note the host-global `lost` counter. | R-CON-6; identity lifecycle §6; technical report §5; ADR-0003 kernel row | recorded; amendment pending |
-| F-7 | Firecracker's vsock is a Unix-socket bridge; the host sees the VMM process as peer, not a guest CID. Bind via `SO_PEERCRED`→VMM pidfd→configured `guest_cid`; daemon must own the bridge socket path. | ADR-0003 "VM identity, CID lifetime, and vsock admission" | recorded; wording amendment pending |
-| F-8 | Firecracker v1.16.1 closure: direct 77 904 + 3 494; transitive 2.82 M (1.29 M C/C++/asm from AWS-LC via `aws-lc-rs`, used only for randomness). Pin tokei; state present-vs-compiled rule; generated-code allowlist; feature pins. | ADR-0003 "Trusted-code size"; requirements §12 accounting | recorded; accounting amendment pending |
+| F-1 | `/proc` start time has 10 ms granularity; a PID recycled within one tick has an identical start time. The pidfs inode / held pidfd is the reliable instance key. | ADR-0002 Decision 2 | **applied** |
+| F-2 | An inherited sysfs mount shows the host's network interfaces inside an empty netns. R-CON-2 covers `/proc` only. Add: no inherited sysfs in the session root; mount sysfs, if at all, after the netns exists. | requirements R-CON-2; session lifecycle §3 step 5; test catalogue T-6.1 | **applied** |
+| F-3 | `cgroup.freeze` never reaches `frozen 1` while a D-state member exists; §5 step 4 must not wait for the frozen state before `cgroup.kill`. | session lifecycle §5 step 4 | **applied** |
+| F-4 | PID-namespace init ignores external `SIGTERM`; `systemctl stop` stalls for `DefaultTimeoutStopSec` (90 s) unless `TimeoutStopUSec` is set at `StartTransientUnit` (cannot be set later on a scope). | session lifecycle §3 scope prerequisites, §4 | **applied** |
+| F-5 | `UnitRemoved` is emitted at unit GC (~1.5 s later); `PropertiesChanged`/`ActiveState` and the held pidfd are the prompt triggers. | session lifecycle §4 (guidance only) | **applied** (session lifecycle 0.7, guidance) |
+| F-6 | Pinned kernel lacks `CONFIG_AUDIT_LOGINUID_IMMUTABLE`: `loginuid` is re-settable by `CAP_AUDIT_CONTROL` (never held by sessions). Replace "write-once" with the capability-conditional statement; note the host-global `lost` counter. | R-CON-6; identity lifecycle §6; technical report §5; ADR-0003 kernel row | **applied** |
+| F-7 | Firecracker's vsock is a Unix-socket bridge; the host sees the VMM process as peer, not a guest CID. Bind via `SO_PEERCRED`→VMM pidfd→configured `guest_cid`; daemon must own the bridge socket path. | ADR-0003 "VM identity, CID lifetime, and vsock admission" | **applied** (ADR-0003 0.9) |
+| F-8 | Firecracker v1.16.1 closure: direct 77 904 + 3 494; transitive 2.82 M (1.29 M C/C++/asm from AWS-LC via `aws-lc-rs`, used only for randomness). Pin tokei; state present-vs-compiled rule; generated-code allowlist; feature pins. | ADR-0003 "Trusted-code size"; requirements §12 accounting | **applied** (ADR-0003 0.9) |
