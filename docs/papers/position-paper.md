@@ -2,7 +2,7 @@
 
 ## A Security Ontology for Governed Agent Sessions
 
-**Version:** 0.9  
+**Version:** 0.10  
 **Date:** 28 August 2026  
 **Status:** Working position paper for external review  
 **Companion:** [`technical-report.md`](technical-report.md)  
@@ -18,33 +18,34 @@
 - **0.7** — Trimming pass: removed mechanism detail owned by the companion report and consolidated the rules; added an explicit statement that the formalism is an unproven specification.
 - **0.8** — Softened "never runs code" to a profile-realized separation of owning and acting identity; execution identity restated as uniquely allocated with verified reclamation.
 - **0.9** — Evaluation path aligned with the staged Phase 1 programme; Phase 3 comparison scoped to high-assurance profiles.
+- **0.10** — Editorial compression under docs/STYLE.md: abstract and claims deduplicated; single closing paragraph; rhetorical framing removed; no technical claim changed.
 
 
 ---
 
 ## Abstract
 
-Most AI-agent systems represent an agent as an application object, conversation, coroutine, or process owned by a shared service account. The framework must then reconstruct identity, lifecycle, authorization, isolation, resource accounting, and audit above the operating system, even when the agent ultimately acts by launching ordinary Unix programs.
+AI-agent systems often model agents under shared service accounts. Frameworks reconstruct identity, authorization, isolation, and audit above the OS despite launching Unix programs.
 
-This paper proposes a different foundation: **an organizational agent is a durable, accountable security principal; a session is a task-scoped shell and process tree instantiated under its own execution identity with a bounded subset of that principal's authority; an execution is an ordinary process; and a model is a replaceable cognitive component whose binding to the session is itself governed.** The durable identity owns state and carries accountability; each session acts under a distinct, per-session execution identity that the enforcing substrate can tell apart from the owner. Neither is reducible to a PID, model instance, API token, or database row.
+**An organizational agent is a durable, accountable security principal. A session is a task-scoped process tree under a distinct execution identity with a bounded subset of the principal's authority. An execution is an ordinary process. A model is a replaceable cognitive component with a governed session binding.** Neither identity is reducible to a PID, model instance, API token, or database row.
 
-Linux already supplies much of the local enforcement substrate: credentials and access controls, namespaces, cgroups, capabilities, `no_new_privs`, Landlock, seccomp, audit, and optional mandatory-access-control profiles. Organizational policy should compute the permissible session, while the operating system enforces its local realization. Gateways and remote services remain responsible for effects beyond the host.
+Linux supplies credentials, namespaces, cgroups, capabilities, `no_new_privs`, Landlock, seccomp, audit, and optional MAC profiles. Policy computes the permissible session; the OS enforces its local realization. Gateways and remote services govern effects beyond the host.
 
-The key security distinction is between **authority** and **information state**. Delegation may reduce what a child can access, but a fresh process or model does not erase the confidentiality or integrity provenance of information supplied to it. Durable memory must therefore be partitioned, communication must preserve labels and provenance, and untrusted outputs must pass through validation or review before promotion into trusted state. The architecture is tiered, and each tier claims only the edges it mediates. The baseline Unix-governed profile is deployable now as an isolation, authority, and attribution boundary; it makes no information-flow claim. Compartments and full multilevel security are later, measured profiles. The nearest practical payoff is integrity: keeping prompt-injected and model-generated material out of trusted state.
+**Authority** differs from **information state**. Delegation may reduce access, but does not erase the confidentiality or integrity provenance of admitted information. Memory must be partitioned, communication must preserve labels and provenance, and untrusted outputs require validation or review before promotion. Each tier claims only the edges it mediates. The Unix-governed baseline is an isolation, authority, and attribution boundary and makes no information-flow claim. Later compartments and multilevel security require measured costs. Integrity provenance keeps prompt-injected and model-generated material out of trusted state.
 
 ---
 
 ## Summary of claims
 
-1. **An agent is a durable organizational security principal**, not a PID, model instance, API token, or conversation row. It owns state and carries accountability; it is not the identity under which sessions run.
+1. **An agent is a durable organizational security principal**, distinct from the identity under which sessions run and from a conversation row.
 2. **A session is the task-scoped security and information boundary.** It binds initiator, purpose, activated authority, information state, credentials, resources, visible world, a per-session execution identity, and process tree.
-3. **Processes and models are replaceable executions, but the model binding is governed.** Replacing a runtime does not change the session's identity; changing model, endpoint, tenant, or retention mode changes its information sources and trusted base and is an audited policy event.
-4. **Authority and information state are different.** Delegation may narrow authority, but a fresh child or peer does not cleanse the confidentiality or integrity provenance of its inputs.
-5. **Durable memory must be partitioned.** Ownership by one agent does not make every historical memory partition safe to import into every session.
-6. **Integrity requires stage, validate, and promote.** Prompt-injected or model-generated material must not directly replace trusted configuration, approved memory, or production artifacts.
-7. **Linux enforces the locally realizable boundary.** Gateways, workload identity, and remote reference monitors enforce model, database, Git, SaaS, and other network effects, and attribution extends only to effects those components mediate.
-8. **The architecture is tiered and each tier claims only its mediated edges.** Unix-governed sessions are an isolation, authority, and attribution profile practical now; compartments add labeled communication and partitioned memory; full MLS adds trusted release at a cost that must be measured.
-9. **Containers and microVMs are complementary.** They strengthen workload isolation but do not by themselves classify outputs, partition memory, constrain remote services, or provide trusted release.
+3. **Processes and models are replaceable executions, but the model binding is governed.** Replacing a runtime does not change the session's identity. Changing model, endpoint, tenant, or retention mode changes its information sources and trusted base and is an audited policy event.
+4. **Authority and information state are different.** This applies to children and peers.
+5. **Durable-memory ownership does not make every historical partition safe to import into every session.**
+6. **Prompt-injected or model-generated material must not directly replace trusted configuration, approved memory, or production artefacts.**
+7. **Linux enforces the locally realizable boundary.** Gateways, workload identity, and remote reference monitors enforce model, database, Git, SaaS, and other network effects. Attribution extends only to effects those components mediate.
+8. **Compartments add labelled communication and partitioned memory; full MLS adds trusted release.**
+9. **Containers and microVMs are complementary.** They strengthen workload isolation but do not themselves classify outputs, partition memory, constrain remote services, or provide trusted release.
 
 The central rules are, for the common case where a human or service delegates a subset of its own authority to an agent for one task, and for every **mediated** communication edge (higher `T` meaning more trusted):
 
@@ -140,7 +141,7 @@ The constructor derives `A_session` from agent, initiator, task, approvals, and 
 
 Information state follows different rules. If a session reads Finance+Redwood material, a child with fewer filesystem permissions may still receive Redwood information in its prompt: reduced authority limits future access but does not declassify what was already observed. Likewise a fresh model process does not restore integrity if its instructions derive from a malicious repository or web page.
 
-For every communication edge—parent to child, sibling to sibling, agent to agent, pipe, socket, queue, RPC, file, artifact, or model call—the receiver must be authorized for the channel, its confidentiality domain must dominate the input label, and the input's provenance must not be silently promoted. Otherwise the input is rejected, quarantined, routed to a compatible session, or passed through a trusted release or validation boundary:
+For every communication edge—parent to child, sibling to sibling, agent to agent, pipe, socket, queue, RPC, file, artefact, or model call—the receiver must be authorized for the channel. Its confidentiality domain must dominate the input label, and the input's provenance must not be silently promoted. Otherwise the input is rejected, quarantined, routed to a compatible session, or passed through a trusted release or validation boundary:
 
 > **Every communication edge is an information-admission event. A new process boundary is not an information-cleansing boundary.**
 
@@ -175,7 +176,7 @@ Concurrent sessions import stable snapshots and append proposed updates with wri
 
 ### 4.2 Stage, validate, and promote
 
-Confidentiality controls do not stop an authorized but prompt-injected agent from corrupting an artifact it may write. Practical integrity separates imported material, untrusted parsing, model-generated proposals in staging, validated artifacts, reviewed outputs, and protected policy, credentials, configuration, and approved memory. The default workflow is not direct mutation of trusted objects:
+Confidentiality controls do not stop an authorized but prompt-injected agent from corrupting an artefact it may write. Integrity separates imported material, untrusted parsing, model-generated proposals in staging, validated artefacts, reviewed outputs, and protected policy, credentials, configuration, and approved memory. The default workflow is not direct mutation of trusted objects:
 
 ```text
 stage → validate → review where necessary → promote
@@ -183,7 +184,7 @@ stage → validate → review where necessary → promote
 
 Promotion may require tests, schemas, reproducible transformations, independent review, branch protection, or a constrained trusted service. Confidence expressed by a model is not an integrity transition.
 
-Validation is well-defined for structured state—configuration, schemas, test results, reproducible outputs—and undefined for natural-language memory: no validator can show a model's summary is free of confidential inference, injected instruction, or hallucination. Semantic observations therefore stay append-only, provenance-bearing, and visibly untrusted. This is the most immediately useful part of the architecture. Most real agent incidents are integrity failures—hostile input reaching a repository, deployment, or durable memory—not confidentiality-label failures, and stage–validate–promote addresses them without mandatory-access-control machinery.
+Validation is well-defined for structured state—configuration, schemas, test results, reproducible outputs—and undefined for natural-language memory: no validator can show a model's summary is free of confidential inference, injected instruction, or hallucination. Semantic observations therefore stay append-only, provenance-bearing, and visibly untrusted. Most real agent incidents are integrity failures—hostile input reaching a repository, deployment, or durable memory—and stage–validate–promote addresses them without mandatory-access-control machinery.
 
 ### 4.3 Trusted release and aggregation
 
@@ -227,7 +228,7 @@ Linux mechanisms answer different questions:
 | DAC, ACLs, host MAC, and SELinux MCS/MLS where deployed | Local authorization; compartments and declared multilevel domains |
 | Linux Audit plus service logs | Process attribution and denial evidence |
 
-A manifest is a derived launch record, not an entitlement supplied by the agent; authoritative identities, labels, mounts, credentials, and endpoints come from a server-side policy decision, and anything unavailable fails closed. The launch path can dispose of its privilege; the system cannot. Termination, revocation, cleanup, and audit remain privileged operations of small, separately authorized services. The honest claim is that the trusted computing base is enumerable and reviewable, not that it vanishes.
+A manifest is a derived launch record, not an entitlement supplied by the agent; authoritative identities, labels, mounts, credentials, and endpoints come from a server-side policy decision, and anything unavailable fails closed. The launch path can dispose of its privilege; the system cannot. Termination, revocation, cleanup, and audit remain privileged operations of small, separately authorized services. The trusted computing base is enumerable and reviewable; it does not vanish.
 
 A network namespace by itself denies nothing, and hostnames are not policy. "Gateway-only egress" is a topology—one interface, host-side filtering that permits only the gateway, no raw-socket capability, no inherited connections—ending in a gateway that exposes named, typed operations rather than a generic proxy and verifies service, tenant, model, retention mode, credential scope, and budget. Bearer tokens remain copyable even when short-lived; proof-of-possession credentials or operation brokers reduce that risk.
 
@@ -258,11 +259,11 @@ It is an **isolation, authority, and attribution profile, not an information-flo
 
 ### Profile 2: Compartmented session
 
-Adds MCS or equivalent compartments, partitioned memory, labeled channels, category allocation, and controlled import/export. The first profile that claims contamination-safe communication, and only on the edges it publishes as mediated.
+Adds MCS or equivalent compartments, partitioned memory, labelled channels, category allocation, and controlled import/export. The first profile that claims contamination-safe communication, and only on the edges it publishes as mediated.
 
 ### Profile 3: Multilevel session
 
-Adds full MLS sensitivities, declared flow rules, analyzed policy, labeled persistence, and trusted declassification. A high-assurance option with a small ecosystem, whose policy correctness, administrative burden, and release economics must be measured rather than assumed.
+Adds full MLS sensitivities, declared flow rules, analyzed policy, labelled persistence, and trusted declassification. A high-assurance option with a small ecosystem, whose policy correctness, administrative burden, and release economics must be measured rather than assumed.
 
 ### Profile 4: Strong workload isolation
 
@@ -272,7 +273,7 @@ A container, VM, microVM, or dedicated node can surround any profile. A microVM 
 
 ## 7. Relationship to prior work
 
-This proposal composes established operating-system security ideas with recent Unix-native agent systems.
+Established operating-system security ideas can compose with recent Unix-native agent systems.
 
 Quine identifies an agent with a POSIX process.[^quine] Orkia treats persistent agent sessions as governed shell jobs in PTYs.[^orkia] Agent-as-user projects use dedicated Unix credentials.[^aaau] agentsh places enforcement beneath agent tools.[^agentsh] These support Unix-native execution but do not define the combination of durable organizational principal, initiator-bound session, information contamination, partitioned memory, remote workload identity, and trusted promotion proposed here.
 
@@ -280,13 +281,13 @@ Decentralized information-flow-control systems are the closest academic ancestor
 
 This paper does not claim to invent label joining, integrity labels, process-level information flow, or controlled declassification. The confidentiality rules descend from Bell–LaPadula and Denning, the integrity rules from Biba, and stage–validate–promote from Clark–Wilson.[^blp][^biba][^clark-wilson] Its narrower contribution is their composition around a durable organizational agent identity, task-scoped session, governed model binding, partitioned memory, service egress, and attributable delegation, projected onto deployable Linux and gateway mechanisms. The companion report carries a comparison matrix against DIFC, SELinux MLS, and workload-identity systems.
 
-The strongest objection is that this repackages DIFC, capability, and MLS ideas in agent terminology while deferring the hard parts—dynamic flow mediation and economically viable declassification. This paper does not claim to solve those parts. It claims that the ontology gives organizational policy, local enforcement, remote identity, and accountability a disciplined place to bind, is useful without information-flow machinery, and exposes the remaining semantic problem rather than hiding it inside an agent framework. SELinux MLS is valuable because it is not agent-specific, but it performs no semantic taint tracking and a targeted installation is not the multilevel profile.
+The ontology repackages DIFC, capability, and MLS ideas in agent terminology while deferring dynamic flow mediation and economical declassification. It does not solve those parts. It gives organizational policy, local enforcement, remote identity, and accountability a place to bind, works without information-flow machinery, and exposes the remaining semantic problem rather than hiding it inside an agent framework. SELinux MLS is valuable because it is not agent-specific, performs no semantic taint tracking, and a targeted installation is not the multilevel profile.
 
 ---
 
 ## 8. Adoption and evaluation
 
-Adoption need not begin with MLS or a new agent platform. The scenario to picture is ordinary: a developer runs an existing coding-agent harness against a repository; the harness reads a hostile issue comment and is induced to read the developer's credentials, push to `main`, and send the repository to an external host. Under a governed session all three fail—the credentials are not in the session's world, the only push path is a typed gateway operation limited to a staging branch, and there is no route except to the gateway—and the audit table names developer, agent, session, process, and staged push. Promotion to `main` happens outside the session, by CI and review.
+Adoption need not begin with MLS or a new agent platform. Consider a developer running an existing coding-agent harness against a repository. The harness reads a hostile issue comment and is induced to read the developer's credentials, push to `main`, and send the repository to an external host. Under a governed session, all three fail: the credentials are not in the session's world, the only push path is a typed gateway operation limited to a staging branch, and there is no route except to the gateway. The audit table names developer, agent, session, process, and staged push. Promotion to `main` happens outside the session, by CI and review.
 
 An existing harness can move incrementally toward that profile by:
 
@@ -304,7 +305,7 @@ Compartments, stronger MAC, and trusted release follow where risk justifies thei
 
 ### 8.1 What remains for the agent framework
 
-This architecture does not eliminate the harness; it narrows its mandate to work specific to cognition and agent behavior: forming cognitive context, invoking models, representing goals and structured tool requests, deciding when to delegate within an externally enforced ceiling, externalizing proposed memory before context loss, requesting authority changes through explicit policy interfaces, and participating in validation and review without controlling its own promotion or release. It may also provide orchestration, durable queues, retries, and distributed placement where single-host process semantics are insufficient. It should not be the sole reference monitor for resources the host or a service can enforce directly.
+This architecture does not eliminate the harness; it narrows its mandate to cognition and agent behaviour: forming cognitive context, invoking models, representing goals and structured tool requests, deciding when to delegate within an externally enforced ceiling, externalizing proposed memory before context loss, requesting authority changes through policy interfaces, and participating in validation and review without controlling its own promotion or release. It may also provide orchestration, durable queues, retries, and distributed placement where single-host process semantics are insufficient. It should not be the sole reference monitor for resources the host or a service can enforce directly.
 
 Unix composition remains useful, but a pipe is not merely a convenience in a governed system:
 
@@ -328,7 +329,7 @@ The most important falsification questions are:
 - Can narrower delegation launder confidentiality or integrity across a mediated edge?
 - Does the process-session design show a measured advantage over a microVM control arm?
 - Can a session bypass the model/service gateway or steal reusable credentials?
-- Can untrusted input modify trusted memory or production artifacts without promotion?
+- Can untrusted input modify trusted memory or production artefacts without promotion?
 - Can labels and provenance survive the actual Git, archive, backup, and remote-service workflows an organization uses?
 - Can administrators and reviewers operate the policy without broad exceptions, continual privileged repair, or rubber-stamped release?
 
@@ -338,28 +339,7 @@ Negative results are valuable. The ontology may remain useful even if full MLS p
 
 ## 9. Conclusion
 
-Multi-user agent systems need durable answers to five questions:
-
-1. Who is this agent?
-2. Under whose authority is this session operating?
-3. Which information and integrity domain does it inhabit?
-4. How are delegation and communication prevented from laundering authority or provenance?
-5. Can effects be attributed and governed after the model and process exit?
-
-A coherent division is available:
-
-- **agent:** durable, accountable organizational principal that owns partitioned state and is distinct from the identity that acts;
-- **session:** task-scoped process world under its own execution identity, with activated authority, information state, provenance, credentials, and budgets;
-- **execution:** ordinary process;
-- **model:** replaceable cognitive component whose binding to the session is governed and, when shared or remote, a governed service boundary;
-- **organizational policy:** computes the permissible session and lifecycle response;
-- **Unix and optional MAC:** enforce the local realization;
-- **gateways and remote services:** enforce effects beyond the host;
-- **trusted promotion and release:** govern integrity elevation and confidentiality downgrade.
-
-The ontology and baseline profile are viable with mechanisms deployed today, as an isolation, authority, and attribution boundary. Integrity provenance is the nearest payoff and needs no mandatory-access-control machinery. Compartments require real engineering; full MLS is an option whose release economics decide its viability; VMs and microVMs must be measured against rather than assumed inferior to. The formal rules remain a specification to be implemented, tested, and eventually formalized—not a proven model.
-
-The central contribution is the distinction between authority and information state. Authority can decrease when work is delegated; confidentiality and integrity provenance do not disappear because a new process, model, or agent object was created. If this principle is projected into enforceable local boundaries, partitioned memory, explicit communication edges, and remote reference monitors, agent systems can stop rebuilding weaker operating-system abstractions inside every harness while remaining honest about what Unix does not solve.
+The baseline profile can be built with current Linux mechanisms and evaluated as an isolation, authority, and attribution boundary. Later profiles add partitioned memory, mediated information flow, and trusted release. Their engineering and operating costs must be measured. Across all profiles, delegation may narrow authority but does not erase the confidentiality or integrity provenance of information already admitted. Organizational policy computes the permissible session; Unix and optional MAC enforce its local realization; gateways and remote services govern effects beyond the host. Integrity provenance is the first intended application. The formal rules remain a specification to be implemented, tested, and formalized rather than a proven model.
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR10
+**Version:** 0.5-TR11
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -25,24 +25,27 @@
 - **0.5-TR8** — WP0 consistency: execution-binding audit fields include inference pool; Phase 1 manifest flow clarified as policy authorization plus allocation-bound launch binding.
 - **0.5-TR9** — Construction step 1 restated as a `clone3` synchronization barrier (no kernel facility creates a stopped child); the two egress topologies are retained as general mechanisms with a note that Phase 1 selects the local-socket topology because network transports do not identify the operation-issuing process; Phase 1 decomposition names the `agentbound-lifecycle` daemon.
 - **0.5-TR10** — Manifest discussion restated as the two-stage policy-resolver/constructor flow with distinct authority; egress section labels the network topology as the general multi-host form and the local-socket topology as the Phase 1 realization.
+- **0.5-TR11** — Editorial tightening under docs/STYLE.md: ownership section shortened; dense paragraphs split; material owned by the architecture set reduced to references; no invariant or requirement changed.
 
 
 ---
 
 ## Purpose, scope, and document ownership
 
-The companion [position paper](position-paper.md) is the citable statement of the motivation, thesis, adoption argument, and conclusions. This report is the normative source for mechanism mapping, constructor behavior, information-flow rules, security invariants, threat assumptions, deployment constraints, and evaluation. It does not repeat the full argument; where motivation is required, it refers to the position paper.
-
-The report remains self-contained at the level needed to implement and test the architecture. Normative terms and notation are restated below, but their explanatory treatment belongs to the position paper. Changes to shared concepts should be made there first and then reflected here; detailed mechanisms and tests should be changed here and only summarized in the position paper.
+The companion [position paper](position-paper.md) owns the motivation, thesis, adoption argument, and conclusions; this report owns the normative mechanism mapping, constructor behaviour, information-flow rules, security invariants, threat assumptions, deployment constraints, and evaluation. The [manifest schema](../architecture/manifest-schema.md), [session lifecycle](../architecture/session-lifecycle.md), [ADR-0002](../architecture/ADR-0002-gateway-authentication.md), [ADR-0003](../architecture/ADR-0003-control-substrate.md), and [plan](../architecture/phase-1-requirements.md) own those topics; this report states only its applicable normative requirements.
 
 ### Normative terminology
 
 - **Agent principal:** a durable organizational security principal with a stable global identity, an accountable owner, potential authority and clearance, partitioned durable state, credential/model/tool policy, delegation constraints, retention rules, and lifecycle policy. The durable principal is a policy, ownership, and audit identity. A host UID that owns durable state is a local projection of it. The identity that owns durable state and the identity under which a session acts must be distinguishable to whatever enforces the session boundary; in the Unix-governed profile the owning UID does not run session processes.
-- **Execution identity:** the uniquely allocated local credential (UID, supplementary groups, and where applicable MAC type) under which one session's processes execute. It is allocated per session, never shared between concurrent sessions, and reclaimed only when a verified condition holds across a **declared managed domain** (session namespaces and mounts, manifest-registered host paths, runtime and workspace stores, broker grants, IPC namespaces, and cgroup state)—no live process, no owned object, no grant—followed by a reuse quarantine; anything exported beyond that domain must not rely on the numeric UID for durable authorization; audit records pair it with launch, boot, and session identifiers so that finite UIDs can be reclaimed without ambiguity. Durable state is reached through per-session grants (bind mounts, ACLs, descriptors, or a storage broker), not by running as the owner.
+- **Execution identity:** the uniquely allocated local credential (UID, supplementary groups, and where applicable MAC type) under which one session's processes execute. It is allocated per session and never shared between concurrent sessions.
+
+  It is reclaimed only when a verified condition holds across a **declared managed domain** (session namespaces and mounts, manifest-registered host paths, runtime and workspace stores, broker grants, IPC namespaces, and cgroup state): no live process, owned object, or grant remains. Reclamation is followed by a reuse quarantine. Anything exported beyond that domain must not rely on the numeric UID for durable authorization. Audit records pair it with launch, boot, and session identifiers so that finite UIDs can be reclaimed without ambiguity.
+
+  Durable state is reached through per-session grants (bind mounts, ACLs, descriptors, or a storage broker), not by running as the owner.
 - **Session:** a task-scoped realization of one agent principal, bound to an authenticated initiator, purpose, approvals, activated authority, confidentiality and integrity state, visible world, execution identity, credentials, budgets, process tree, outputs, and audit identity.
 - **Execution:** an ordinary process within a session. A cognitive runtime, shell, compiler, retrieval command, or model client is an execution, not an independent security principal unless separately provisioned as one.
 - **Model and execution binding:** a model is a cognitive implementation invoked by an execution. The session identity is stable across model replacement, but the model, endpoint, provider tenant, adapters or fine-tuned weights, retention mode, and inference pool together form an **approved execution binding**. Changing any element of the binding is a policy-controlled, auditable event that requires a compatibility decision, because it changes the session's information sources, sinks, and trusted computing base.
-- **Communication edge:** any prompt, message, file, descriptor, pipe, socket, queue entry, RPC, artifact, memory import, or service result admitted by another process or session. Each edge is either **mediated** (labeled and checked by a named component) or **unmediated**; a profile's information-flow claims extend only to its mediated edges.
+- **Communication edge:** any prompt, message, file, descriptor, pipe, socket, queue entry, RPC, artefact, memory import, or service result admitted by another process or session. Each edge is either **mediated** (labelled and checked by a named component) or **unmediated**; a profile's information-flow claims extend only to its mediated edges.
 
 Agent context comprises cognitive, informational, security, and organizational components. The session is the primary task-scoped boundary because admitted information may enter prompts, process memory, summaries, transcripts, caches, outputs, child messages, and durable memory.
 
@@ -110,7 +113,7 @@ admit(receiver, input) permitted iff
 
 Admission updates the receiver's state to `(I_receiver', T_receiver')`. The receiver's prior state participates in both operations; labels are monotone over a session's lifetime except through the trusted transitions below. Inputs whose labels are unknown are treated as the highest confidentiality and lowest integrity the channel may carry.
 
-Labels attach to objects (files, memory partitions, artifacts) and to channels (pipes, sockets, queues, gateway operations), not only to processes. A channel carries a maximum confidentiality and a minimum integrity; a mediating component must refuse inputs outside the channel's declared range.
+Labels attach to objects (files, memory partitions, artefacts) and to channels (pipes, sockets, queues, gateway operations), not only to processes. A channel carries a maximum confidentiality and a minimum integrity; a mediating component must refuse inputs outside the channel's declared range.
 
 Consequences:
 
@@ -152,7 +155,7 @@ The proposal uses existing mechanisms wherever their semantics fit.
 | Session execution identity | Per-session UID and groups, uniquely allocated with verified reclamation |
 | Organizational memberships | GIDs, supplementary groups, POSIX ACLs |
 | Mandatory identity and authorization range | SELinux user, role, types, MLS range |
-| Agent private state | Home directory, ownership, quotas, labeled storage |
+| Agent private state | Home directory, ownership, quotas, labelled storage |
 | Session | PAM/login session, `setsid(2)`, SID, PTY |
 | Job or pipeline | Process group and standard job control |
 | Current execution | PID and process credentials |
@@ -168,7 +171,7 @@ The proposal uses existing mechanisms wherever their semantics fit.
 | Resource limits and accounting | cgroups v2, rlimits, filesystem quotas |
 | Supervision | parent process and systemd service/scope units |
 | Provenance and denials | Linux Audit, login UID, SELinux AVC records |
-| Durable coordination and memory | labeled filesystem objects |
+| Durable coordination and memory | labelled filesystem objects |
 
 These mechanisms are compositional. In a typical access decision, visibility and permission are jointly constrained:
 
@@ -187,7 +190,7 @@ Linux process credentials already distinguish PIDs, sessions, process groups, re
 
 UID/GID permissions are discretionary access control (DAC): an authorized owner can often change an object’s discretionary permissions. They work well for ownership, collaboration, and stable organizational groups, but they are not sufficient for classified information. Unix session IDs and process groups likewise support terminal job control; they carry no file- or network-authorization semantics by themselves.
 
-Mandatory access control (MAC) places policy above object owners. SELinux combines identities, roles, types, and—under an installed and selected MLS policy—sensitivity levels and categories. Red Hat’s SELinux MLS documentation explicitly describes enforcement based on the Bell–LaPadula model and the “no read up, no write down” principle.[^rhel-mls] This is not the behavior of a typical default `targeted` SELinux installation: an MLS policy must be installed, selected, and validated. MCS categories can represent compartments such as a project, customer, legal matter, or business unit.
+Mandatory access control (MAC) places policy above object owners. SELinux combines identities, roles, types, and—under an installed and selected MLS policy—sensitivity levels and categories. Red Hat’s SELinux MLS documentation explicitly describes enforcement based on the Bell–LaPadula model and the “no read up, no write down” principle.[^rhel-mls] This is not the behaviour of a typical default `targeted` SELinux installation: an MLS policy must be installed, selected, and validated. MCS categories can represent compartments such as a project, customer, legal matter, or business unit.
 
 An illustrative process context is:
 
@@ -323,7 +326,11 @@ resources:
   runtime_max: 2h
 ```
 
-The manifest is not itself the security boundary and must never be interpreted as an entitlement. The request is resolved in two stages by two components with different authority. An **unprivileged policy resolver** accepts only an authenticated initiator, a registered agent identifier, a task/purpose identifier, and a bounded set of requested resources; resolves all named resources through a server-side catalogue; intersects the request with current agent and initiator policy; rejects unknown fields and non-canonical paths; and signs an **authorization manifest** that contains every policy decision but no host allocation—no UID, host path, or credential handle. A **narrow privileged constructor** verifies that signature, atomically reserves an execution identity, projects each authorized intent onto the host, and signs a **launch binding** that references the authorization manifest by digest and may neither add, drop, nor widen anything in it. The verified pair is the effective manifest; the constructor never derives policy and the resolver never touches host state. Agent-authored text may request a future session but cannot supply authoritative UID, label, mount, credential, or network values. The resulting immutable launch record supports audit and reproducibility.
+The manifest is not itself the security boundary and must never be interpreted as an entitlement. The request is resolved in two stages by two components with different authority. An **unprivileged policy resolver** accepts only an authenticated initiator, a registered agent identifier, a task/purpose identifier, and a bounded set of requested resources. It resolves all named resources through a server-side catalogue, intersects the request with current agent and initiator policy, rejects unknown fields and non-canonical paths, and signs an **authorization manifest** that contains every policy decision but no host allocation—no UID, host path, or credential handle.
+
+A **narrow privileged constructor** verifies that signature, atomically reserves an execution identity, projects each authorized intent onto the host, and signs a **launch binding** that references the authorization manifest by digest. It may neither add, drop, nor widen anything in the authorization manifest. Agent-authored text may request a future session but cannot supply authoritative UID, label, mount, credential, or network values.
+
+The verified pair is the effective manifest; the constructor never derives policy and the resolver never touches host state. The resulting immutable launch record supports audit and reproducibility.
 
 Hostnames in such a manifest are policy names rather than sufficient enforcement objects. DNS rebinding, redirects, CDNs, proxies, IPv6, local sockets, TLS identity, and multi-tenant endpoints make hostname allowlists fragile. Sensitive sessions should normally reach an authenticated gateway or workload identity whose service, tenant, model, retention mode, method, and budget can be verified; network policy should prevent bypassing it.
 
@@ -367,7 +374,7 @@ L_output ⪰ join(L_session, L_input1, …, L_inputN)
 
 This is a design rule for assigning the session and output labels; SELinux does not dynamically compute that join from the read history of an ordinary process.
 
-SELinux can prevent a session running in a high context from writing to a lower-labeled object when the MLS policy is configured accordingly. The reference policy is commonly stricter than textbook Bell–LaPadula for ordinary writes, requiring equal levels unless a trusted-domain exception applies.[^selinux-mls] It can prevent unauthorized relabeling and constrain which domains perform transitions. It cannot inspect generated prose, infer its semantic classification, or automatically compute a derived output’s label from everything the process has read. Therefore:
+SELinux can prevent a session running in a high context from writing to a lower-labelled object when the MLS policy is configured accordingly. The reference policy is commonly stricter than textbook Bell–LaPadula for ordinary writes, requiring equal levels unless a trusted-domain exception applies.[^selinux-mls] It can prevent unauthorized relabeling and constrain which domains perform transitions. It cannot inspect generated prose, infer its semantic classification, or automatically compute a derived output’s label from everything the process has read. Therefore:
 
 > **SELinux enforces declared labels; it does not classify language.**
 
@@ -398,7 +405,15 @@ Confidential  → private endpoint with suitable controls
 Secret        → local or specifically accredited endpoint
 ```
 
-The table above is illustrative organizational policy, not a universal consequence of a classification level; accreditation, jurisdiction, contracts, and the organization’s threat model determine the actual mapping. Network namespaces, firewall/eBPF policy, proxy enforcement, SELinux network policy, Landlock TCP bind/connect restrictions on supporting kernel ABIs, and short-lived workload credentials can constrain local egress. Carrying MLS labels across hosts additionally requires an explicitly configured labeled-network mechanism such as NetLabel/CIPSO or an application gateway that preserves and enforces equivalent metadata; ordinary Internet TCP does not transport a trustworthy SELinux label. Landlock network rules strengthen inherited, unprivileged self-restriction but do not resolve DNS, redirects, proxies, TLS or tenant identity, non-TCP channels, or remote authorization; they complement rather than replace a gateway. Contractual and remote-system controls must govern what happens after transmission. A paper about classified agents that ignores model egress would be incomplete.
+The table above is illustrative organizational policy, not a universal consequence of a classification level. Accreditation, jurisdiction, contracts, and the organization’s threat model determine the actual mapping.
+
+Network namespaces, firewall/eBPF policy, proxy enforcement, SELinux network policy, Landlock TCP bind/connect restrictions on supporting kernel ABIs, and short-lived workload credentials can constrain local egress.
+
+Carrying MLS labels across hosts additionally requires an explicitly configured labelled-network mechanism such as NetLabel/CIPSO or an application gateway that preserves and enforces equivalent metadata. Ordinary Internet TCP does not transport a trustworthy SELinux label.
+
+Landlock network rules strengthen inherited, unprivileged self-restriction. They do not resolve DNS, redirects, proxies, TLS or tenant identity, non-TCP channels, or remote authorization, and complement rather than replace a gateway.
+
+Contractual and remote-system controls must govern what happens after transmission.
 
 A shared local inference server should be treated as a service boundary too. GPU device access, accelerator memory, batching across security domains, prompt and KV caches, adapters, logs, crash dumps, and model-server credentials can all cross session boundaries. High-assurance deployments may require label-aware gateways, separate server instances, hardware partitioning, or dedicated accelerators rather than direct access to shared device nodes.
 
@@ -425,11 +440,13 @@ Additional conditions:
 
 - the session holds no `CAP_NET_RAW` or `CAP_NET_ADMIN`; seccomp forbids unneeded socket families (`AF_PACKET`, `AF_VSOCK`, `AF_NETLINK` beyond what the runtime needs, and raw sockets);
 - the inherited descriptor set contains no pre-opened sockets or connections;
-- no host Unix-domain sockets, loopback services, container-runtime sockets, or local proxies are mounted or reachable inside the session's world. The one permitted alternative is a **local-socket topology** in which the session has no network interface at all and reaches the gateway through exactly one explicitly mounted, single-purpose `AF_UNIX` socket authenticated by peer credentials; a deployment selects one topology and each carries its own bypass tests. Because network transports (mTLS, veth mapping) identify a session but not the process issuing each operation, a profile that claims the process leg of Invariant 13 must use the local-socket topology with kernel-supplied per-operation credentials (`SOCK_SEQPACKET`, `SCM_CREDENTIALS`); Phase 1 does so (plan §3.3, ADR-0002);
+- no host Unix-domain sockets, loopback services, container-runtime sockets, or local proxies are mounted or reachable inside the session's world;
+- the one permitted alternative is a **local-socket topology** in which the session has no network interface and reaches the gateway through exactly one explicitly mounted, single-purpose `AF_UNIX` socket authenticated by peer credentials. A deployment selects one topology, and each carries its own bypass tests;
+- network transports (mTLS, veth mapping) identify a session but not the process issuing each operation. A profile that claims the process leg of Invariant 13 must use the local-socket topology with kernel-supplied per-operation credentials (`SOCK_SEQPACKET`, `SCM_CREDENTIALS`). Phase 1 does so ([plan §3.3](../architecture/phase-1-requirements.md), [ADR-0002](../architecture/ADR-0002-gateway-authentication.md));
 - the gateway is not a generic HTTP or CONNECT proxy. It exposes named operations with typed arguments, authorizes destination, method, body semantics, tenant, and response size per operation, authenticates its upstream TLS peer, and binds a signed per-session identity and audience to every request;
-- Landlock TCP `bind`/`connect` rules and hostname allowlists are defense in depth, not the boundary: they cover neither UDP/QUIC, vsock, existing descriptors, DNS behavior, nor TLS identity.
+- Landlock TCP `bind`/`connect` rules and hostname allowlists are defense in depth, not the boundary: they cover neither UDP/QUIC, vsock, existing descriptors, DNS behaviour, nor TLS identity.
 
-Bypass testing must therefore cover UDP and QUIC, vsock, IPv6 and link-local addresses, cloud metadata addresses, DNS resolver behavior, pre-opened connections, host service sockets, and attempts to use the gateway itself as a tunnel or SSRF oracle. A local broker reduces token theft but not malicious in-session use: a hostile process in the session can ask the broker to perform any operation the session is authorized for, so broker operations must be narrowly typed and bound to the session's declared task.
+Bypass testing must therefore cover UDP and QUIC, vsock, IPv6 and link-local addresses, cloud metadata addresses, DNS resolver behaviour, pre-opened connections, host service sockets, and attempts to use the gateway itself as a tunnel or SSRF oracle. A local broker reduces token theft but not malicious in-session use: a hostile process in the session can ask the broker to perform any operation the session is authorized for, so broker operations must be narrowly typed and bound to the session's declared task.
 
 ### 3.3 Durable memory is partitioned information
 
@@ -464,12 +481,12 @@ A promotion predicate must name its validator identity, the evidence it consumed
 
 ### 3.4 Integrity and trusted promotion
 
-Confidentiality control alone does not address the dominant prompt-injection failure mode: an authorized agent reads hostile material and corrupts an artifact it is allowed to write. A reference design should separate:
+Confidentiality control alone does not address the dominant prompt-injection failure mode: an authorized agent reads hostile material and corrupts an artefact it is allowed to write. A reference design should separate:
 
 - immutable or low-integrity imported material;
 - untrusted parsing and retrieval processes;
 - model-generated proposals and patches in staging areas;
-- validated artifacts that passed deterministic checks;
+- validated artefacts that passed deterministic checks;
 - reviewed or approved outputs promoted into trusted repositories;
 - protected runtime configuration, policy, credentials, tools, and durable memory.
 
@@ -477,7 +494,7 @@ The default workflow is **stage, validate, and promote**, not direct mutation of
 
 ### 3.5 Declassification is a capacity-constrained system
 
-Conservative labeling tends to raise sessions and outputs toward the join of everything they can observe. This is secure but can produce label creep: too many useful outputs require downgrade, review queues become bottlenecks, and reviewers may begin to rubber-stamp releases. Declassification is therefore not a clause at the end of an MLS design; it is an operational subsystem whose economics may determine whether the design is viable.
+Conservative labelling tends to raise sessions and outputs toward the join of everything they can observe. This is secure but can produce label creep: too many useful outputs require downgrade, review queues become bottlenecks, and reviewers may begin to rubber-stamp releases. Declassification is therefore not a clause at the end of an MLS design; it is an operational subsystem whose economics may determine whether the design is viable.
 
 A production design should minimize unnecessary joins through narrow sessions and compartmented memory, define deterministic releases where possible, preserve source provenance for reviewers, separate requesters from approvers when appropriate, and measure review latency, rejection and correction rates, reviewer agreement, automated-release coverage, accidental overclassification, and post-release incidents. If useful work cannot exit a domain at sustainable cost, the policy is operationally unsuccessful even if it is formally conservative.
 
@@ -531,9 +548,9 @@ Conformance testing for Invariant 17 must attempt, from one session against a co
 
 ### 4.2 Peer and cross-principal communication
 
-Delegation is only one communication topology. Sibling sessions and agents belonging to different principals also exchange messages, artifacts, queue entries, RPC calls, repository changes, and file descriptors. Every such edge is an authorization decision, an information admission, a possible confidentiality join, an integrity/provenance transition, and an auditable causal link.
+Delegation is only one communication topology. Sibling sessions and agents belonging to different principals also exchange messages, artefacts, queue entries, RPC calls, repository changes, and file descriptors. Every such edge is an authorization decision, an information admission, a possible confidentiality join, an integrity/provenance transition, and an auditable causal link.
 
-A receiver may import a message or artifact only when it is authorized for the named channel, its confidentiality domain dominates the message label, and the message's provenance and integrity state are preserved without silent promotion. If those conditions are not met, the receiver must reject the input, enter or create a compatible session, or use a trusted release/validation boundary. The audit record should bind sender session, receiver session, channel, object digest or message identifier, labels, and policy decision. Pipes and Unix sockets are useful transports, not exceptions to the rule.
+A receiver may import a message or artefact only when it is authorized for the named channel, its confidentiality domain dominates the message label, and the message's provenance and integrity state are preserved without silent promotion. If those conditions are not met, the receiver must reject the input, enter or create a compatible session, or use a trusted release/validation boundary. The audit record should bind sender session, receiver session, channel, object digest or message identifier, labels, and policy decision. Pipes and Unix sockets are useful transports, not exceptions to the rule.
 
 ### 4.3 Human attachment and interactive control
 
@@ -576,7 +593,7 @@ The launch record needs a stated trust anchor: who signs it, how its append-only
 
 Kernel audit and service-side logs can then be correlated with this record. Tamper-evident application records, such as Orkia’s signed SEAL chains, are complementary to kernel audit rather than substitutes for it.
 
-The attribution claim is scoped to a **defined effect ontology**: local object creation and modification within the session's world, process lifecycle events, and gateway-mediated remote operations. Kernel audit cannot reveal the semantic operation performed inside an already-authorized database connection, SaaS API, model server, or multiplexed gateway; those services must preserve the session trace identity in their own authorization and audit records. Audit availability is also a security property: deployments must specify behavior when buffers fill, collectors fail, clocks diverge, or event volume exceeds capacity, and must expose loss counters. The profile that claims attribution should stop or quarantine sessions rather than continue without required evidence.
+The attribution claim is scoped to a **defined effect ontology**: local object creation and modification within the session's world, process lifecycle events, and gateway-mediated remote operations. Kernel audit cannot reveal the semantic operation performed inside an already-authorized database connection, SaaS API, model server, or multiplexed gateway; those services must preserve the session trace identity in their own authorization and audit records. Audit availability is also a security property: deployments must specify behaviour when buffers fill, collectors fail, clocks diverge, or event volume exceeds capacity, and must expose loss counters. The profile that claims attribution should stop or quarantine sessions rather than continue without required evidence.
 
 ### 5.1 Local and remote enforcement boundary
 
@@ -613,13 +630,13 @@ Quine is the closest conceptual predecessor, but the ontologies differ:
 | Classification | Not a primary model | SELinux MLS/MCS plus output rules |
 | Main concern | Cognitive execution and composition | Organizational identity, authority, and information governance |
 
-The approaches compose naturally: Quine can be a cognitive runtime inside a governed session. In short, **Quine Unix-nativeizes agent execution; this proposal Unix-nativeizes agent identity and information governance.**
+Quine can be a cognitive runtime inside a governed session.
 
 ### 6.2 Orkia: agents as governed shell jobs
 
 Orkia is an interactive shell built on a POSIX shell engine that hosts Claude Code, Codex, and Gemini sessions as persistent jobs in isolated PTYs. It exposes dispatch, attach, follow-up, kill, pipelines, and a signed tamper-evident audit chain.[^orkia] This strongly supports “sessions as shells” and Unix job semantics.
 
-Orkia’s current public framing treats named agent sessions as governed jobs and adds a capability/audit layer. The proposal here differs by making the durable agent a kernel security principal and placing MLS/MCS classification, initiator-agent intersection, and session output labeling at the center.
+Orkia’s current public framing treats named agent sessions as governed jobs and adds a capability/audit layer. The proposal here differs by making the durable agent a kernel security principal and placing MLS/MCS classification, initiator-agent intersection, and session output labelling at the centre.
 
 ### 6.3 AaaU and agent-as-unix-user
 
@@ -631,7 +648,7 @@ These projects are direct demonstrations of the local principal idea and likely 
 
 agentsh positions itself as an execution-layer security shell. It intercepts or constrains file, network, process, signal, database, and outbound LLM API activity; applies policy to subprocess trees; and emits structured audit events. Its Linux modes combine mechanisms including seccomp, eBPF, FUSE, Landlock, and capability dropping.[^agentsh]
 
-This shares the principle that controls should be enforced below prompt and tool abstractions. Its policy/interception approach is complementary to principal- and label-based enforcement. The distinction is that agentsh does not by itself define the durable organizational principal and MLS session ontology proposed here.
+agentsh does not by itself define the durable organizational principal and MLS session ontology proposed here.
 
 ### 6.5 Agent OS: filesystem-native orchestration
 
@@ -655,7 +672,7 @@ Authenticated-delegation research similarly argues that a service must distingui
 
 ### 6.8 Agent-specific access-control research
 
-Recent access-control research is converging on the observation that static tool allowlists are insufficient. The Agent Access Control vision frames the problem as governance of dynamic information flow rather than only binary resource access.[^aac] SEAgent proposes an application-layer mandatory-access-control framework for LLM agents, including labeled subjects, a policy database, decision engine, and protected memory, with the aim of constraining privilege escalation in single- and multi-agent systems.[^seagent]
+Recent access-control research is converging on the observation that static tool allowlists are insufficient. The Agent Access Control vision frames the problem as governance of dynamic information flow rather than only binary resource access.[^aac] SEAgent proposes an application-layer mandatory-access-control framework for LLM agents, including labelled subjects, a policy database, decision engine, and protected memory, with the aim of constraining privilege escalation in single- and multi-agent systems.[^seagent]
 
 These efforts overlap with the position paper’s concern for context, delegation, and derived information. Their mechanisms are principally agent-runtime policy abstractions. The proposal here explores a different enforcement placement: encode coarse, auditable information domains in ordinary OS principals and SELinux labels, then reserve semantic reasoning for policy selection and trusted release. The approaches may be layered; kernel MAC cannot replace semantic governance, while an application decision engine should not be the only barrier protecting filesystem objects and subprocesses.
 
@@ -665,7 +682,7 @@ Decentralized information-flow-control (DIFC) systems are the closest academic a
 
 The position paper does not claim to invent label joining, process-level information flow, integrity labels, or controlled declassification. Its narrower contribution is to compose related ideas around a durable organizational agent principal, an initiator- and task-bound cognitive session, partitioned agent memory, model and service egress, delegated workload identity, and attributable execution. It initially favors controls deployable on conventional Linux, while recognizing that ordinary SELinux MLS/MCS provides less dynamic label ownership and propagation than purpose-built DIFC systems. DIFC also makes clear why declassification authority and every message or descriptor crossing a boundary must be explicit.
 
-The strongest objection to this proposal is that it repackages DIFC, capability, and MLS ideas in agent terminology while deferring the hard parts—dynamic flow mediation and economically viable declassification. The honest response is that this report does not claim to solve those parts. It claims that a durable-principal/task-session ontology provides a disciplined place to bind organizational policy, local enforcement, remote identity, and accountability, and that it exposes the remaining semantic information-flow problem rather than hiding it inside an agent framework. The Unix-governed profile is explicitly a non-IFC isolation and attribution profile; the compartmented and multilevel profiles inherit DIFC's obligations and the release-economics condition.
+The [position paper](position-paper.md) addresses the objection that the proposal repackages DIFC, capability, and MLS ideas while deferring dynamic flow mediation and economically viable declassification. The Unix-governed profile is a non-IFC isolation and attribution profile; the compartmented and multilevel profiles inherit DIFC's obligations and the release-economics condition.
 
 The following table positions the proposal against the traditions it draws on:
 
@@ -673,7 +690,7 @@ The following table positions the proposal against the traditions it draws on:
 |---|---|---|---|---|
 | Label ownership | Per-principal, decentralized | Central policy | None (authority, not labels) | Central policy; principal owns partitions |
 | Dynamic propagation | Yes, on every mediated IPC | No; declared per object/domain | No | Only on mediated edges per profile |
-| Persistent labeled state | Labeled files/objects | Labeled inodes | No | Partitioned memory with provenance |
+| Persistent labelled state | Labeled files/objects | Labeled inodes | No | Partitioned memory with provenance |
 | Authority delegation | Capabilities/privileges | Domain transitions | Token scopes | Derivation relation; monotonic sessions |
 | Declassification authority | Label owner | Trusted subject | N/A | Named trusted release service |
 | Remote/distributed services | Mostly single host | Labeled networking (rare) | Yes, core strength | Gateway + trace identity |
@@ -681,7 +698,7 @@ The following table positions the proposal against the traditions it draws on:
 | Durable organizational identity | Process/principal, not organizational | User/role | Workload, not agent | Agent principal + session |
 | Attribution chain | Process-level | Process-level | Service-side | Launch record + trace identity + audit |
 
-The confidentiality rules descend from Bell–LaPadula and Denning's lattice model; the integrity rules from Biba; and stage–validate–promote from Clark–Wilson's certified transformation procedures over constrained data items.[^blp][^denning][^biba][^clark-wilson] Provenance and supply-chain integrity work (in-toto, SLSA) addresses the same promotion problem for build artifacts and is directly reusable for the structured-memory class.[^slsa]
+The confidentiality rules descend from Bell–LaPadula and Denning's lattice model; the integrity rules from Biba; and stage–validate–promote from Clark–Wilson's certified transformation procedures over constrained data items.[^blp][^denning][^biba][^clark-wilson] Provenance and supply-chain integrity work (in-toto, SLSA) addresses the same promotion problem for build artefacts and is directly reusable for the structured-memory class.[^slsa]
 
 ### 6.10 SELinux MLS and historical multilevel security
 
@@ -711,7 +728,7 @@ Every invariant also has configuration preconditions and excluded interfaces; th
 | 6 | **Monotonic delegation.** The launcher narrows authority; capability bounds, `no_new_privs`, Landlock, namespaces, descriptor discipline, and MAC transition rules prevent specified re-expansion. | U C M W | C K | prevents | Excludes: already-open descriptors not inventoried; set-ID binaries or permitted transitions left in the session's world. |
 | 7 | **Fail-closed construction.** If a required identity, label, namespace, mount, limit, network path, credential restriction, or audit binding cannot be established, the session does not start and no partial effect survives. | U C M W | C | prevents | Requires rollback for every irreversible step (Section 2.1). |
 | 8 | **Classified persistence.** Objects created through supported paths receive at least the session's label. | C M | C K | prevents | Excludes: archives, Git objects, object stores, backups, hard links, and any path not covered by a type transition or gateway. |
-| 9 | **No ordinary downgrade.** The session lacks relabel and write-down permission; only a separate trusted declassifier may release lower-labeled output. | M | K | prevents | Requires a complete MLS policy with all trusted-subject exceptions analyzed; excludes covert channels. |
+| 9 | **No ordinary downgrade.** The session lacks relabel and write-down permission; only a separate trusted declassifier may release lower-labelled output. | M | K | prevents | Requires a complete MLS policy with all trusted-subject exceptions analyzed; excludes covert channels. |
 | 10 | **Gateway-only egress.** The topology in Section 3.2 is present, so a session reaches only its gateway and approved resolver. | U C M W | C K | prevents | Excludes: side channels; misuse of an authorized gateway operation; requires the full topology, not a namespace alone. |
 | 11 | **Credential confinement.** Issuers create minimally scoped, short-lived credentials bound to the session and revoke them at termination. | U C M W | C P | prevents / **assumption** | Non-exportability holds only for proof-of-possession or brokered credentials; bearer tokens are copyable within the session. |
 | 12 | **Complete descendant control.** All descendants remain in the supervised cgroup and PID namespace; termination kills and reaps them before credential revocation. | U C M W | C K | prevents | Requires no writable cgroup or system-manager path in the session; D-state tasks may delay, not escape, termination. |
@@ -721,9 +738,9 @@ Every invariant also has configuration preconditions and excluded interfaces; th
 | 16 | **Contamination-safe communication.** On every **mediated** edge, admission follows the admission relation; narrowing authority or using a fresh process never lowers `I` or raises `T`. | C M | C K | prevents | Applies only to edges in the profile's coverage inventory; unmediated edges carry no claim. |
 | 17 | **Same-principal session isolation.** Concurrent sessions of one durable principal cannot inspect, signal, trace, attach to, or access each other's private state and credentials unless an explicit channel is authorized. | U C M W | C K | prevents | Requires distinct execution identities (or a per-session MAC type in C/M); excludes shared durable partitions deliberately granted to both. |
 | 18 | **Partitioned durable memory.** A session imports only partitions compatible with its `I` and `T`; ownership does not grant ambient access to all memory. | C M | C K P | prevents | Requires a partitioned store and per-session grants; not claimed in U beyond per-session workspace separation. |
-| 19 | **Integrity promotion.** Untrusted inputs and model-generated artifacts cannot directly replace trusted configuration, approved memory, protected branches, or production objects; promotion crosses a named validator. | U (protected-object subset) C M | C K P | prevents | In U the claim is limited to objects behind a gateway or branch-protection boundary; memory promotion is C/M. |
+| 19 | **Integrity promotion.** Untrusted inputs and model-generated artefacts cannot directly replace trusted configuration, approved memory, protected branches, or production objects; promotion crosses a named validator. | U (protected-object subset) C M | C K P | prevents | In U the claim is limited to objects behind a gateway or branch-protection boundary; memory promotion is C/M. |
 | 20 | **Bounded external resources.** Gateways and supervisors enforce token, spend, rate, fan-out, storage, accelerator, and audit-capacity budgets. | U C M W | C P | prevents | Budgets not visible to cgroups require gateway enforcement. |
-| 21 | **Explicit lifecycle and revocation.** Policy defines active-session behavior for initiator disablement, authority revocation, reclassification, approval expiry, and control-plane failure. | U C M W | C P | **assumption** | Defined and tested, but behavior is a policy choice. |
+| 21 | **Explicit lifecycle and revocation.** Policy defines active-session behaviour for initiator disablement, authority revocation, reclassification, approval expiry, and control-plane failure. | U C M W | C P | **assumption** | Defined and tested, but behaviour is a policy choice. |
 | 22 | **Execution-binding control.** Changing the model, endpoint, tenant, adapters, retention mode, or inference pool of a session is a policy-controlled, audited event with a compatibility decision. | U C M W | C P | prevents | Requires the gateway to be the only path to inference (Invariant 10). |
 
 Evidence tables must distinguish five results for each applicable invariant: **enforced and passed**, **enforced but failed**, **detected only**, **assumption (documented and accepted)**, and **not applicable to this profile**.
@@ -748,7 +765,7 @@ The system should assume:
 The initial scope does not claim to prevent:
 
 - kernel vulnerabilities or physical compromise;
-- hardware side channels and covert timing or storage channels through scheduling, shared caches, memory pressure, cgroup statistics, filesystem metadata, or other shared state; the primary claim concerns overt flows through kernel-mediated labeled objects and configured gateways;
+- hardware side channels and covert timing or storage channels through scheduling, shared caches, memory pressure, cgroup statistics, filesystem metadata, or other shared state; the primary claim concerns overt flows through kernel-mediated labelled objects and configured gateways;
 - flows across **unmediated edges** in a given profile (see the coverage inventory in the front matter and Section 9.1);
 - semantic leakage through an approved output that is mislabeled by a trusted declassifier;
 - malicious administrators with sufficient host and policy authority;
@@ -763,7 +780,7 @@ seccomp reduces syscall attack surface but is explicitly not a complete sandbox 
 
 A hostile session may exhaust more than CPU and memory. Limits and accounting should cover process and descriptor counts, disk bytes and inodes, I/O and network bandwidth, connections, audit volume, child-session fan-out, accelerator memory and time, model tokens, API rate limits, and monetary spend. cgroups enforce only part of this set; model and service gateways must enforce external budgets.
 
-Containment also does not establish executable integrity. The session base filesystem, models and adapters, tools, plugins, dependency installation, compiler caches, startup files, `PATH`, dynamic-loader environment, and writable configuration are supply-chain inputs. High-integrity profiles should use an immutable or measured base, scrub the environment, verify eligible artifacts, isolate build caches, and direct untrusted package installation into disposable staging rather than the trusted runtime or durable agent memory.
+Containment also does not establish executable integrity. The session base filesystem, models and adapters, tools, plugins, dependency installation, compiler caches, startup files, `PATH`, dynamic-loader environment, and writable configuration are supply-chain inputs. High-integrity profiles should use an immutable or measured base, scrub the environment, verify eligible artefacts, isolate build caches, and direct untrusted package installation into disposable staging rather than the trusted runtime or durable agent memory.
 
 ---
 
@@ -776,15 +793,15 @@ The ontology does not require every deployment to adopt full SELinux MLS. Four c
 1. **Unix-governed session:** global agent identity with a per-session execution identity; per-session namespaces, cgroup, private storage, capability removal, `no_new_privs`, optional Landlock/seccomp and host MAC, gateway-only egress topology, brokered or session-bound credentials, and an attributable launch record. This profile is viable with current Linux and systemd machinery. SELinux type enforcement is not the only useful baseline MAC: AppArmor or other supported LSM controls may provide meaningful confinement on distributions where SELinux is impractical, although they are not drop-in implementations of the multilevel profile.
 
    **Coverage inventory.** This profile mediates: authority activation, execution-world separation, same-principal isolation, descendant control, credential use, gateway operations, and the launch record. It does **not** mediate the content of prompts, tool arguments, intra-session pipes and files, logs, or model responses, and therefore makes **no confidentiality- or integrity-propagation claim**. It is an isolation, authority, and attribution profile, not an information-flow profile. Integrity claims are limited to objects protected behind a gateway or branch-protection boundary (Invariant 19, protected-object subset).
-2. **Compartmented session:** the baseline plus MCS or equivalent project/tenant separation, partitioned durable memory, labeled channels, authenticated gateways, category allocation, and controlled import/export. This is the first profile that claims Invariants 16 and 18, and only for the edges in its published coverage inventory. Existing container practice supports category isolation, but does not by itself prove multilevel information-flow control.
-3. **Multilevel session:** full MLS sensitivities, declared flow rules, labeled persistence and networking or equivalent gateways, analyzed policy, and trusted declassification. This is a high-assurance research and deployment profile whose staffing, tooling, interoperability, and operating cost must be measured. Its viability depends on the release economics of Section 3.5, which are a conformance condition, not a footnote.
+2. **Compartmented session:** the baseline plus MCS or equivalent project/tenant separation, partitioned durable memory, labelled channels, authenticated gateways, category allocation, and controlled import/export. This is the first profile that claims Invariants 16 and 18, and only for the edges in its published coverage inventory. Existing container practice supports category isolation, but does not by itself prove multilevel information-flow control.
+3. **Multilevel session:** full MLS sensitivities, declared flow rules, labelled persistence and networking or equivalent gateways, analyzed policy, and trusted declassification. This is a high-assurance research and deployment profile whose staffing, tooling, interoperability, and operating cost must be measured. Its viability depends on the release economics of Section 3.5, which are a conformance condition, not a footnote.
 4. **Strong workload isolation:** a container, VM, microVM, or dedicated node around any of the above. This reduces shared-kernel risk but does not by itself label outputs, partition memory, constrain remote services, or provide declassification.
 
 LSM stacking and feature availability vary by kernel and distribution; combinations of SELinux, AppArmor, Landlock, BPF LSM, and other modules must be tested rather than assumed to compose with identical hooks and semantics. The multilevel profile in this report is specifically described using SELinux MLS/MCS or a system shown to provide equivalent declared information-flow properties.
 
 ### 9.2 MicroVM-per-session baseline
 
-A serious evaluation must compare the shared-host design with a microVM or VM per session plus per-session cloud IAM. MicroVMs commonly offer a simpler and stronger boundary against cross-workload kernel and device interference, at the cost of startup time, memory, image management, and more complex state and observability. They do not answer where information may flow after it enters the VM. The likely high-assurance architecture may combine both ideas: organizational identity and task policy create a microVM session, while labeled storage, gateways, scoped credentials, partitioned memory, and trusted release preserve the information domain.
+A serious evaluation must compare the shared-host design with a microVM or VM per session plus per-session cloud IAM. MicroVMs commonly offer a simpler and stronger boundary against cross-workload kernel and device interference, at the cost of startup time, memory, image management, and more complex state and observability. They do not answer where information may flow after it enters the VM. The likely high-assurance architecture may combine both ideas: organizational identity and task policy create a microVM session, while labelled storage, gateways, scoped credentials, partitioned memory, and trusted release preserve the information domain.
 
 The comparison should measure boundary strength, launch latency, steady-state memory, accelerator sharing, policy complexity, credential issuance, storage continuity, audit fidelity, patching, and operator skill requirements rather than assuming either labels or virtualization wins universally.
 
@@ -792,7 +809,7 @@ The comparison should measure boundary strength, launch latency, steady-state me
 
 Creating a host account for every ephemeral helper is unnecessary and may not scale operationally. Durable organizational agents merit stable principals; transient delegations can use processes, sessions, dynamically allocated UIDs, or namespace-local mappings. Fleet-wide identity requires centralized allocation or host-local projections that avoid UID collision. The design is Linux-specific where it depends on SELinux, Landlock, cgroups v2, and Linux Audit.
 
-The durable principal itself needs a lifecycle: `proposed → provisioned → active → suspended → retired → archived/deleted`. Provisioning binds an accountable organizational owner, policy, credential eligibility, and memory custody; rotation updates keys, attestations, endpoint eligibility, and local projections without breaking audit identity. Retirement revokes new sessions and credentials, seals or transfers each labeled memory partition under an explicit custodian and retention policy, and reconciles files and ACLs across the fleet before any host UID is reclaimed. Globally durable principal identifiers and historical audit identities must never be reused even if a host-local numeric UID eventually is.
+The durable principal itself needs a lifecycle: `proposed → provisioned → active → suspended → retired → archived/deleted`. Provisioning binds an accountable organizational owner, policy, credential eligibility, and memory custody; rotation updates keys, attestations, endpoint eligibility, and local projections without breaking audit identity. Retirement revokes new sessions and credentials, seals or transfers each labelled memory partition under an explicit custodian and retention policy, and reconciles files and ACLs across the fleet before any host UID is reclaimed. Globally durable principal identifiers and historical audit identities must never be reused even if a host-local numeric UID eventually is.
 
 ### 9.4 POSIX groups are not enterprise IAM
 
@@ -800,7 +817,7 @@ One owning group per inode and supplementary-group membership cannot represent e
 
 ### 9.5 Labels do not understand meaning
 
-MLS controls declared information domains; it does not recognize that an innocuous-looking paragraph reveals a secret. Conservative session labeling and trusted release are necessary. More precise semantic provenance remains a research problem.
+MLS controls declared information domains; it does not recognize that an innocuous-looking paragraph reveals a secret. Conservative session labelling and trusted release are necessary. More precise semantic provenance remains a research problem.
 
 ### 9.6 Revocation and session lifecycle
 
@@ -814,15 +831,15 @@ Databases, SaaS applications, Git hosts, and cloud APIs do not authorize UIDs. A
 
 ### 9.8 SELinux operational complexity
 
-A normal `targeted` SELinux installation is not this architecture. A prototype requires the MLS policy, purpose-built agent and gateway domains, reviewed transitions and constraints, a category-allocation service, labeled storage and networking decisions, and tests for policy exceptions. RHEL exposes a finite category space (commonly 1024 categories), so assigning one permanent category to every tenant-project-session combination does not scale without reuse or structured allocation. Fleet-wide dynamic allocation becomes a privileged distributed service requiring consistency, collision avoidance, lifecycle rules, and auditable reuse.
+A normal `targeted` SELinux installation is not this architecture. A prototype requires the MLS policy, purpose-built agent and gateway domains, reviewed transitions and constraints, a category-allocation service, labelled storage and networking decisions, and tests for policy exceptions. RHEL exposes a finite category space (commonly 1024 categories), so assigning one permanent category to every tenant-project-session combination does not scale without reuse or structured allocation. Fleet-wide dynamic allocation becomes a privileged distributed service requiring consistency, collision avoidance, lifecycle rules, and auditable reuse.
 
 The ecosystem risk is substantial: full MLS has a much smaller operator, tooling, application-compatibility, and policy-authoring base than mainstream container or VM isolation. Mechanism feasibility must therefore be evaluated separately from policy correctness and ongoing operational viability. The multilevel profile should not be presented as the default until administrators can maintain it without broad exceptions or continual privileged repair.
 
-Label continuity is also a deployment boundary. Containers require coordinated host/container policy and volume labels; archives and Git do not intrinsically preserve SELinux xattrs; NFS, SMB, object stores, backup systems, and cross-host restore have different label behavior; and many enterprise applications are not tested under MLS. A system must either preserve labels end to end or pass through a trusted gateway that reconstructs and validates equivalent metadata. These are major deployment prerequisites, not incidental configuration. A prototype must measure administrative complexity and failure modes as well as runtime overhead.
+Label continuity is also a deployment boundary. Containers require coordinated host/container policy and volume labels; archives and Git do not intrinsically preserve SELinux xattrs; NFS, SMB, object stores, backup systems, and cross-host restore have different label behaviour; and many enterprise applications are not tested under MLS. A system must either preserve labels end to end or pass through a trusted gateway that reconstructs and validates equivalent metadata. These are major deployment prerequisites, not incidental configuration. A prototype must measure administrative complexity and failure modes as well as runtime overhead.
 
 ### 9.9 Session continuity
 
-A stateless resume should rerun authorization and session construction, then import only still-authorized labeled cognitive state. The authorization decision may have expired, group membership may have changed, and resources may have been reclassified. Full process checkpoint/restore is different: CRIU-style restoration requires substantial privilege, namespace fidelity, cgroup reconstruction, and correct SELinux contexts, especially across hosts. This report does not assume secure transparent process migration; resume means a reauthorized launch unless a future checkpoint mechanism proves preservation of every boundary.
+A stateless resume should rerun authorization and session construction, then import only still-authorized labelled cognitive state. The authorization decision may have expired, group membership may have changed, and resources may have been reclassified. Full process checkpoint/restore is different: CRIU-style restoration requires substantial privilege, namespace fidelity, cgroup reconstruction, and correct SELinux contexts, especially across hosts. This report does not assume secure transparent process migration; resume means a reauthorized launch unless a future checkpoint mechanism proves preservation of every boundary.
 
 ### 9.10 “Shell” need not mean interactive Bash
 
@@ -855,7 +872,7 @@ No custom shell or runtime is built: workloads are existing artefacts (`/bin/sh`
 
 **Phase 2 — compartments, memory, and remote effects.** Add MCS or equivalent compartments, partitioned and versioned durable memory, and contamination-safe delegation and peer messaging on mediated edges. Extend the Phase 1 baselines: brokered credentials to compartment-aware services; the protected-object integrity slice to general staging, validation, and promotion paths including structured memory; active revocation to reclassification and label-change behaviour; and gateway budgets to richer external-resource governance across many operations and services.
 
-**Phase 3 — multilevel and high-assurance comparison.** Add full MLS and analyzed policy, declassification workflows and throughput measurement, cross-host and collaborative-storage tests, and shared-inference/accelerator isolation. Repeat and extend the Phase 1D microVM comparison for the compartmented and multilevel profiles, where labeled storage, gateways, and release must be preserved across the VM boundary. This phase compares high-assurance options rather than assuming shared-host MLS is the default.
+**Phase 3 — multilevel and high-assurance comparison.** Add full MLS and analyzed policy, declassification workflows and throughput measurement, cross-host and collaborative-storage tests, and shared-inference/accelerator isolation. Repeat and extend the Phase 1D microVM comparison for the compartmented and multilevel profiles, where labelled storage, gateways, and release must be preserved across the VM boundary. This phase compares high-assurance options rather than assuming shared-host MLS is the default.
 
 ### 10.3 Demonstration programme
 
@@ -866,7 +883,7 @@ Create:
 - Finance and Engineering groups;
 - Public, Confidential, and Secret levels;
 - Redwood and Bluebird categories;
-- labeled source, work, transcript, and output directories;
+- labelled source, work, transcript, and output directories;
 - one approved internal model endpoint and one forbidden public endpoint.
 
 Then demonstrate the following across the phases above; the numbering is a test catalogue, not a claim that every test belongs in the first prototype:
@@ -886,11 +903,11 @@ Then demonstrate the following across the phases above; the numbering is a test 
    Alice → finance-agent → session R-1042 → PID 8134 → report.md
    ```
 11. Two concurrent Finance sessions cannot inspect, signal, trace, attach to, or access the private state and credentials of one another.
-12. After a Redwood parent reads classified material, it cannot create a nominally Finance-only child, pass arbitrary parent text, and obtain a lower-labeled output.
+12. After a Redwood parent reads classified material, it cannot create a nominally Finance-only child, pass arbitrary parent text, and obtain a lower-labelled output.
 13. Redwood memory is not visible to a later Bluebird session merely because both sessions belong to the Finance agent.
 14. A prompt-injected session may stage a proposed patch but cannot directly modify trusted configuration, approved durable memory, or a protected production branch; promotion requires validation and attribution.
 15. DNS rebinding, redirects, proxy variables, alternate address forms, direct sockets, and TLS mismatch cannot bypass the approved model gateway.
-16. Revoking the initiator or project authorization during execution produces the documented freeze, termination, and credential-revocation behavior.
+16. Revoking the initiator or project authorization during execution produces the documented freeze, termination, and credential-revocation behaviour.
 17. PID, descriptor, disk/inode, audit, child-fan-out, accelerator, model-token, and monetary budgets are enforced at the appropriate cgroup, supervisor, or gateway.
 18. The same scenario is exercised under a microVM-per-session baseline for comparison.
 19. A message from a Redwood session to a Bluebird-only peer is rejected, quarantined, or routed through trusted release, and the decision is audited with both session identities, channel, and labels.
@@ -910,11 +927,11 @@ Then demonstrate the following across the phases above; the numbering is a test 
 - What fraction of meaningful effects are fully host-mediated, gateway-mediated, or dependent on a remote service's reference monitor?
 - Can a hostile session copy or reuse issued credentials, and which credentials are non-exportable or brokered?
 - Does shared inference preserve separation across GPU memory, batching, caches, adapters, logs, and crash recovery?
-- How many outputs require declassification, what are review latency and rejection/correction rates, and does reviewer behavior degrade into routine approval?
+- How many outputs require declassification, what are review latency and rejection/correction rates, and does reviewer behaviour degrade into routine approval?
 - Can lower-classification sessions use useful durable memory without importing higher-domain or low-integrity state?
 - What are the trusted code size, privilege, policy complexity, and change rate of the constructor, policy resolver, gateways, category allocator, and declassifier together?
 - Compared with a microVM, what are boundary strength, startup latency, steady-state memory, storage complexity, audit fidelity, and operator skill requirements?
-- Under Git and collaborative workflows, where do joins occur, how are merges labeled, and how are trusted artifacts promoted?
+- Under Git and collaborative workflows, where do joins occur, how are merges labelled, and how are trusted artefacts promoted?
 
 Negative results are valuable. In particular, Agor’s experience suggests testing the operational burden of maintaining Unix ownership and group projections under collaborative workflows.
 
@@ -922,15 +939,23 @@ Negative results are valuable. In particular, Agor’s experience suggests testi
 
 ## 11. Conformance and evaluation status
 
-An implementation conforms to a deployment profile only if it identifies that profile, publishes its coverage inventory, satisfies every invariant applicable to that profile in Section 7 with the five-way result classification, documents every unavailable or substituted mechanism, and passes the corresponding Phase 1–3 tests in Section 10. Enabling SELinux, assigning a UID, or launching a container is not by itself evidence of conformance. Nor is conformance a proof: the formal rules in the front matter are an unproven specification, and passing its derived tests shows agreement with the specification on the tested interfaces, not satisfaction of a verified security property.
+An implementation conforms to a deployment profile only if it identifies that profile, publishes its coverage inventory, satisfies every applicable Section 7 invariant with the five-way result classification, documents every unavailable or substituted mechanism, and passes the corresponding Phase 1–3 tests in Section 10. Enabling SELinux, assigning a UID, or launching a container is not by itself evidence of conformance. The formal rules in the front matter are an unproven specification. Passing derived tests shows agreement with the specification on tested interfaces, not satisfaction of a verified security property.
 
-Conformance claims must be pre-registered with operational thresholds rather than adjectives. At minimum a profile's evaluation states: the covered-interface inventory and the adversary-capability matrix its bypass corpus exercises; kernel, LSM, systemd, and policy versions; the effect ontology against which attribution completeness is measured and the required completeness; the maximum acceptable policy-exception and privileged-repair rate; and, for profiles claiming release or promotion, reviewer throughput, disagreement, correction, and false-release targets. For the multilevel profile, failure to meet the release-economics targets is a conformance failure, not an operational note. Each residual assumption carries an owner, impact, compensating control, acceptance authority, and revalidation trigger.
+Conformance claims must be pre-registered with operational thresholds rather than adjectives. At minimum, a profile's evaluation states:
 
-A control arm is a required part of any evaluation: the same workload and the same abstract manifest run through a microVM (a stronger boundary; a container tests packaging rather than shared-kernel risk) with per-session workload identity, egress gateway, and audit. "Same manifest" is meaningful only for the substrate-independent fields (identity, derivation inputs, authority, budgets, gateway policy, audit requirements); substrate-specific refinements must be listed separately and equivalent assurance must not be inferred from shared fields.
+- the covered-interface inventory and the adversary-capability matrix its bypass corpus exercises;
+- kernel, LSM, systemd, and policy versions;
+- the effect ontology against which attribution completeness is measured and the required completeness;
+- the maximum acceptable policy-exception and privileged-repair rate; and
+- for profiles claiming release or promotion, reviewer throughput, disagreement, correction, and false-release targets.
 
-The architecture remains experimentally falsifiable. Evaluation must determine whether the constructor and surrounding control plane prevent cross-session access, authority expansion, gateway bypass, unpromoted mutation of protected objects, incomplete descendant termination, and unattributed mediated effects; whether, in profiles that claim it, confidentiality and integrity laundering is prevented on mediated edges; and whether administrators can preserve labels and provenance through real storage and collaboration workflows at a sustainable policy-maintenance and review cost.
+For the multilevel profile, failure to meet the release-economics targets is a conformance failure, not an operational note. Each residual assumption carries an owner, impact, compensating control, acceptance authority, and revalidation trigger.
 
-Negative results should identify the failed invariant, enforcement layer, deployment profile, and threat assumption. Failure of the full MLS profile does not by itself invalidate the principal/session ontology; failure of identity binding, same-principal isolation, gateway-only egress, or attribution of mediated effects would challenge the core architecture, and failure to show a measurable advantage over the control arm would challenge its justification.
+A control arm is a required part of any evaluation. The same workload and abstract manifest run through a microVM, a stronger boundary; a container tests packaging rather than shared-kernel risk. The microVM uses per-session workload identity, egress gateway, and audit. "Same manifest" applies only to substrate-independent fields: identity, derivation inputs, authority, budgets, gateway policy, and audit requirements. Substrate-specific refinements must be listed separately. Equivalent assurance must not be inferred from shared fields.
+
+Evaluation must determine whether the constructor and surrounding control plane prevent cross-session access, authority expansion, gateway bypass, unpromoted mutation of protected objects, incomplete descendant termination, and unattributed mediated effects. It must determine whether profiles claiming it prevent confidentiality and integrity laundering on mediated edges. It must determine whether administrators can preserve labels and provenance through real storage and collaboration workflows at a sustainable policy-maintenance and review cost.
+
+Negative results should identify the failed invariant, enforcement layer, deployment profile, and threat assumption. Failure of the full MLS profile does not by itself invalidate the principal/session ontology. Failure of identity binding, same-principal isolation, gateway-only egress, or attribution of mediated effects would challenge the core architecture. Failure to show a measurable advantage over the control arm would challenge its justification.
 
 For motivation, adoption implications, and the thesis-level conclusion, see the companion [position paper](position-paper.md).
 
@@ -1018,7 +1043,7 @@ For motivation, adoption implications, and the thesis-level conclusion, see the 
 | Quine | POSIX agent process | Yes | No; PID/run lineage | Process and stream composition | No |
 | Orkia | Governed agent job | Partly/yes | Named application agent | Yes, PTY and jobs | No |
 | AaaU / agent-as-unix-user | Dedicated Unix user | Yes, DAC | Yes, local UID | Yes/PTY or command | No |
-| agentsh | Policy-controlled execution session | Yes/interception stack | Session-oriented | Drop-in shell | Not MLS-centered |
+| agentsh | Policy-controlled execution session | Yes/interception stack | Session-oriented | Drop-in shell | Not MLS-centred |
 | Agent OS | FUSE-exposed agent/filesystem object | Daemon + FUSE | Application/filesystem object | CLI/filesystem native | Custom security model |
 | Agor | Application principal + sandbox view | Bubblewrap/mount boundary | Application identity | Web/agent sessions | No MLS core |
 | SPIFFE | Workload identity | Attestation and credentials | Workload, not agent ontology | No | No |
