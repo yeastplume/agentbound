@@ -3,7 +3,7 @@
 **Version:** 0.5  
 **Status:** Frozen (WP0) — every open question in the WP0 set is listed here with exactly one disposition  
 **Date:** 28 August 2026  
-**Related:** [architecture README](README.md) freeze condition; all WP0 documents
+**Related:** [architecture README](README.md) freeze condition; all WP0 documents  
 
 ## Revision history
 
@@ -11,7 +11,7 @@
 - **0.2** — External review: three answers (24 h quarantine floor, closed five-path domain, `continue-degraded` restriction with split outage triggers) were present only in open-question summaries; now written into the normative sections of the identity lifecycle §4.1–4.2, session lifecycle §6, manifest schema §3.6, requirements R-LC-2/3, and test catalogue T-6.8-006/011–013.
 - **0.3** — Post-freeze editorial maintenance (no normative change): LC-1 classified as an implementation spike verifying an answered question; canonical WP1 verification set stated once.
 - **0.4** — Session-lifecycle Q1 answer follows ADR-0003 0.8 (systemd 257 series).
-- **0.5** — WP1 complete: the four W1 items (VM-1, VM-2, LC-2, ID-1) carry their recorded results and evidence links; none took its failure branch. Owning documents amended per findings F-1–F-8 (see `docs/evidence/wp1/README.md`).
+- **0.5** — WP1 complete: the four W1 items (VM-1, VM-2, LC-2, ID-1) carry their recorded results and evidence links. VM-1 took its pre-registered fallback (binding via the VMM connection; ADR-0003 revised and re-accepted as 0.9); VM-2, LC-2, ID-1 confirmed their candidate answers. Owning documents amended per findings F-1–F-8 (see `docs/evidence/wp1/README.md`).
 
 ## Purpose
 
@@ -21,7 +21,7 @@ Dispositions:
 
 - **A** — answered; the owning document has been edited to state the answer and the question is removed from its open list.
 - **W1** — assigned to WP1; the verification item is named and the failure consequence stated. The question remains listed in the owning document under "carried to WP1".
-- **W1 ✓** — WP1 item verified; result and evidence linked. Where the failure branch was not taken, the owning document is unchanged except for any recorded finding.
+- **W1 ✓** — WP1 item verified; result and evidence linked, stating whether the candidate answer held or the pre-registered fallback was taken and how the owning document was revised.
 
 ## ADR-0002 — gateway topology and authentication
 
@@ -34,7 +34,7 @@ Dispositions:
 
 | # | Question | Disposition | Answer / WP1 item |
 |---|---|---|---|
-| 1 | vsock peer-CID reporting on 6.12 | **W1 ✓** | **Result:** with Firecracker there is no host `AF_VSOCK` endpoint; the binding uses the VMM's bridge connection (`SO_PEERCRED` → held VMM pidfd → configured `guest_cid`). ADR-0003 0.9 wording amended (finding F-7); no binding element removed. [Evidence](../evidence/wp1/vsock-cid.md). Original item: *VM-1*: verify that the host `AF_VSOCK` endpoint reports the guest CID for each accepted connection and that the CID matches the VMM's configured `guest_cid`. Failure: binding uses the VMM connection table and the ADR records the change. |
+| 1 | vsock peer-CID reporting on 6.12 | **W1 ✓ (fallback taken)** | **Result:** with Firecracker there is no host `AF_VSOCK` endpoint; the pre-registered fallback applies — the binding uses the VMM's bridge connection (`SO_PEERCRED` → held VMM pidfd → configured `guest_cid`). ADR-0003 0.9 wording amended (finding F-7); no binding element removed. [Evidence](../evidence/wp1/vsock-cid.md). Original item: *VM-1*: verify that the host `AF_VSOCK` endpoint reports the guest CID for each accepted connection and that the CID matches the VMM's configured `guest_cid`. Failure: binding uses the VMM connection table and the ADR records the change. |
 | 2 | Guest-side witness | **A** | Same as ADR-0002 Q2: none in Phase 1. |
 | 3 | Cross-arm SLOC comparability | **W1 ✓** | **Result:** `tokei 13.0.0-alpha.8` attributes both arms consistently; the exclusion is not triggered. ADR-0003 0.9 pins the tool and three accounting rules (finding F-8). [Evidence](../evidence/wp1/sloc-arms.md). Original item: *VM-2*: run the pinned SLOC tool over Firecracker v1.16.1, jailer, guest init, and configuration; report whether transitive-dependency attribution is consistent with the Linux arm. Failure: per-arm disclosure only, excluded from the decision rule (already the rule). |
 
@@ -90,7 +90,7 @@ Dispositions:
 | Owning document | Answered | Assigned to WP1 |
 |---|---:|---:|
 | ADR-0002 | 2 | 0 |
-| ADR-0003 | 1 | 2 (VM-1 ✓, VM-2 ✓) |
+| ADR-0003 | 1 | 2 (VM-1 ✓ fallback taken, ADR revised 0.9; VM-2 ✓) |
 | Requirements | 5 | 0 |
 | Manifest schema | 6 | 0 |
 | Session lifecycle | 7 | 1 (LC-2 ✓) |

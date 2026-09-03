@@ -1,11 +1,11 @@
 # Phase 1 Reference Implementation Plan
 
-**Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record)  
-**Plan version:** 0.12  
+**Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record); WP1 complete ([evidence register](../evidence/wp1/README.md)); WP2 next  
+**Plan version:** 0.13  
 **Date:** 28 August 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
-**Architecture specifications:** [`../architecture/README.md`](../architecture/README.md)
+**Architecture specifications:** [`../architecture/README.md`](../architecture/README.md)  
 
 ---
 
@@ -23,6 +23,7 @@
 - **0.10** — §6.8 1A case list uses the split outage-trigger vocabulary and the `continue-degraded` restriction.
 - **0.11** — Post-freeze maintenance: status reflects the WP0 freeze; WP0 section marked complete and in past tense; fault-point list uses the empty-network-namespace/gateway-socket wording.
 - **0.12** — Editorial pass under docs/STYLE.md: demonstration 16 split by milestone; control-arm rationale consolidated in §8; review narrative removed; Oxford spelling. No milestone, gate, deliverable, or criterion changed.
+- **0.13** — WP1 closed: spike list distinguishes the Decision 7 mechanism subset (1–5) from the component-dependent items (6–9, WP2–WP3); durable-ownership projection carried to WP2; exit condition restated to allow reopen-amend-reaccept; outcome paragraph records the D7-2d failure and the VM-1 fallback with the resulting ADR versions.
 
 
 ---
@@ -599,19 +600,21 @@ Exit condition (met): every profile U invariant maps to at least one catalogue t
 
 Prototype high-risk mechanisms independently:
 
-- per-session execution identity allocation and the durable-ownership projection (ADR-0001);
+- per-session execution identity allocation (ADR-0001) — the durable-ownership projection (bind/ACL grant into durable-owner state, workspace-image transfer, proof that the durable-owner UID never executes session code) needs the constructor and storage-broker components and is carried to WP2;
 - systemd scope + PID-namespace init containment and `cgroup.kill` behaviour, including D-state tasks;
 - namespace, mount, and procfs construction in the §2.1 ordering, with mount-descriptor resolution;
 - descriptor closure and runtime launch ordering;
 - socket-family seccomp and abstract-socket isolation in an empty network namespace;
-- ADR-0002 Decision 7 verification: `SOCK_SEQPACKET` credential semantics, pidfd from credential PID, descriptor-transfer rejection, revocation latency;
+- ADR-0002 Decision 7 verification, mechanism subset (items 1–5: `SOCK_SEQPACKET` credential semantics, pidfd from credential PID, descriptor-transfer rejection, abstract-socket isolation, revocation-latency mechanism). Items 6–9 (bypass corpus, TCB accounting, failure behaviour, diagnostics) and the typed-operation half of item 5 need gateway and lifecycle code and are verified in WP2–WP3, as ADR-0002 0.8 states;
 - `agentbound-lifecycle` D-Bus scope-signal subscription and pidfd-watch fallback, including the systemd-kills-first race;
 - the four register items of the WP0 [open-question register](../architecture/open-question-register.md): VM-1 vsock peer-CID reporting, VM-2 cross-arm SLOC comparability, LC-2 frozen-cgroup connection behaviour, ID-1 allocator-store crash consistency;
 - Git staging-ref adapter and protected-branch behaviour;
 - `loginuid` and audit correlation, including loss behaviour under load;
-- minimal control-arm launcher.
+- minimal control-arm launcher (boot check only).
 
-Exit condition: every ADR-0002 Decision 7 item and every WP1 spike above records pass with evidence on the pinned baseline; any fail reopens the relevant ADR before WP2 begins.
+Exit condition: every ADR-0002 Decision 7 mechanism item (1–5) and every WP1 spike above records pass with evidence on the pinned baseline; any fail reopens the relevant ADR, which is then amended and re-accepted or the mechanism replaced, before WP2 begins.
+
+**Outcome (met):** ten spikes, 103 checks, recorded in the [WP1 evidence register](../evidence/wp1/README.md). Two pre-registered contingencies were exercised and closed by ADR amendment rather than by mechanism change: Decision 7 item 2's start-time-only PID-reuse check **failed** (D7-2d), so ADR-0002 was reopened narrowly, amended to key process instances on the pidfs inode, and re-accepted as 0.7; register item VM-1 took its **pre-registered fallback** (Firecracker exposes a Unix-socket bridge, not a host `AF_VSOCK` peer CID), so ADR-0003 was revised to bind via the VMM connection and re-accepted as 0.9 with topology and binding elements unchanged. Six further findings (F-2–F-6, F-8) were applied as revision entries. Carried to WP2 from this list: the durable-ownership projection and D7 items 6–9.
 
 ### WP2 — Constructor and lifecycle (milestone 1A)
 

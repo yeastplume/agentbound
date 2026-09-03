@@ -1,0 +1,4 @@
+# Markdown uses two trailing spaces as hard line breaks in document header blocks.
+*.md whitespace=-blank-at-eol,blank-at-eof,space-before-tab
+# Raw spike transcripts are captured program output and are not whitespace-normalised.
+docs/evidence/wp1/raw/*.txt -whitespace

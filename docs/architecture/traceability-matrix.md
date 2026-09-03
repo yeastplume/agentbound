@@ -1,11 +1,11 @@
 # Phase 1 invariant-to-test traceability matrix
 
-**Version:** 0.6  
+**Version:** 0.7  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Conformance target:** [technical report](../papers/technical-report.md) §7, Unix-governed profile U  
 **Requirements:** [Phase 1 normative requirements](phase-1-requirements.md)  
-**Test definitions:** [test catalogue](test-catalogue.md); source enumerations in [Phase 1 plan](../plans/phase-1-reference-implementation.md) §§5–7
+**Test definitions:** [test catalogue](test-catalogue.md); source enumerations in [Phase 1 plan](../plans/phase-1-reference-implementation.md) §§5–7  
 
 ## Revision history
 
@@ -15,6 +15,7 @@
 - **0.4** — T-6.8 references extended to 013.
 - **0.5** — Post-freeze editorial maintenance (no normative change): residual column defined as three fields; rows 14a and 21a completed; requirements version reference updated.
 - **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. §1 split; control-arm attribution pointer to ADR-0003.
+- **0.7** — Invariant 17 row lists T-6.2-009 (inherited host `sysfs`, WP1 finding F-2; test catalogue 0.7).
 
 
 ## 1. Result vocabulary
@@ -62,7 +63,7 @@ The last column is a compact cell of exactly three slash-separated fields: *resi
 | 14a | Policy provenance — historical record | 1A | R-ID-8, R-AUD-4 | Policy/catalogue versions and derivation inputs in signed append-only launch record | T-6.5-008; D-11 | detected only | Launch-record store integrity / policy owner / store change |
 | 14b | Policy provenance — version currency | 1A | R-ID-8, R-REQ-5 | Constructor rejects withdrawn or superseded versions | T-6.5-006; T-6.6-007 | enforced and passed | Signing key and launch-record store / policy owner / key or store change |
 | 15 | Launch privilege disposal | 1A | R-CON-3…5 | Capability bounding/drop, `no_new_privs`, separate enumerated `agentbound-lifecycle` daemon | T-6.2-001, T-6.2-003, T-6.2-004; privileged-code review under requirements §12; D-05 | enforced and passed | `agentbound-lifecycle` trusted / implementation owner / daemon operation change |
-| 17 | Same-principal session isolation | 1A | R-ISO-1…2 | Per-session execution UID, namespaces, private state, descriptor discipline | T-6.1-001..013; D-03, D-04 | enforced and passed | Kernel and constructor trusted / platform owner / pinned-version or constructor change |
+| 17 | Same-principal session isolation | 1A | R-ISO-1…2 | Per-session execution UID, namespaces, private state, descriptor discipline | T-6.1-001..013; T-6.2-009; D-03, D-04 | enforced and passed | Kernel and constructor trusted / platform owner / pinned-version or constructor change |
 | 19 | Integrity promotion (protected-object subset) | 1B | R-GW-5 | Git adapter restricts staging ref; independent branch protection promotes | T-6.4-011, T-6.4-013; D-13 | enforced and passed for staging boundary | Git host branch protection / repository owner / protection-rule change |
 | 20 | Bounded external resources | 1B; inference classes 1C | R-RES-1…5, R-GW-7, R-GW-9 | cgroup/rlimit/storage bounds, audit queue policy, delegation counters, plus per-operation gateway budgets | T-6.9-001..008 (class-by-milestone per R-RES-5); D-07, D-14 where relevant | enforced and passed for every present class; absent classes listed | Gateway accounting and upstream billing reconciliation / service owner / resource-class addition |
 | 21a | Lifecycle and revocation — policy choice | 1A | R-LC-2 | Manifest declares terminate/quiesce/continue-degraded per trigger | manifest review | assumption | Declared choice is appropriate / policy owner / trigger or service addition |

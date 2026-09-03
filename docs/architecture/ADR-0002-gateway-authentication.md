@@ -1,10 +1,10 @@
 # ADR-0002: Gateway channel topology and session authentication
 
-**Status:** Accepted for Phase 1 (topology and mechanism selected); WP1 spike verifies kernel-baseline assumptions listed in Decision 7  
-**Version:** 0.7  
+**Status:** Accepted for Phase 1 (topology and mechanism selected). Reopened narrowly in WP1 when Decision 7 item 2's start-time-only reuse check failed; amended (0.7) and re-accepted. Decision 7 mechanism items 1–5 verified; items 6–9 are verified against the gateway in WP2–WP3  
+**Version:** 0.8  
 **Date:** 28 August 2026  
 **Applies to:** Unix-governed profile, milestones 1B–1C; microVM projection per ADR-0003  
-**Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md) §3.3, §4.2, §6.3–6.4; [technical report](../papers/technical-report.md) §3.2, §5; [manifest schema](manifest-schema.md); [component interfaces](component-interfaces.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0003](ADR-0003-control-substrate.md)
+**Related:** [Phase 1 plan](../plans/phase-1-reference-implementation.md) §3.3, §4.2, §6.3–6.4; [technical report](../papers/technical-report.md) §3.2, §5; [manifest schema](manifest-schema.md); [component interfaces](component-interfaces.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0003](ADR-0003-control-substrate.md)  
 
 ## Revision history
 
@@ -15,6 +15,7 @@
 - **0.5** — Post-freeze editorial maintenance (no normative change): Decision 1 heading; per-packet and one-connection rules merged into one check; "session scope" used consistently.
 - **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Decisions split into one rule per sentence; network-topology rationale reduced to one sentence.
 - **0.7** — WP1 finding F-1 ([evidence](../evidence/wp1/seqpacket-creds.md)): process-instance comparison key is the pidfs inode; start time made corroborating because `/proc` start time has 10 ms granularity. Binding tuple and diagnostics fields extended accordingly; no other obligation changed.
+- **0.8** — Reviewer-driven accounting: status records the WP1 reopen-amend-reaccept for item 2; Decision 6 aligned with ADR-0003 0.9's Unix-socket-bridge model (VMM `SO_PEERCRED` + pidfd/pidfs, VMM-configured CID, daemon-owned per-instance bridge path); Decision 7 split into mechanism items (1–5, WP1) and component items (6–9, WP2–WP3) with the WP1 result recorded. No mechanism, binding element, or required result changed.
 
 
 ## Context
@@ -107,14 +108,14 @@ The trace identity is correlation metadata, not authentication evidence. Caller-
 
 ADR-0003 exposes exactly one vsock path from the guest to the host gateway endpoint. `AF_VSOCK` is not `AF_UNIX`; kernel peer credentials do not cross the VM boundary. The vsock path is therefore a pre-registered **substrate-equivalent** projection of the single-channel property, not an implementation of Decision 2.
 
-1. The host endpoint MUST bind the host-observed peer CID to a **non-reusable VM instance token** issued at launch, the VMM process pidfd and start time, the jailer identity, and the active launch record. A guest-supplied CID, token, or trace ID is not sufficient.
+1. Firecracker presents the vsock path to the host as a per-instance Unix-socket bridge owned by `agentbound-lifecycle`; the host endpoint sees the VMM process as its `AF_UNIX` peer, never a guest CID (ADR-0003, WP1 finding F-7). The host endpoint MUST bind each accepted bridge connection to the VMM process identity (`SO_PEERCRED` on the bridge connection matched against the held VMM pidfd and pidfs inode), the guest CID configured for that VMM instance, a **non-reusable VM instance token** issued at launch, the jailer identity, and the active launch record. A guest-supplied CID, token, or trace ID is not sufficient.
 2. CIDs are reusable after VM teardown. All mappings and connections for a CID MUST be invalidated before `agentbound-lifecycle` permits the CID to be reassigned. The gateway MUST acknowledge zero connections before `agentbound-lifecycle` permits the CID to be reassigned.
 3. The VM arm claims **session-level** attribution for the process leg of Invariant 13 unless a guest-side trusted witness supplies per-operation process evidence. This is a pre-registered difference between arms. It is recorded in the ADR-0003 per-test classification and the traceability matrix. It MUST NOT be silently equated with the Linux arm's per-process evidence.
 4. Operation-time grant checks, revocation, and termination ordering are identical to Decisions 3–4.
 
 ## Decision 7: WP1 verification scope
 
-WP1 no longer selects a topology. It MUST verify the following on the pinned kernel and systemd baseline and record the results as pass/fail with evidence:
+WP1 no longer selects a topology. Items 1–5 are **mechanism items**: WP1 MUST verify them on the pinned kernel and systemd baseline and record the results as pass/fail with evidence. Items 6–9 and the typed-operation half of item 5 are **component items**: they need `agentbound-gateway` and `agentbound-lifecycle` code and are verified against those components in WP2–WP3 under the same pass/fail-with-evidence rule; WP1 records them as carried.
 
 | Item | Required result |
 |---|---|
@@ -128,7 +129,9 @@ WP1 no longer selects a topology. It MUST verify the following on the pinned ker
 | Failure behaviour | Gateway, lifecycle, policy, and audit loss follow manifest-declared stop/quarantine behaviour |
 | Diagnostics | Denial names the requirement ID, authorization ID, launch-record digest, and trace ID without leaking another session's identifiers |
 
-If any item fails on the pinned baseline, this ADR is reopened; the constructor MUST NOT be built against an unverified assumption.
+If any item fails on the pinned baseline, this ADR is reopened; the constructor MUST NOT be built against an unverified assumption. Reopening ends either with a narrow amendment that is re-accepted with a revision entry, or with replacement of the mechanism.
+
+**WP1 result** ([evidence](../evidence/wp1/README.md)): items 1, 3, 4 pass; item 5's mechanism half passes; item 2 passes on the pidfd path but its start-time-only reuse check **failed** (D7-2d: a PID recycled within one 10 ms tick presents an identical start time), so the ADR was reopened, Decision 2 amended to key on the pidfs inode (0.7), and re-accepted. Items 6–9 carried to WP2–WP3.
 
 ## Consequences
 

@@ -1,6 +1,6 @@
 # Phase 1 Normative Requirements
 
-**Version:** 0.9  
+**Version:** 0.10  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
@@ -18,6 +18,7 @@
 - **0.7** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. R-ISO-4 and §12 prose split; Oxford spelling.
 - **0.8** — §12 pinned-version row follows ADR-0003 0.8 (systemd 257 series).
 - **0.9** — WP1 findings F-2 and F-6: R-CON-2 forbids an inherited host `sysfs` (fresh instance after the netns only); R-CON-6 states the capability-conditional immutability of `loginuid` on the pinned kernel and the constructor's unset-`loginuid` precondition. Evidence in `docs/evidence/wp1/`.
+- **0.10** — §12 SLOC row names the counting tool and the three attribution rules by reference to ADR-0003 0.9 (F-8); R-AUD-3 records that the kernel `lost` counter is host-global and its consequence for *stop* on a shared host (F-6).
 
 
 ---
@@ -190,7 +191,7 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **R-AUD-2 (1B) [Inv 13].** For the defined effect ontology (local objects in the session's world, process lifecycle events, gateway operations), `agentbound-audit` MUST reconstruct `initiator → agent → session → process → effect` and the report MUST state the fraction reconstructed, computed by the metric definition and load profiles in the [test catalogue](test-catalogue.md), against the threshold in §12.
 
-**R-AUD-3 (1A) [Inv 13].** `agentbound-audit` MUST expose loss counters. The manifest MUST declare audit-loss behaviour (*stop*, *quarantine*, or *continue-with-counter*); the profile that claims attribution SHOULD select *stop* or *quarantine*. Every evaluation-arm manifest MUST declare *stop*; *continue-with-counter* is exercised only by T-6.9-007 and reported separately.
+**R-AUD-3 (1A) [Inv 13].** `agentbound-audit` MUST expose loss counters. The kernel audit `lost` counter is **host-global**: it counts records dropped for every process on the host, so a session whose manifest declares *stop* is stopped when any host workload overruns the audit backlog, and the host running an evaluation MUST carry no other audit-generating workload; per-session loss can be inferred only for the session's own rule keys (WP1 finding F-6). The manifest MUST declare audit-loss behaviour (*stop*, *quarantine*, or *continue-with-counter*); the profile that claims attribution SHOULD select *stop* or *quarantine*. Every evaluation-arm manifest MUST declare *stop*; *continue-with-counter* is exercised only by T-6.9-007 and reported separately.
 
 **R-AUD-4 (1A).** The launch-record store MUST be append-only with a stated trust anchor, clock source, retention, and correction procedure; corrections MUST be new records referencing the original, never edits.
 
@@ -218,7 +219,7 @@ These values are fixed before any test runs and MAY be changed only by a recorde
 | Adversary matrix | One row per suite, capabilities as in §2 | R-THREAT-1 |
 | Bypass corpus | 100% of enumerated tests reach their expected preventive outcome for the gate to pass; any reproducible bypass fails the gate; unexplained nondeterminism is a failure pending investigation; repetitions pinned in the test catalogue; every attempt retained | Inv 6, 10, 12, 17 |
 | Attribution completeness | ≥ 99% correct full-chain reconstructions / in-scope ground-truth effects under the catalogue's nominal profile; 100% over the finite gateway-operation corpus per run; overload profile reported with loss counters; denominator, dedup, and correlation deadline per test catalogue | R-AUD-2 |
-| Privileged-code reviewability bound | `agentbound-launch` + `agentbound-lifecycle` (including allocator) + gateway authentication path ≤ 6 000 **direct** SLOC. SLOC accounting: pinned counting tool and version; five separately reported figures — direct privileged SLOC, generated SLOC, transitive dependency SLOC in privileged processes, configuration/rule SLOC (seccomp, Landlock, systemd units, D-Bus policy), and SLOC in a language without memory safety by default (allowed only with a listed justification per file). The bound applies to the first figure; all five are published, plus a sixth unbounded figure, gateway core SLOC (dispatch and adapters), which is reviewed line by line but not bounded in Phase 1 | R-CON-8 |
+| Privileged-code reviewability bound | `agentbound-launch` + `agentbound-lifecycle` (including allocator) + gateway authentication path ≤ 6 000 **direct** SLOC. SLOC accounting: pinned counting tool and version; five separately reported figures — direct privileged SLOC, generated SLOC, transitive dependency SLOC in privileged processes, configuration/rule SLOC (seccomp, Landlock, systemd units, D-Bus policy), and SLOC in a language without memory safety by default (allowed only with a listed justification per file). The bound applies to the first figure; all five are published, plus a sixth unbounded figure, gateway core SLOC (dispatch and adapters), which is reviewed line by line but not bounded in Phase 1. Counting tool and attribution rules are those of ADR-0003 "Trusted-code size": `tokei 13.0.0-alpha.8`, code lines only; transitive figure counts source present in each crate resolved from the pinned lockfile and feature set (compiled-source figure secondary where obtainable); generated code in third-party crates identified by a published allowlist of generated paths; dependency feature sets pinned with the lockfile | R-CON-8 |
 | Policy-exception rate | Zero manifest fields overridden by administrators outside the catalogue during the evaluation run; every privileged manual repair recorded | Gate 4 |
 | Fault-injection coverage | Every fault point in the test catalogue's finite inventory (F-C-01…09, F-T-01…11) injected at least once; after each, no live process, usable grant, mount, or unsealed record; sealed failed records are the only permitted remnant; reconciliation completes within the catalogue deadline | R-CON-1, R-ISO-4 |
 | Pinned versions | Linux 6.12 LTS series (exact patch release recorded; `openat2`, new mount API, pidfd, `SOCK_SEQPACKET` credentials verified per ADR-0002 Decision 7), systemd 257 series as shipped by Debian 13 (exact release recorded), LSM policy digest, Firecracker v1.16.1 and the ADR-0003 `pinned-configuration.json` digest (control arm), Git host version; recorded in the evaluation report and unchanged within a run | all |

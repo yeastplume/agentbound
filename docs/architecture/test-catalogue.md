@@ -1,10 +1,10 @@
 # Phase 1 Test Catalogue
 
-**Version:** 0.6  
+**Version:** 0.7  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** Agentbound milestones 1A–1D  
-**Companion documents:** [requirements](phase-1-requirements.md), [traceability matrix](traceability-matrix.md), [session lifecycle](session-lifecycle.md), [Phase 1 plan](../plans/phase-1-reference-implementation.md), and [technical report](../papers/technical-report.md)
+**Companion documents:** [requirements](phase-1-requirements.md), [traceability matrix](traceability-matrix.md), [session lifecycle](session-lifecycle.md), [Phase 1 plan](../plans/phase-1-reference-implementation.md), and [technical report](../papers/technical-report.md)  
 
 ---
 
@@ -16,6 +16,7 @@
 - **0.4** — T-6.8-006 narrowed to policy-service outage; T-6.8-011–013 added (audit degradation, lifecycle-daemon outage, forbidden degraded mapping).
 - **0.5** — Post-freeze editorial maintenance (no normative change): T-6.4 coverage accounting corrected (014 from bullets; 015 is the control-arm projection); GR/GU privilege labels; pinning ownership cited; §7.3 fault-point wording.
 - **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Control-arm prose points to ADR-0003; Oxford spelling.
+- **0.7** — WP1 findings propagated: T-6.2-009 added (inherited host `sysfs`, F-2); F-C-05 covers `sysfs` ordering (F-2); T-6.4-009 expects the pidfs-inode process-instance check with same-tick reuse (F-1); F-T-04 states `cgroup.kill` without waiting for the frozen state (F-3). Coverage note: one 1A row added; no row removed or renumbered.
 
 
 ## 1. Purpose and status
@@ -227,6 +228,7 @@ change the denominator.
 | T-6.2-004 | 1A | 6,15 | R-CON-3..5 | USP | capability/ambient recovery | deny/no recovered capability | KA,DR | |
 | T-6.2-005 | 1A | 12 | R-ISO-3..4 | USP | daemonize/double-fork/orphan | contained and later reaped | KA,LC | |
 | T-6.2-006 | 1A | 12,17 | R-CON-2,R-ISO-1 | USP | mount and procfs abuse | deny; host proc absent | KA,DR | |
+| T-6.2-009 | 1A | 7,17 | R-CON-2,R-ISO-2 | USP | inherited host `sysfs`: enumerate `/sys/class/net` and `/sys/devices` from the session | no inherited host `sysfs`; if a `sysfs` is present it was mounted after the network namespace exists and lists only the session's interfaces | KA,DR | WP1 F-2 |
 | T-6.2-007 | 1A | 17 | R-ISO-1..2 | USP | persistence outside workspace | deny/no retained object | KA,DR,LC | |
 | T-6.2-008 | 1A | 6,15 | R-CON-3..4 | USP | interpreter/package-loader escape | no boundary crossing | KA,DR | |
 
@@ -255,7 +257,7 @@ change the denominator.
 | T-6.4-006 | 1B | 10,13 | R-GW-2..3 | USP | `SCM_RIGHTS` on the gateway socket | packet rejected; connection closed; `gateway.descriptor_transfer_rejected` | GA,DR | |
 | T-6.4-007 | 1B | 11,13 | R-GW-3 | USP, CSSP | connected gateway descriptor inherited by a child, and passed to another session | establishing-PID mismatch closes connection; `gateway.process_mismatch` | GA,DR,AR | |
 | T-6.4-008 | 1B | 13 | R-GW-3 | USP | packets with zero or multiple `SCM_CREDENTIALS`, forged fields | reject; connection closed | GA,DR | |
-| T-6.4-009 | 1B | 13 | R-GW-3 | USP | PID reuse against the per-operation check | start-time/pidfd mismatch deny | GA,DR,AR | |
+| T-6.4-009 | 1B | 13 | R-GW-3 | USP | PID reuse against the per-operation check, including reuse within one `CLK_TCK` tick | pidfs-inode process-instance mismatch deny (start time corroborating only) | GA,DR,AR | WP1 F-1 |
 | T-6.4-010 | 1B | 10 | R-GW-1 | USP | `SOCK_STREAM`/`SOCK_DGRAM` connect to gateway path | `EPROTOTYPE`/refused; no operation admitted | KA,GA,DR | |
 | T-6.4-011 | 1B | 10 | R-GW-4 | USP | gateway as tunnel/SSRF oracle: alternate destination, tenant/repo mismatch | typed adapter rejects argument | GA,DR | |
 | T-6.4-012 | 1B | 10 | R-GW-4 | RR | upstream redirect or TLS identity mismatch | adapter refuses; `gateway.upstream_rejected` | GA,DR | |
@@ -343,7 +345,7 @@ failure evidence, and no unsafe identity reuse.
 | F-C-02 | 1A | 7 | R-CON-1..2 | ANI | step 2 private mount namespace | abort; no propagation | LC,KA | |
 | F-C-03 | 1A | 7 | R-REQ-6,R-CON-1 | ANI | step 3 descriptor-safe source resolution | abort; close FDs; no path race | LC,KA | |
 | F-C-04 | 1A | 7 | R-CON-1..2 | ANI | step 4 restricted tree/pivot root | abort; unmount tracked tree | LC,KA | |
-| F-C-05 | 1A | 7,17 | R-CON-1..2 | ANI | step 5 proc after PID namespace | abort; host proc absent | LC,KA | |
+| F-C-05 | 1A | 7,17 | R-CON-1..2 | ANI | step 5 `proc` after PID namespace; `sysfs`, if any, after network namespace | abort; host `proc` absent; no inherited host `sysfs` | LC,KA | WP1 F-2 |
 | F-C-06 | 1A | 6,7,15 | R-CON-1,R-CON-3 | ANI | step 6 descriptor closure | abort; no FD survives/reintroduced | LC,KA | |
 | F-C-07 | 1A | 6,7,15 | R-CON-1,R-CON-3..5 | ANI | step 7 UID/LSM/cap/seccomp install | abort; identity safely held/reclaimed | LC,KA,LR | |
 | F-C-08 | 1B | 7,11,13 | R-CON-1,R-CON-7,R-GW-3 | ANI | step 8 record, grant, socket bind | abort; grant/socket unusable | LC,GA,LR | |
@@ -351,7 +353,7 @@ failure evidence, and no unsafe identity reuse.
 | F-T-01 | 1A/1B | 12,21 | R-ISO-4,R-LC-1 | ANI | step 1 admission closure | 1A (`none`): step recorded as not applicable with no gateway state present; 1B: new gateway operation denied | LC,GA(1B),DR | |
 | F-T-02 | 1A | 12 | R-ISO-4 | ANI | step 2 cgroup freeze | containment retained/fail closed | LC,KA | |
 | F-T-03 | 1A | 12 | R-ISO-4 | ANI | step 3 `SIGTERM` and bounded thaw for init reaping | no process escapes; no premature resource release | LC,KA | |
-| F-T-04 | 1A | 12 | R-ISO-4 | ANI | step 4 refreeze and `cgroup.kill`, init pidfd exit wait | identity held until proof | LC,KA | |
+| F-T-04 | 1A | 12 | R-ISO-4 | ANI | step 4: request second freeze, write `cgroup.kill` without waiting for `frozen 1` (D-state member present), bounded wait on emptiness and init pidfd | identity held until proof; no wait on the frozen state | LC,KA | WP1 F-3 |
 | F-T-05 | 1A | 12 | R-ISO-4 | ANI | step 5 no-live-process confirmation | `termination-incomplete`; no release | LC,KA,LR | |
 | F-T-06 | 1B | 11,12,21 | R-ISO-4,R-GW-3 | ANI | step 6 gateway grant/connection closure | retain safe state; audit failure | LC,GA | |
 | F-T-07 | 1B | 11,12 | R-ISO-4,R-GW-6 | ANI | step 7 broker/credential closure | retain safe state; no reuse | LC,GA | |
@@ -382,7 +384,7 @@ one or more atomic IDs.
 | §5 demos 9–12 | D-09, D-10, D-11, D-12 |
 | §5 demos 13–17 | D-13, D-14, D-15, D-16, D-17 |
 | §6.1 bullets 1–13 | T-6.1-001..013 |
-| §6.2 bullets 1–8 | T-6.2-001..008 |
+| §6.2 bullets 1–8 | T-6.2-001..008; T-6.2-009 is the WP1 F-2 addition (inherited host `sysfs`), not a plan bullet |
 | §6.3 bullets 1–8 | T-6.3-001..008 |
 | §6.4 bullets 1–10 | T-6.4-001..014 (bullets 1, 4, 5, and 7 each split into two IDs); T-6.4-015 is the 1D control-arm projection of 001..014, not a plan bullet |
 | §6.5 bullets 1–10 | T-6.5-001..010 |

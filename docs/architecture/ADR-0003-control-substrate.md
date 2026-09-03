@@ -1,10 +1,10 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Version:** 0.9
-**Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built
-**Date:** 28 August 2026
-**Applies to:** Phase 1 milestone 1D control arm
-**Related:** [Phase 1 plan §3.3, §4.3, §5–§8, WP0, and WP4b](../plans/phase-1-reference-implementation.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0002](ADR-0002-gateway-authentication.md); [traceability matrix](traceability-matrix.md); [test catalogue](test-catalogue.md)
+**Version:** 0.9  
+**Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built  
+**Date:** 28 August 2026  
+**Applies to:** Phase 1 milestone 1D control arm  
+**Related:** [Phase 1 plan §3.3, §4.3, §5–§8, WP0, and WP4b](../plans/phase-1-reference-implementation.md); [ADR-0001](ADR-0001-execution-identity.md); [ADR-0002](ADR-0002-gateway-authentication.md); [traceability matrix](traceability-matrix.md); [test catalogue](test-catalogue.md)  
 
 ## Revision history
 
@@ -317,9 +317,9 @@ lifecycle control, and fair per-session comparison too substantially.
 Rejected. It would leave the central architecture comparison untested and
 prevent milestone 1D from supplying the Phase 2 decision input.
 
-## Open questions carried to WP1
+## Open questions (all answered)
 
-Items 1 and 3 were WP1 verification items *VM-1* and *VM-2* in the [open-question register](open-question-register.md) and are now answered; item 2 was answered there earlier.
+None remain open. Items 1 and 3 were WP1 verification items *VM-1* and *VM-2* in the [open-question register](open-question-register.md); item 1 took its pre-registered fallback (binding via the VMM connection) and this ADR was revised and re-accepted as 0.9 without a topology change or a removed binding element; item 3 confirmed comparability. Item 2 was answered in WP0.
 
 1. *(answered by WP1, VM-1 — the binding uses the VMM connection: Firecracker's vsock is a Unix-socket bridge and the CID is derived from the owning VMM instance; wording in the vsock admission section updated accordingly)*
 2. *(answered — no witness in Phase 1; the pre-registered arm difference stands; see the [open-question register](open-question-register.md))*

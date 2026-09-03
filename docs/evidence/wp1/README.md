@@ -2,13 +2,18 @@
 
 Evidence for the Phase 1 plan WP1 exit condition: *every ADR-0002 Decision 7 item and every WP1 spike records pass with evidence on the pinned baseline; any fail reopens the relevant ADR before WP2 begins.*
 
-**Pinned baseline (as run):** VM 110 `agentbound-dev` — Linux `6.12.107+deb13-cloud-amd64`, systemd `257.13-1~deb13u1`, Debian 13 genericcloud image SHA-512 `8ea9faae…6371f50` (full digest in the operator's home-server runbook), 4 vCPU / 8 GiB, nested KVM available. Spikes are throwaway Rust under `spikes/`; raw transcripts under `raw/`.
+**Pinned baseline (as run):** VM 110 `agentbound-dev` — Linux `6.12.107+deb13-cloud-amd64`, systemd `257.13-1~deb13u1`, Debian 13 genericcloud image `debian-13-genericcloud-amd64.qcow2` SHA-512 `8ea9faae810043a0b35b0149f05014f26705c2339ffb11ead308f33e844a87cc3ef46ec81d5262b38817b6a88af404874d48a5857ebe072ef6a31dfb6e371f50`, 4 vCPU / 8 GiB, nested KVM available. Each Rust spike's `Cargo.lock` is committed. Spikes are throwaway Rust under `spikes/`; raw transcripts under `raw/`.
 
 Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the owning document is recommended), **WP2** (verifiable only with implementation components; listed for completeness).
 
 ## WP1 exit status
 
-Every WP1 item has a recorded result: 10 spikes, 103 individual checks — 102 PASS and one deliberate FAIL (D7-2d, the start-time-only reuse check that motivates F-1) — and no ADR reopened. Eight findings (F-1–F-8) were recorded; none changes a mechanism decision, all are wording, ordering-guidance, or accounting amendments to frozen documents, and all have been applied as revision entries (table at the end: requirements 0.9, session lifecycle 0.7, identity lifecycle 0.7, ADR-0002 0.7, ADR-0003 0.9, technical report 0.5-TR12). Two items remain classified WP2 by construction (D7 items 6, 8, 9 need the gateway; the typed-operation half of item 5 likewise).
+Every WP1 item has a recorded result: 10 spikes, 103 individual checks — 102 PASS and **one FAIL** (D7-2d). Two pre-registered contingencies were exercised:
+
+- **D7-2d failed.** The Decision 7 item 2 required result "reuse of a recycled PID is detected" does not hold when the check is the `/proc` start time alone: a PID recycled within one 10 ms tick presents an identical start time. Under Decision 7's rule, **ADR-0002 was reopened**, Decision 2 amended narrowly to key process instances on the pidfs inode (start time corroborating), and re-accepted as 0.7 (0.8 for the accounting changes below). The pidfd path of item 2 passed unchanged (F-1).
+- **VM-1 took its pre-registered fallback.** Firecracker exposes a Unix-socket bridge, not a host `AF_VSOCK` peer CID, so "binding uses the VMM connection table and the ADR records the change" applies: **ADR-0003 was revised** and re-accepted as 0.9 with topology and every binding element unchanged (F-7).
+
+Six further findings (F-2–F-6, F-8) are wording, ordering-guidance, or accounting amendments. All eight are applied as revision entries (table at the end: ADR-0002 0.8, ADR-0003 0.9, requirements 0.10, session lifecycle 0.7, identity lifecycle 0.7, test catalogue 0.7, traceability matrix 0.7, technical report 0.5-TR12). Carried to WP2–WP3 by construction: Decision 7 component items 6–9 and the typed-operation half of item 5 (need gateway and lifecycle code; ADR-0002 0.8 Decision 7), and the durable-ownership projection (needs constructor and storage broker; plan 0.13).
 
 | Spike | Checks | Result |
 |---|---|---|
@@ -43,7 +48,7 @@ Reproduction: `spikes/run.sh <name>` from a checkout with SSH access to the base
 
 | Spike | Status | Evidence | Reopens on failure |
 |---|---|---|---|
-| Per-session execution identity allocation and durable-ownership projection | **PASS** (allocation: [identity-store](identity-store.md); UID/cap projection: [mount-construct](mount-construct.md) C7-1) | — | ADR-0001; identity lifecycle |
+| Per-session execution identity allocation and durable-ownership projection | **allocation and execution-identity projection PASS** (allocation: [identity-store](identity-store.md); UID transition, `no_new_privs`, bounding-set disposal: [mount-construct](mount-construct.md) C7-1). **Durable-ownership projection carried to WP2**: no spike exercised a bind/ACL grant into durable-owner state, a storage-broker grant, workspace-image transfer, or proof that the durable-owner UID never executes session code | — | ADR-0001; identity lifecycle |
 | systemd scope + PID-namespace init containment; `cgroup.kill`, D-state tasks | **PASS + FINDINGS F-3, F-4** | [scope-kill](scope-kill.md) A-*, B-* | session lifecycle §5 |
 | Namespace/mount/procfs construction in §2.1 order; mount-descriptor resolution | **PASS** | [mount-construct](mount-construct.md) R6-*, C1–C5 | session lifecycle §3 |
 | Descriptor closure and runtime launch ordering | **PASS** | [mount-construct](mount-construct.md) C6–C7 | session lifecycle §3 |
@@ -68,11 +73,21 @@ Reproduction: `spikes/run.sh <name>` from a checkout with SSH access to the base
 
 | # | Finding | Owning document | Status |
 |---|---|---|---|
-| F-1 | `/proc` start time has 10 ms granularity; a PID recycled within one tick has an identical start time. The pidfs inode / held pidfd is the reliable instance key. | ADR-0002 Decision 2 | **applied** |
-| F-2 | An inherited sysfs mount shows the host's network interfaces inside an empty netns. R-CON-2 covers `/proc` only. Add: no inherited sysfs in the session root; mount sysfs, if at all, after the netns exists. | requirements R-CON-2; session lifecycle §3 step 5; test catalogue T-6.1 | **applied** |
-| F-3 | `cgroup.freeze` never reaches `frozen 1` while a D-state member exists; §5 step 4 must not wait for the frozen state before `cgroup.kill`. | session lifecycle §5 step 4 | **applied** |
+| F-1 | `/proc` start time has 10 ms granularity; a PID recycled within one tick has an identical start time (D7-2d **FAIL**). The pidfs inode / held pidfd is the reliable instance key. | ADR-0002 Decision 2 (reopened, amended, re-accepted); test catalogue T-6.4-009 | **applied** (ADR-0002 0.7/0.8; catalogue 0.7) |
+| F-2 | An inherited sysfs mount shows the host's network interfaces inside an empty netns. R-CON-2 covers `/proc` only. Add: no inherited sysfs in the session root; mount sysfs, if at all, after the netns exists. | requirements R-CON-2; session lifecycle §3 step 5; test catalogue T-6.2-009 (new), F-C-05; traceability matrix Inv 17 | **applied** (requirements 0.9; lifecycle 0.7; catalogue 0.7; matrix 0.7) |
+| F-3 | `cgroup.freeze` never reaches `frozen 1` while a D-state member exists; §5 step 4 must not wait for the frozen state before `cgroup.kill`. | session lifecycle §5 step 4; test catalogue F-T-04 | **applied** (lifecycle 0.7; catalogue 0.7) |
 | F-4 | PID-namespace init ignores external `SIGTERM`; `systemctl stop` stalls for `DefaultTimeoutStopSec` (90 s) unless `TimeoutStopUSec` is set at `StartTransientUnit` (cannot be set later on a scope). | session lifecycle §3 scope prerequisites, §4 | **applied** |
 | F-5 | `UnitRemoved` is emitted at unit GC (~1.5 s later); `PropertiesChanged`/`ActiveState` and the held pidfd are the prompt triggers. | session lifecycle §4 (guidance only) | **applied** (session lifecycle 0.7, guidance) |
-| F-6 | Pinned kernel lacks `CONFIG_AUDIT_LOGINUID_IMMUTABLE`: `loginuid` is re-settable by `CAP_AUDIT_CONTROL` (never held by sessions). Replace "write-once" with the capability-conditional statement; note the host-global `lost` counter. | R-CON-6; identity lifecycle §6; technical report §5; ADR-0003 kernel row | **applied** |
-| F-7 | Firecracker's vsock is a Unix-socket bridge; the host sees the VMM process as peer, not a guest CID. Bind via `SO_PEERCRED`→VMM pidfd→configured `guest_cid`; daemon must own the bridge socket path. | ADR-0003 "VM identity, CID lifetime, and vsock admission" | **applied** (ADR-0003 0.9) |
-| F-8 | Firecracker v1.16.1 closure: direct 77 904 + 3 494; transitive 2.82 M (1.29 M C/C++/asm from AWS-LC via `aws-lc-rs`, used only for randomness). Pin tokei; state present-vs-compiled rule; generated-code allowlist; feature pins. | ADR-0003 "Trusted-code size"; requirements §12 accounting | **applied** (ADR-0003 0.9) |
+| F-6 | Pinned kernel lacks `CONFIG_AUDIT_LOGINUID_IMMUTABLE`: `loginuid` is re-settable by `CAP_AUDIT_CONTROL` (never held by sessions). Replace "write-once" with the capability-conditional statement; note the host-global `lost` counter. | R-CON-6; R-AUD-3 (host-global `lost` counter); identity lifecycle §6; technical report §5; ADR-0003 kernel row | **applied** (requirements 0.9/0.10; identity 0.7; TR12; ADR-0003 0.9) |
+| F-7 | Firecracker's vsock is a Unix-socket bridge; the host sees the VMM process as peer, not a guest CID. Bind via `SO_PEERCRED`→VMM pidfd→configured `guest_cid`; daemon must own the bridge socket path. | ADR-0003 "VM identity, CID lifetime, and vsock admission" (pre-registered fallback, revised, re-accepted); ADR-0002 Decision 6 | **applied** (ADR-0003 0.9; ADR-0002 0.8) |
+| F-8 | Firecracker v1.16.1 closure: direct 77 904 + 3 494; transitive 2.82 M (1.29 M C/C++/asm from AWS-LC via `aws-lc-rs`, used only for randomness). Pin tokei; state present-vs-compiled rule; generated-code allowlist; feature pins. | ADR-0003 "Trusted-code size"; requirements §12 accounting | **applied** (ADR-0003 0.9; requirements 0.10) |
+
+## Residual assumptions and reproducibility limits
+
+Recorded so that WP2 carries them, not so that they are forgotten:
+
+- **Power-loss durability of the allocator store** (ID-1) was not tested; the crash model was daemon `SIGKILL`. Durability across power loss rests on SQLite's documented `synchronous=FULL` WAL behaviour. WP2 either adds a `dm-flakey`/`dm-log-writes` fault-injection test or carries this as a residual assumption in the launch record.
+- **Guest kernel.** The Firecracker spike (VM-1, boot check) used the Firecracker-CI `vmlinux-6.1.128` guest kernel; ADR-0003 pins the guest to the same 6.12 release as the host. No recorded result depends on guest kernel version (the bridge model and CID rules are VMM behaviour), but the 1D pinned-configuration run MUST use the 6.12 guest kernel and re-record VM1-1..7.
+- **Linux-arm SLOC stand-in.** VM-2 validated the attribution *method* over `spikes/identity-store`, not the eventual Linux-arm trusted closure; the comparative SLOC figures are a WP2–WP3 output under the ADR-0003 0.9 rules.
+- **Kernel `lost` counter is host-global** (F-6): per-session loss is inferable only via the session's own rule keys; an evaluation host MUST carry no other audit-generating workload (R-AUD-3, requirements 0.10).
+- **Shared host.** All spikes ran on one nested-KVM VM; timing figures (revocation latency, boot time, allocator commit latency) are indicative, not the pre-registered measurement runs.
