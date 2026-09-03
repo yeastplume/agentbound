@@ -26,8 +26,8 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 |---|---|---|---|
 | Per-session execution identity allocation and durable-ownership projection | pending | — | ADR-0001; identity lifecycle |
 | systemd scope + PID-namespace init containment; `cgroup.kill`, D-state tasks | **PASS + FINDINGS F-3, F-4** | [scope-kill](scope-kill.md) A-*, B-* | session lifecycle §5 |
-| Namespace/mount/procfs construction in §2.1 order; mount-descriptor resolution | pending | — | session lifecycle §3 |
-| Descriptor closure and runtime launch ordering | pending | — | session lifecycle §3 |
+| Namespace/mount/procfs construction in §2.1 order; mount-descriptor resolution | **PASS** | [mount-construct](mount-construct.md) R6-*, C1–C5 | session lifecycle §3 |
+| Descriptor closure and runtime launch ordering | **PASS** | [mount-construct](mount-construct.md) C6–C7 | session lifecycle §3 |
 | Socket-family seccomp and abstract-socket isolation in an empty netns | **PASS + FINDING F-2** | [netns-seccomp](netns-seccomp.md) NS-*, SC-* | requirements R-CON; ADR-0002 D7-4 |
 | ADR-0002 Decision 7 verification | in progress (items 1–5 done; 6–9 are WP2) | above | ADR-0002 |
 | `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | **PASS + FINDINGS F-4, F-5** | [scope-kill](scope-kill.md) C-* | session lifecycle §4; component interfaces |

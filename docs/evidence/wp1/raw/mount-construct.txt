@@ -1,0 +1,56 @@
+# spike: mount-construct
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: 7298895
+# date: 2026-09-03T14:14:22Z
+# args: 
+
+warning: constant `MOUNT_ATTR_NOEXEC` is never used
+  --> src/main.rs:36:114
+   |
+36 | ...ID: u64 = 0x2; const MOUNT_ATTR_NODEV: u64 = 0x4; const MOUNT_ATTR_NOEXEC: u64 = 0x8;
+   |                                                            ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `CLOSE_RANGE_CLOEXEC` is never used
+  --> src/main.rs:37:7
+   |
+37 | const CLOSE_RANGE_CLOEXEC: c_uint = 4;
+   |       ^^^^^^^^^^^^^^^^^^^
+
+spike mount-construct
+RESULT R6-1.openat2-resolves-legitimate-path PASS openat2(base, ws1/src) → fd Ok(4)
+RESULT R6-2.openat2-rejects-relative-symlink-escape PASS ws1/escape→../../secret: Err(40) (ELOOP=40)
+RESULT R6-3.openat2-rejects-absolute-symlink PASS ws1/abs→/etc: Err(40)
+RESULT R6-4.openat2-rejects-magic-link PASS ws1/magic→/proc/self/root/etc: Err(40)
+RESULT R6-5.openat2-beneath-rejects-dotdot-escape PASS ws1/../../secret/key with RESOLVE_BENEATH: Err(18) (EXDEV=18)
+RESULT R6-6.held-fd-immune-to-swap-race PASS after swapping src→symlink(secret): openat(held_fd, hello.txt) ok=true; a string re-walk of the same path now yields "SECRET" — the race a re-walk would lose
+RESULT R6-7.detached-mount-fds-from-held-fds PASS open_tree(OPEN_TREE_CLONE) → workspace tree fd 5, image tree fd 8 (ro,nosuid,nodev via mount_setattr); no string path used after resolution
+RESULT C1-1.clone3-barrier-child-idle-in-new-namespaces PASS pidfd=17; child mountinfo lines=29 == host 29 (nothing changed yet; rollback here = kill via pidfd)
+  child: rprivate 0
+  child: root-tmpfs-moved Ok(())
+  child: trees-moved Ok(()) Ok(())
+  child: pivot_root 0
+  child: umount-oldroot 0
+  child: proc 0 pid1=1 nproc=1
+  child: sysfs 0 netifs=1
+  child: world mounts=5 all_nosuid_nodev=true cgroupfs_visible=false host_root_visible=false systemd_or_dbus_socket=false secret_readable=false
+  child: workspace-file Some("workspace-file") image-exec-bit Some(true)
+  child: fds before=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16] after=[0, 1, 2, 1000]
+  child: reintro leak_fd=2 memfd=2 scm_socket_alive=false host_pid2_visible=false
+  child: exec-ready uid=200042 nnp=1 capbnd_cap_sys_admin=0
+RESULT C2-1.rprivate-before-any-bind PASS rprivate 0
+RESULT C4-1.root-by-fsmount-and-move_mount PASS tmpfs root via fsopen/fsconfig/fsmount; workspace and image trees attached by move_mount from detached FDs — no source path string crossed the namespace
+RESULT C4-2.pivot_root-not-chroot PASS pivot_root 0 / umount-oldroot 0
+RESULT C5-1.proc-after-pidns-shows-only-session PASS proc 0 pid1=1 nproc=1
+RESULT C5-2.fresh-sysfs-shows-only-lo PASS sysfs 0 netifs=1 (F-2 follow-up: sysfs mounted after netns → lo only)
+RESULT C4-3.world-nosuid-nodev-no-cgroup-no-systemd PASS world mounts=5 all_nosuid_nodev=true cgroupfs_visible=false host_root_visible=false systemd_or_dbus_socket=false secret_readable=false
+RESULT C4-4.workspace-and-image-content-correct PASS workspace-file Some("workspace-file") image-exec-bit Some(true)
+RESULT C6-1.close_range-leaves-only-allowlist PASS fds before=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16] after=[0, 1, 2, 1000]
+RESULT C6-2.no-reintroduction-via-procfd-memfd-scm PASS reintro leak_fd=2 memfd=2 scm_socket_alive=false host_pid2_visible=false (ENOENT=2: closed fds have no /proc/self/fd entry; socketpair end closed so SCM_RIGHTS has no carrier)
+RESULT C7-1.nnp-caps-uid-then-exec PASS exec-ready uid=200042 nnp=1 capbnd_cap_sys_admin=0; exec of /image/bin/busybox true exit code=0
+RESULT C2-2.no-propagation-to-host PASS host mountinfo lines 29→29; /mnt/workspace absent on host
+secret intact on host=true; parent still holds leak_fd=9 memfd=10
+done
+
+# exit: 0
