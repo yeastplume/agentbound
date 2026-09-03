@@ -4,13 +4,14 @@
 
 Agentbound develops and evaluates an architecture in which an organizational AI agent is a durable security principal, while each task runs as a separately governed Unix session and process tree. The foundational papers retain the title *Agents as Unix Principals*.
 
-The project is currently moving from reviewed architecture documents toward a bounded Phase 1 reference implementation.
+The project is currently in WP0 specification review for a bounded Phase 1 reference implementation.
 
 ## Start here
 
 - [Position paper](docs/papers/position-paper.md) — concise statement of the thesis, motivation, and adoption argument.
 - [Technical report](docs/papers/technical-report.md) — normative mechanisms, invariants, threat model, deployment profiles, and evaluation programme.
-- [Phase 1 reference implementation plan](docs/plans/phase-1-reference-implementation.md) — draft implementation and evaluation plan for review.
+- [Phase 1 reference implementation plan](docs/plans/phase-1-reference-implementation.md) — staged implementation and evaluation programme.
+- [WP0 architecture specifications](docs/architecture/README.md) — normative requirements, schemas, lifecycle specifications, traceability, and ADRs.
 
 ## Repository layout
 
@@ -30,11 +31,11 @@ tests/            Future adversarial conformance and integration tests
 - The **position paper** owns motivation, thesis, adoption, and conclusions.
 - The **technical report** owns mechanisms, invariants, threats, constraints, and evaluation.
 - The **Phase 1 plan** owns implementation scope, gates, work packages, and expected evidence.
-- **Architecture decision records** under `docs/architecture/` record decisions that constrain implementation (currently ADR-0001, per-session execution identity); future files there will own concrete schemas, interfaces, and lifecycle specifications.
+- **Architecture specifications and decision records** under `docs/architecture/` own concrete requirements, schemas, lifecycle rules, traceability, and decisions that constrain implementation.
 
 ## Current status
 
-The papers are working drafts for external review (position paper 0.9, technical report 0.5-TR7), revised after three independent reviews. The Phase 1 plan is version 0.5 and specifically requests feedback before implementation begins.
+The papers are working drafts for external review (position paper 0.9, technical report 0.5-TR8), revised after three independent reviews. The Phase 1 plan is version 0.6. Its WP0 architecture specifications are version 0.1 drafts under review; implementation begins only after that set is frozen.
 
 The shortest honest summary of the current claim: the Unix-governed baseline is an isolation, authority, and attribution profile that makes no information-flow claim; integrity provenance is the nearest practical payoff; confidentiality compartments and multilevel release are later, measured profiles. The formal rules are a specification to implement and test against, not a proven model.
 

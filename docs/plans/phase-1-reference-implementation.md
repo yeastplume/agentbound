@@ -1,11 +1,11 @@
 # Phase 1 Reference Implementation Plan
 
 **Status:** Draft for review  
-**Plan version:** 0.5  
+**Plan version:** 0.6
 **Date:** 28 August 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
-**Decision records:** [`../architecture/ADR-0001-execution-identity.md`](../architecture/ADR-0001-execution-identity.md)
+**Architecture specifications:** [`../architecture/README.md`](../architecture/README.md)
 
 ---
 
@@ -16,6 +16,7 @@
 - **0.3** — Second independent review: resolved the one-adapter/inference-adapter contradiction (Git only in the core; inference adapter and execution-binding control moved to milestone 1C); reworded the integrity non-goal; added adversarial suites for bounded derivation, monotonic delegation, active revocation, and constructor inputs; execution identity restated as "uniquely allocated with verified reclamation and reuse quarantine" with a WP0 lifecycle specification; gateway authentication and the control substrate made required ADRs; control arm fixed as a microVM; internal milestones 1A–1D with stop points; full Profile U conformance target made explicit.
 - **0.4** — Follow-up review: active-revocation evidence split by milestone; control-arm test equivalence pre-registered in ADR-0003; ADR-0002 candidate set reconciled with the egress topology (two mutually exclusive channel topologies, each with tests); Invariant 20 evidence distinguishes absent resource classes; gates numbered §§3.1–3.4; programme framing stated in §1.
 - **0.5** — Stale §4.2 egress bullet replaced with the ADR-0002 topology choice; Branch D cross-reference corrected to technical-report §3.5; ADR-0002 scope extended to peer-credential evidence and connection lifetime.
+- **0.6** — WP0 drafts added; effective manifest split into a policy-signed allocation-free authorization manifest and constructor-signed launch binding to remove allocation circularity; execution binding includes inference pool.
 
 ---
 
@@ -222,7 +223,7 @@ The untrusted request may identify only:
 - requested runtime from an approved catalogue;
 - optional bounded resource budget.
 
-The policy service resolves these into an immutable effective manifest. The request must not supply authoritative numeric UIDs, paths, mount sources, labels, credential material, network addresses, capabilities, or namespace settings.
+The policy service resolves these into a policy-signed, allocation-free **authorization manifest**. After validating it, the constructor atomically reserves an execution identity and produces a constructor-signed **launch binding** containing host allocation and substrate-specific projections. Together they are the immutable effective manifest and launch record; the launch binding is cryptographically bound to the authorization-manifest digest. This two-stage form prevents policy from signing a host UID that does not exist yet. The request must not supply authoritative numeric UIDs, paths, mount sources, labels, credential material, network addresses, capabilities, or namespace settings.
 
 The initial schema should include:
 
@@ -230,13 +231,13 @@ The initial schema should include:
 manifest version
 launch-record ID
 agent global ID and durable ownership projection
-per-session execution identity
+per-session execution identity (launch binding only)
 session trace identity
 initiator ID(s), approver ID(s), scheduler/owner if scheduled
 task/purpose and approval references
 derivation inputs and policy/catalogue versions
 runtime identity and artifact digest
-approved execution binding (model, endpoint, tenant, retention mode)
+approved execution binding (model, endpoint, tenant, adapters, inference pool, retention mode)
 namespace and mount specification
 descriptor allowlist
 resource limits
@@ -321,7 +322,7 @@ The initial demonstration uses:
 11. Forced failure at each constructor stage leaves no runnable session or credential.
 12. Audit reconstruction identifies the process that created a local artifact and the process/session responsible for a remote effect, and the report states the fraction of effects in the defined ontology that were reconstructed.
 13. A session pushes a patch to its staging ref; a direct push to `main`, a push to another session's staging ref, and a push with a forged trace identity all fail at the gateway.
-14. (1C) Changing the model endpoint for a running session produces an execution-binding record and, where the new endpoint is not approved for the task, is refused.
+14. (1C) Mutate or revoke each execution-binding member—model, endpoint, tenant, adapters or weights, inference pool, and retention mode. Each unapproved change is refused; every approved or refused change creates an audit event and compatibility decision; a changed binding is unusable until reauthorized.
 15. (1A) A child session or process delegated from a running session receives fewer mounts, a reduced descriptor set, no or narrower gateway grant, and lower resource limits, and cannot recover the parent's authority.
 16. (1A) A running session is terminated or quiesced, per policy, when its initiator is disabled, an approval expires, or its policy version is withdrawn; the behaviour when the control plane is unreachable matches the manifest's declared choice. (1B) Withdrawal of the Git gateway grant and gateway unavailability produce the declared behaviour. (1C) Revocation of the inference grant or binding produces the declared behaviour.
 17. (1D) The demonstrations and suites that ADR-0003 pre-registers as **must run identically** are repeated on the control arm unchanged; those pre-registered as **substrate-equivalent** are run through their registered equivalent test; only those pre-registered as **inapplicable to a microVM**, with a stated reason, are omitted. No demonstration may be reclassified after control-arm results are seen. Demonstration 14 is in the identical set because the control arm shares the policy and gateway components.
@@ -436,7 +437,7 @@ From a running session, create a child session or process and verify the child h
 
 While a session is active, trigger each case and verify that the manifest's declared behaviour (terminate, quiesce, or continue with recorded degradation) occurs, that any applicable gateway authority is withdrawn, and that each transition is audited. Cases are allocated to the milestone at which the affected component exists:
 
-- **1A:** initiator disabled; approval expired; authority revoked; policy or catalogue version withdrawn; task cancelled by an approver; local termination and quiescing; control plane unavailable.
+- **1A:** initiator disabled; approval expired; authority revoked; policy or catalogue version withdrawn; task cancelled by an approver; local termination and quiescing; control plane unavailable; reclassification request, which Profile U rejects fail closed with no changed authority/resource projection and audits with its policy basis.
 - **1B:** Git gateway grant withdrawn; gateway unavailable.
 - **1C:** inference grant or execution binding revoked.
 
@@ -499,13 +500,15 @@ The evaluation report will contain one row per applicable technical-report invar
 | 22 Execution-binding control | 1C | prevents | inference adapter binding check | demo 14 | Not evaluated until 1C | gateway is the only inference path |
 | 4, 5, 8, 9, 16, 18 | — | — | — | — | **N/A to Unix-governed profile** | — |
 
-Every invariant applicable to profile U receives a row (Section 2.3). Results use the report's five classes:
+Every invariant applicable to profile U receives a row (Section 7.2). Results use the report's five classes:
 
 - enforced and passed;
 - enforced but failed;
 - detected only;
 - assumption (documented and accepted, with owner and revalidation trigger);
 - not applicable to this profile.
+
+`Not evaluated` is a milestone-progress status, not one of the five final conformance result classes. Once evaluated, each applicable invariant receives exactly one final class. Every residual assumption records its owner, impact, compensating control, acceptance authority, and revalidation trigger.
 
 Pre-registered thresholds (interface inventory, adversary matrix, required attribution completeness, maximum policy-exception rate, pinned kernel/systemd/LSM versions) are fixed in WP0 before any test runs.
 

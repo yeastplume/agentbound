@@ -2,7 +2,7 @@
 
 ## Security Architecture and Evaluation Programme
 
-**Version:** 0.5-TR7  
+**Version:** 0.5-TR8
 **Date:** 28 August 2026  
 **Status:** Working technical report for external review  
 **Companion:** [`position-paper.md`](position-paper.md)  
@@ -22,6 +22,7 @@
 - **0.5-TR5** — Execution identity restated as uniquely allocated with verified reclamation and reuse quarantine; ownership/execution separation stated as an invariant with profile-specific realizations rather than a universal "never executes".
 - **0.5-TR6** — Aligned the phase description with the Phase 1 plan: the microVM control arm is a Phase 1 (milestone 1D) comparison for the Unix-governed profile, and Phase 3 extends it to high-assurance profiles; reclamation condition bounded to a managed domain.
 - **0.5-TR7** — Replaced the pre-plan component sketch with the Agentbound decomposition; Phase 2 restated as extending the Phase 1 baseline mechanisms rather than introducing them.
+- **0.5-TR8** — WP0 consistency: execution-binding audit fields include inference pool; Phase 1 manifest flow clarified as policy authorization plus allocation-bound launch binding.
 
 ---
 
@@ -563,7 +564,7 @@ No single existing field expresses the entire agent provenance chain. The sessio
 - purpose and approvals;
 - policy version and manifest digest;
 - mounted resources and credential issuances;
-- approved execution binding (model, endpoint, tenant, adapters, retention mode);
+- approved execution binding (model, endpoint, tenant, adapters or weights, inference pool, retention mode);
 - start/end times and termination reason.
 
 The launch record needs a stated trust anchor: who signs it, how its append-only integrity is protected, which clock it uses, how corrections are authorized, and how long it is retained.

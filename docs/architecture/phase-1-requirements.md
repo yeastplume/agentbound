@@ -1,0 +1,221 @@
+# Phase 1 Normative Requirements
+
+**Version:** 0.1  
+**Status:** Draft for WP0 review  
+**Date:** 28 August 2026  
+**Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
+**Source of invariants:** [technical report](../papers/technical-report.md) §7, profile U column  
+**Companion WP0 artefacts:** [manifest schema](manifest-schema.md), [session lifecycle](session-lifecycle.md), [execution-identity lifecycle](execution-identity-lifecycle.md), [ADR-0001](ADR-0001-execution-identity.md), [ADR-0002](ADR-0002-gateway-authentication.md), [ADR-0003](ADR-0003-control-substrate.md), [traceability matrix](traceability-matrix.md)
+
+---
+
+## 0. Conventions
+
+The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are used as in RFC 2119. Each requirement has an identifier `R-<area>-<n>`, a milestone at which it becomes testable, and the technical-report invariant(s) it serves. A requirement tagged **[assumption]** is not enforced by the system; it is a documented precondition whose owner and revalidation trigger appear in the evidence table.
+
+Requirements are stated for the Linux arm. ADR-0003 defines which apply identically to the microVM control arm.
+
+---
+
+## 1. Scope and claim
+
+**R-SCOPE-1 (1A).** Phase 1 claims conformance with the Unix-governed profile only. Every published result MUST state the milestone reached and MUST list the invariants demonstrated, not demonstrated, not evaluated, and not applicable, using the technical report's five result classes.
+
+**R-SCOPE-2 (1A).** Phase 1 MUST NOT claim any confidentiality- or integrity-propagation property on any communication edge. Its sole integrity-flow claim is the protected-object staging and promotion boundary (Invariant 19, protected-object subset), testable from 1B.
+
+**R-SCOPE-3 (1A).** A successful milestone 1A MUST NOT be reported as "Phase 1 succeeded" or "Profile U conformant".
+
+---
+
+## 2. Threat model (scoped)
+
+The in-scope adversary and exclusions are those of technical-report §8, restricted as follows for Phase 1.
+
+**In scope.** An adversary who controls the workload inside a session (the runtime, any child process, any input to them) and may issue any syscall available to the session; an adversary who submits arbitrary requests to `agentbound-policy` and `agentbound-launch` as an authenticated but non-administrative initiator; an adversary who controls a concurrent session of the same or a different principal on the same host; an adversary who controls the remote end of an authorized gateway operation's *response*.
+
+**Trusted.** Kernel, systemd, host firewall, `agentbound-policy` and its catalogue store, `agentbound-launch` and the post-launch lifecycle helper, the execution-identity allocator, `agentbound-gateway` and its adapters, the launch-record store and signing key, `agentbound-audit`, the Git host's branch protection, and (from 1C) the approved model endpoint.
+
+**Out of scope for Phase 1.** Kernel and hardware vulnerabilities; side and covert channels; malicious administrators; misuse by an initiator of authority they legitimately hold; semantic content of prompts, tool arguments, and model responses; compromise of a remote service after an authorized operation; aggregation across authorized outputs.
+
+**R-THREAT-1 (1A).** The evaluation report MUST include an adversary-capability matrix listing, for each suite in plan §6, the capabilities assumed and the interfaces enumerated, and MUST state that untested interfaces carry no claim.
+
+---
+
+## 3. Identity and derivation
+
+**R-ID-1 (1A) [Inv 1].** Every session MUST be bound to exactly one registered durable agent principal resolved by `agentbound-policy` from its registry; a request naming an unregistered principal MUST be rejected before any privileged operation.
+
+**R-ID-2 (1A) [Inv 2].** Every session MUST record the authenticated initiator(s), every approver, and—for scheduled sessions—the scheduling principal and its accountable owner. A scheduled session without an accountable owner MUST be rejected.
+
+**R-ID-3 (1A) [Inv 3].** `Auth_session` MUST be produced by `agentbound-policy` through the derivation relation of the technical report, MUST be a subset of `Auth_agent` and of the task's policy-permitted authority, and MUST be recorded with every derivation input identity and version in the launch record.
+
+**R-ID-4 (1A) [Inv 3].** Derivation MUST fail closed on any unauthenticated, expired, revoked, replayed, or unknown input, and MUST emit an audit event naming the failed input. Approval objects MUST carry an expiry and a nonce or sequence that prevents replay.
+
+**R-ID-5 (1A) [Inv 3].** A recipient-issued grant (for example a scoped token supplied by a service) MUST NOT expand `Auth_session` beyond `Auth_agent`.
+
+**R-ID-6 (1A) [ADR-0001].** Every session MUST run under a per-session execution identity allocated by the constructor from the reserved range in the [execution-identity lifecycle](execution-identity-lifecycle.md); no two concurrent sessions MAY share one; the durable principal's owning UID MUST NOT execute session code.
+
+**R-ID-7 (1A) [ADR-0001].** An execution identity MUST be reclaimed only when the reclamation condition holds across the declared managed domain, followed by quarantine. Objects exported beyond that domain MUST carry the global principal and session identifiers and MUST NOT depend on the numeric UID for durable authorization.
+
+**R-ID-8 (1A) [Inv 14].** The launch record MUST carry the policy version, catalogue version, effective-manifest digest, and derivation inputs, and MUST be signed by `agentbound-policy` with a key whose identity and custody are stated in the evaluation report.
+
+---
+
+## 4. Request and manifest
+
+**R-REQ-1 (1A) [Gate 1].** `agentbound-launch` MUST accept only a policy-signed, allocation-free **authorization manifest** produced by `agentbound-policy`; it MUST NOT accept an untrusted request directly. After validating it, the allocator MUST atomically reserve an identity and `agentbound-launch` MUST produce a constructor-signed **launch binding** containing host allocation and substrate projection. The immutable launch record is the pair; its authoritative identity is `SHA-256(authorization_manifest_digest || launch_binding_digest)`.
+
+**R-REQ-2 (1A) [Gate 1].** The untrusted request MUST conform to the [request schema](manifest-schema.md): unknown, duplicate, or forbidden fields (numeric UIDs, paths, mount sources, labels, credential material, network addresses, capabilities, namespace settings) MUST cause rejection, as MUST requests exceeding the size and nesting bounds.
+
+**R-REQ-3 (1A) [Gate 1].** Both records MUST be canonically encoded and independently signed. The constructor MUST verify the policy signature before allocation; the gateway and audit pipeline MUST verify the constructor signature and its binding to the policy digest. Digest mismatch, unsupported schema, duplicate launch binding, or rollback after a committed binding MUST fail closed.
+
+**R-REQ-4 (1A) [Gate 1].** Every field of the manifest MUST be tagged substrate-independent or substrate-specific per the schema; only substrate-independent fields MAY be shared with the control arm.
+
+**R-REQ-5 (1A) [Gate 1].** The constructor MUST validate the manifest fully before performing any irreversible operation (validation rules in the manifest schema §5), including: all identities resolvable; after atomic allocation, the selected execution identity uniquely reserved and not quarantined; every mount source in the catalogue, descriptor allowlist closed, exactly one channel topology, every gateway operation in the adapter catalogue, policy and catalogue versions current, approvals unexpired.
+
+**R-REQ-6 (1A) [Gate 1].** The constructor MUST resolve mount sources through descriptor-relative, symlink-safe operations (`openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, or mount file descriptors) and MUST NOT re-walk a string path between validation and use.
+
+---
+
+## 5. Construction
+
+**R-CON-1 (1A) [Inv 7].** Construction MUST follow the ordering in technical-report §2.1 as specified in the [session lifecycle](session-lifecycle.md) §3. Any step that cannot be completed MUST abort the launch, MUST roll back every completed irreversible step, and MUST leave no runnable process, usable credential, live grant, mounted resource, firewall rule, or unsealed launch record.
+
+**R-CON-2 (1A) [Inv 7].** The mount namespace MUST be marked recursively private before any bind; `pivot_root` MUST be used (not `chroot`); `proc` MUST be mounted only after the PID namespace exists; host `/proc` MUST NOT be visible.
+
+**R-CON-3 (1A) [Inv 6, 15].** Before `exec`, the constructor MUST close every descriptor not on the allowlist, MUST install the execution identity and supplementary groups, MUST drop the capability bounding set to the manifest's set (empty by default), MUST set `no_new_privs`, and MUST apply the Landlock and seccomp policies named in the manifest. Seccomp filters MUST be installed with `SECCOMP_FILTER_FLAG_TSYNC`.
+
+**R-CON-4 (1A) [Inv 6].** The session's world MUST contain no set-UID or set-GID executables, no file capabilities, no writable path into the cgroup hierarchy, no systemd or container-runtime socket, and no broker socket other than the one named by the channel topology.
+
+**R-CON-5 (1A) [Inv 15].** Every launch-only capability (`CAP_SETUID`, `CAP_SETGID`, `CAP_SYS_ADMIN`, `CAP_NET_ADMIN`, `CAP_AUDIT_CONTROL`, `CAP_MAC_ADMIN`, and any other held) MUST be dropped before untrusted code executes. The evaluation report MUST enumerate the post-launch privileged operations and the helper that performs them.
+
+**R-CON-6 (1A) [Inv 13].** `loginuid` MUST be set once, in the child, from the launch record before `exec`; the constructor MUST handle hosts where it is immutable by recording that condition.
+
+**R-CON-7 (1A).** Credentials and broker access MUST become usable only after every boundary is in place and the launch record is committed. The runtime MUST be exec'd last.
+
+**R-CON-8 (1A) [Gate 1].** The privileged constructor and lifecycle helper together MUST NOT exceed the reviewability bound in §11; exceeding it is a milestone 1A stop condition.
+
+---
+
+## 6. Isolation and descendant control
+
+**R-ISO-1 (1A) [Inv 17].** A session MUST NOT be able to observe, signal, trace, read the memory of, attach to, or open the private state of any concurrent session of the same or a different principal through any interface in the enumerated inventory (plan §6.1), including `/proc/<hostpid>`, `kill`, `pidfd_open`/`pidfd_send_signal`, `ptrace`, `process_vm_readv`/`writev`, `/run` and `/tmp` paths, pathname and abstract Unix sockets, shared supplementary-group permissions, broker socket reuse, and inherited descriptors (including reintroduction via `SCM_RIGHTS`, `/proc/self/fd`, and memfd).
+
+**R-ISO-2 (1A) [Inv 17].** Each session MUST have its own mount, PID, IPC, UTS, and (network topology) network namespace, private `/tmp` and runtime directory, private PTY if any, and private workspace mount.
+
+**R-ISO-3 (1A) [Inv 12].** All session processes MUST remain in one systemd scope (cgroup v2) with an in-session PID-namespace init acting as subreaper; the constructor MUST hold a pidfd for the init. No session process MAY hold a writable descriptor to any cgroup file or a path to the system manager.
+
+**R-ISO-4 (1A) [Inv 12].** Termination MUST freeze, `cgroup.kill`, and reap all descendants and MUST confirm `cgroup.procs` is empty before credential/grant record release or identity release. New gateway operation admission MUST be denied upon entering termination; early revocation to contain an immediate remote effect is permitted only as an audited ordering deviation. Tasks in uninterruptible sleep MUST delay termination, which MUST then be recorded as *termination-incomplete*; the execution identity MUST NOT be released while any process is live.
+
+**R-ISO-5 (1A) [Inv 6].** A child session or process delegated from a running session MUST receive authority that is a subset of the parent's on every axis (mounts, descriptors, gateway operations, budgets), and MUST have no path to recover the parent's authority.
+
+---
+
+## 7. Gateway, egress, and credentials
+
+**R-GW-1 (1B) [Inv 10].** The session MUST have exactly one channel to `agentbound-gateway`, of the topology selected by ADR-0002, and no other route to any network or host service. The two topologies MUST NOT be mixed in one session.
+
+**R-GW-2 (1B) [Inv 10].** Under the network topology: one veth; host-side nftables or eBPF permitting only the gateway (and a constructor-operated resolver, if any); no `CAP_NET_RAW`/`CAP_NET_ADMIN`; seccomp forbidding unneeded socket families; empty inherited-socket set; no reachable Unix sockets. Under the local-socket topology: no network interface; exactly one mounted `AF_UNIX` socket recorded in the manifest; every other Unix socket unreachable.
+
+**R-GW-3 (1B) [Inv 10, 11].** `agentbound-gateway` MUST authenticate each connection to a single execution identity and launch record using the evidence specified in ADR-0002, MUST refuse unauthenticated or unmapped connections, and MUST invalidate connections at revocation and termination per ADR-0002's lifetime rules.
+
+**R-GW-4 (1B) [Inv 10].** The gateway MUST expose only named, typed operations from the adapter catalogue; it MUST NOT act as an HTTP or CONNECT proxy or forward arbitrary bodies. Each operation MUST authorize destination, method, argument schema, tenant, and response size, MUST authenticate its upstream TLS peer, and MUST propagate the session trace identity to the upstream service.
+
+**R-GW-5 (1B) [Inv 19].** The Git adapter MUST accept pushes only to `refs/agentbound/<session>/…` staging refs of the manifest-named repository and MUST refuse pushes to any other ref, to another session's staging ref, or with a trace identity that does not match the authenticated session. Protected-branch enforcement at the Git host is a **[assumption]**.
+
+**R-GW-6 (1B) [Inv 11].** No Git, cloud, model, or API credential MAY be present in the session's environment, filesystem, or descriptors. Bearer tokens MUST NOT be the primary gateway-authentication mechanism. The evaluation report MUST state, per credential, whether it is exportable from within the session.
+
+**R-GW-7 (1B) [Inv 20].** The gateway MUST enforce the manifest's budgets for every present gateway resource class—request rate and count, bytes, network bandwidth, concurrent connections, fan-out, storage, and monetary quota—and MUST record classes absent from the deployment.
+
+**R-GW-8 (1C) [Inv 22].** The inference adapter MUST carry the session identity on every request, MUST bind requests to the approved execution binding in the manifest, and MUST refuse a change of model, endpoint, tenant, adapters, inference pool, or retention mode that is not approved for the task. Every binding change MUST produce an audit event.
+
+**R-GW-9 (1C) [Inv 20].** From 1C the gateway MUST additionally enforce token and inference-spend budgets.
+
+---
+
+## 8. Resource governance
+
+**R-RES-1 (1A) [Inv 20].** The manifest MUST use the closed resource schema in `manifest-schema.md` §3.5 and MUST classify every resource class as *applicable and enforced* or *absent with evidence*. Unknown resource classes MUST be rejected.
+
+**R-RES-2 (1A) [Inv 20].** `agentbound-launch` MUST install cgroup v2 limits for PID count, CPU, memory, and I/O; rlimits for file descriptors; filesystem or project quotas for disk bytes and inodes; and a bounded audit queue or loss policy before exec. A present class without an enforcement owner is a construction failure.
+
+**R-RES-3 (1A) [Inv 20].** Delegation and child-process fan-out MUST be bounded by the manifest and monotonically decrease under delegation. Limits MUST cover children, concurrent operations, and total delegated sessions where those facilities exist.
+
+**R-RES-4 (1B/1C) [Inv 20].** `agentbound-gateway` MUST enforce R-GW-7 at 1B and token/inference-spend limits at 1C. Accelerator budget MAY be classified absent only when no accelerator is exposed to the session.
+
+---
+
+## 9. Lifecycle and revocation
+
+**R-LC-1 (1A) [Inv 21].** Every state transition of the [session lifecycle](session-lifecycle.md) MUST have an authorized actor, an audit event, a defined idempotency rule, failure cleanup, and an externally observable status.
+
+**R-LC-2 (1A) [Inv 21] [assumption].** For each revocation trigger, the manifest MUST declare one of *terminate*, *quiesce*, or *continue-degraded*; the system MUST implement the declared behaviour. The choice is policy and is recorded as an assumption.
+
+**R-LC-3 (1A/1B/1C) [Inv 21].** Triggers MUST be demonstrated at the milestone where the affected component exists: 1A — initiator disabled, approval expired, authority revoked, policy or catalogue withdrawn, approver cancel, control plane unavailable; reclassification request (fail closed and audit when no labeled resource exists in profile U); 1B — Git grant withdrawn, gateway unavailable; 1C — inference grant or binding revoked. Invariant 21 MUST NOT be marked complete before 1C.
+
+**R-LC-4 (1A).** *Quiesce* MUST mean: no new gateway operations, no new children, existing processes may run to completion within a manifest-declared bound, after which terminate applies.
+
+**R-LC-5 (1A).** After a control-plane restart, every session in any non-terminal state MUST be reconciled against the systemd scope and launch-record store; orphaned sessions MUST be terminated or resumed per their declared behaviour, and identities without a live scope MUST enter reclamation.
+
+---
+
+## 10. Audit and attribution
+
+**R-AUD-1 (1A) [Inv 13].** Every audit event MUST carry host ID, boot ID, launch-record ID, allocation-record ID, session and trace identities, execution UID, monotonic and wall-clock timestamps, actor, and outcome. Kernel process records MUST additionally carry the PID-namespace identity and process start time or pidfd-derived identity where supported; lack of pidfd support MUST be recorded as a residual assumption, never silently replaced by PID alone.
+
+**R-AUD-2 (1B) [Inv 13].** For the defined effect ontology (local objects in the session's world, process lifecycle events, gateway operations), `agentbound-audit` MUST reconstruct `initiator → agent → session → process → effect` and the report MUST state the fraction reconstructed against the threshold in §11.
+
+**R-AUD-3 (1A) [Inv 13].** `agentbound-audit` MUST expose loss counters. The manifest MUST declare audit-loss behaviour (*stop*, *quarantine*, or *continue-with-counter*); the profile that claims attribution SHOULD select *stop* or *quarantine*.
+
+**R-AUD-4 (1A).** The launch-record store MUST be append-only with a stated trust anchor, clock source, retention, and correction procedure; corrections MUST be new records referencing the original, never edits.
+
+**R-AUD-5 (1A).** Denial diagnostics returned to the workload MUST name the requirement or policy rule and the launch-record and trace identities, and MUST NOT disclose other sessions' identifiers.
+
+---
+
+## 11. Integration contract (1C)
+
+**R-INT-1.** An existing coding-agent harness MUST run under `agentbound run --agent <id> --task <id> -- <command>` given only: a per-session working tree at a stable path, stdin/stdout/stderr and an optional PTY, Git remote operations via the gateway staging adapter, and model access via the inference adapter. Any further grant MUST be a reviewed manifest entry.
+
+**R-INT-2.** The same manifest MUST support a local developer mode (single host, file-backed policy) and a CI mode (non-interactive, scheduled initiator with accountable owner).
+
+**R-INT-3.** A harness that cannot run without a grant that voids any Gate 1–3 property is a milestone 1C stop condition.
+
+---
+
+## 12. Pre-registered thresholds
+
+These values are fixed before any test runs and MAY be changed only by a recorded revision of this document with justification.
+
+| Threshold | Value | Applies to |
+|---|---|---|
+| Interface inventory | The union of plan §6.1–§6.9 items, enumerated per suite in the traceability matrix; no claim on interfaces outside it | R-THREAT-1 |
+| Adversary matrix | One row per suite, capabilities as in §2 | R-THREAT-1 |
+| Bypass corpus pass rate | 100% of enumerated items either enforced-and-passed or recorded as a failure; no "flaky" class | Inv 6, 10, 12, 17 |
+| Attribution completeness | ≥ 99% of effects in the ontology reconstructed under nominal load; 100% of gateway operations; loss under overload reported with counters | R-AUD-2 |
+| Privileged-code reviewability bound | `agentbound-launch` + lifecycle helper + identity allocator ≤ 6 000 lines of implementation code excluding tests and generated code, in a memory-safe language or with documented justification; a single reviewer MUST be able to read all of it line by line | R-CON-8 |
+| Policy-exception rate | Zero manifest fields overridden by administrators outside the catalogue during the evaluation run; every privileged manual repair recorded | Gate 4 |
+| Fault-injection coverage | Every construction step and every termination step injected at least once with no residual process, grant, mount, rule, or unsealed record | R-CON-1, R-ISO-4 |
+| Pinned versions | Kernel, systemd, nftables/eBPF toolchain, LSM policy, Firecracker (control arm), Git host, recorded in the evaluation report and unchanged within a run | all |
+| Control-arm equivalence | The ADR-0003 classification table, frozen before any control-arm result | Gate 4 comparative claim |
+
+---
+
+## 13. Requirements by milestone
+
+| Milestone | Requirements first testable |
+|---|---|
+| 1A | R-SCOPE-*, R-THREAT-1, R-ID-1…8, R-REQ-1…6, R-CON-1…8, R-ISO-1…5, R-RES-1…3, R-LC-1, 2, 4, 5, R-LC-3 (1A cases), R-AUD-1, 3, 4, 5 |
+| 1B | R-GW-1…7, R-LC-3 (1B cases), R-AUD-2 |
+| 1C | R-GW-8, 9, R-LC-3 (1C cases), R-INT-1…3 |
+| 1D | Control-arm application per ADR-0003 |
+
+---
+
+## 14. Open questions for WP0 review
+
+1. Is the 6 000-line reviewability bound the right order of magnitude, and should the gateway core (excluding adapters) be inside it?
+2. Should R-AUD-3 mandate *stop* for the Linux arm during evaluation so that attribution completeness is measured without loss, with *continue-with-counter* measured separately?
+3. Does R-ID-4's replay protection for approvals need a server-side nonce store, or is a signed sequence sufficient for Phase 1's file-backed policy stub?
+4. Should R-CON-4's "no set-ID executables" be enforced by mounting the base filesystem `nosuid` (simple, coarse) or by image verification (stronger, more work)?
+5. Is 99% attribution completeness meaningful without a defined load profile, and should WP0 fix one?
