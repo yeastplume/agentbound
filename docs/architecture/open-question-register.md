@@ -1,9 +1,14 @@
 # WP0 open-question disposition register
 
-**Version:** 0.1  
+**Version:** 0.2  
 **Status:** Freeze input — every open question in the WP0 set is listed here with exactly one disposition  
 **Date:** 28 August 2026  
 **Related:** [architecture README](README.md) freeze condition; all WP0 documents
+
+## Revision history
+
+- **0.1** — Initial disposition of all 32 questions.
+- **0.2** — External review: three answers (24 h quarantine floor, closed five-path domain, `continue-degraded` restriction with split outage triggers) were present only in open-question summaries; now written into the normative sections of the identity lifecycle §4.1–4.2, session lifecycle §6, manifest schema §3.6, requirements R-LC-2/3, and test catalogue T-6.8-006/011–013.
 
 ## Purpose
 

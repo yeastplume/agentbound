@@ -1,7 +1,7 @@
 # Phase 1 Reference Implementation Plan
 
 **Status:** Draft for review  
-**Plan version:** 0.9
+**Plan version:** 0.10
 **Date:** 28 August 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
@@ -20,6 +20,7 @@
 - **0.7** — WP0 decisions applied: local-socket topology selected and network topology withdrawn from Phase 1 (ADR-0002 0.2); systemd-invoked helper replaced by the `agentbound-lifecycle` daemon; WP0 deliverables extended with the test catalogue and component-interface skeleton; Gate 3 no longer provisional; gate language, bypass-corpus rule, comparative decision rule, and Profile U wording tightened; demo 12 scoped to the effect ontology.
 - **0.8** — Second WP0 review: gateway-free 1A manifest form; one connection per process; policy component emits the authorization manifest, not the effective manifest; ADR-0003 accepted with pinned configuration and thresholds.
 - **0.9** — WP1 spike list extended with the open-question register items VM-1, VM-2, LC-2, ID-1.
+- **0.10** — §6.8 1A case list uses the split outage-trigger vocabulary and the `continue-degraded` restriction.
 
 
 ---
@@ -329,7 +330,7 @@ The initial demonstration uses:
 13. A session pushes a patch to its staging ref; a direct push to `main`, a push to another session's staging ref, and a push with a forged trace identity all fail at the gateway.
 14. (1C) Mutate or revoke each execution-binding member—model, endpoint, tenant, adapters or weights, inference pool, and retention mode. Each unapproved change is refused; every approved or refused change creates an audit event and compatibility decision; a changed binding is unusable until reauthorized.
 15. (1A) A child session or process delegated from a running session receives fewer mounts, a reduced descriptor set, no or narrower gateway grant, and lower resource limits, and cannot recover the parent's authority.
-16. (1A) A running session is terminated or quiesced, per policy, when its initiator is disabled, an approval expires, or its policy version is withdrawn; the behaviour when the control plane is unreachable matches the manifest's declared choice. (1B) Withdrawal of the Git gateway grant and gateway unavailability produce the declared behaviour. (1C) Revocation of the inference grant or binding produces the declared behaviour.
+16. (1A) A running session is terminated or quiesced, per policy, when its initiator is disabled, an approval expires, or its policy version is withdrawn; when the policy service is unavailable or the audit pipeline degrades below its stop threshold, the behaviour is the manifest's declared choice (the only two triggers for which `continue-degraded` may be declared); when `agentbound-lifecycle` is unavailable, installed containment holds, no new authority is issued, and transitions wait for its recovery. (1B) Withdrawal of the Git gateway grant and gateway unavailability produce the declared behaviour. (1C) Revocation of the inference grant or binding produces the declared behaviour.
 17. (1D) The demonstrations and suites that ADR-0003 pre-registers as **must run identically** are repeated on the control arm unchanged; those pre-registered as **substrate-equivalent** are run through their registered equivalent test; only those pre-registered as **inapplicable to a microVM**, with a stated reason, are omitted. No demonstration may be reclassified after control-arm results are seen. Demonstration 14 is in the identical set because the control arm shares the policy and gateway components.
 
 ---
@@ -437,7 +438,7 @@ From a running session, create a child session or process and verify the child h
 
 While a session is active, trigger each case and verify that the manifest's declared behaviour (terminate, quiesce, or continue with recorded degradation) occurs, that any applicable gateway authority is withdrawn, and that each transition is audited. Cases are allocated to the milestone at which the affected component exists:
 
-- **1A:** initiator disabled; approval expired; authority revoked; policy or catalogue version withdrawn; task cancelled by an approver; local termination and quiescing; control plane unavailable; reclassification request, which Profile U rejects fail closed with no changed authority/resource projection and audits with its policy basis.
+- **1A:** initiator disabled; approval expired; authority revoked; policy or catalogue version withdrawn; task cancelled by an approver; local termination and quiescing; policy service unavailable; audit pipeline degraded below stop threshold; lifecycle daemon unavailable (not manifest-selectable: containment holds, transitions wait); a manifest declaring `continue-degraded` for any trigger other than the two permitted ones is rejected; reclassification request, which Profile U rejects fail closed with no changed authority/resource projection and audits with its policy basis.
 - **1B:** Git gateway grant withdrawn; gateway unavailable.
 - **1C:** inference grant or execution binding revoked.
 

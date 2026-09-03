@@ -1,6 +1,6 @@
 # Session Lifecycle Specification
 
-**Version:** 0.4  
+**Version:** 0.5  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -12,6 +12,7 @@
 - **0.2** — Replaced the systemd-invoked lifecycle helper with the `agentbound-lifecycle` daemon (D-Bus scope signals plus held pidfds); construction step 1 restated as a `clone3` synchronization barrier; termination protocol reordered so the PID-namespace init reaps before `cgroup.kill`, with a host credential scan and a termination deadline; quiesce redefined as admission denial plus freeze; local-socket topology only; two-stage launch record terminology.
 - **0.3** — Identifier terminology aligned (`authorization_id` pre-binding, `launch_record_digest` post-binding); systemd stated as observation source only.
 - **0.4** — Open questions disposed per the open-question register; answers written into the normative text. D-state escalation path; LC-2 carried to WP1.
+- **0.5** — §6: `continue-degraded` restricted to `policy_service_unavailable` and `audit_pipeline_degraded_below_stop_threshold`; trigger table rewritten; generic control-plane trigger split into policy-service, audit-pipeline, and lifecycle-daemon outages (the last not manifest-selectable).
 
 
 ---
@@ -145,18 +146,22 @@ A manifest MUST declare one behavior for each applicable trigger: `terminate`, `
 
 **Quiesce** means: `agentbound-lifecycle` instructs the gateway to deny admission of new operations, denies new attachments and grants, and then **freezes** the session cgroup for the manifest-declared bound; the frozen session can create no new gateway operation and no new process. At bound expiry `agentbound-lifecycle` MUST terminate the session. Quiesce does not promise that thawed processes could not fork: no-new-child semantics are provided only by the freeze, so a quiesced session is never thawed except by the termination protocol. Quiesce is not a promise that already-read information is forgotten.
 
+**Restriction on `continue-degraded`.** In Phase 1, `continue-degraded` is valid only for the triggers `policy_service_unavailable` and `audit_pipeline_degraded_below_stop_threshold`, and only when predeclared in the manifest. Every other trigger MUST resolve to `terminate` or `quiesce`; `agentbound-policy` MUST reject a manifest that declares `continue-degraded` for any other trigger. An `agentbound-lifecycle` outage (`lifecycle_daemon_unavailable`) is not a manifest-selectable trigger and never enters `continue-degraded`: installed containment remains in force, no new authority is issued, and every transition waits for daemon recovery, after which §7 reconciliation runs.
+
 | Milestone | Trigger | Declared behavior requirements |
 |---|---|---|
-| 1A | Initiator disabled | Apply manifest choice; for `continue-degraded`, reject operations whose policy requires live initiator status. |
-| 1A | Approval expired | Apply manifest choice and revoke approval-dependent future operations. |
-| 1A | Authority revoked | Terminate or quiesce unless policy explicitly allows a narrower degraded authority. |
-| 1A | Policy or catalogue withdrawn | Stop new use of the withdrawn item; terminate, quiesce, or continue-degraded exactly as declared. |
-| 1A | Approver cancels task | Apply cancellation behavior; record approver identity and authority. |
-| 1A | Control plane unavailable | Apply the manifest's fail-closed, quiesce, or declared degraded behavior; do not silently grant new authority. |
-| 1B | Git gateway grant withdrawn | `agentbound-gateway` MUST deny new Git operations; session behavior follows manifest. |
-| 1B | Gateway unavailable | `agentbound-gateway` failure MUST produce the declared session behavior and a distinct availability event. |
-| 1C | Inference grant revoked | Gateway MUST deny new inference operations; session behavior follows manifest. |
-| 1C | Approved execution binding revoked | Deny the binding and terminate, quiesce, or continue-degraded as declared; record binding identity. |
+| 1A | Initiator disabled | Terminate or quiesce as declared. |
+| 1A | Approval expired | Terminate or quiesce as declared; revoke approval-dependent future operations. |
+| 1A | Authority revoked | Terminate or quiesce as declared. |
+| 1A | Policy or catalogue withdrawn | Stop new use of the withdrawn item; terminate or quiesce as declared. |
+| 1A | Approver cancels task | Terminate or quiesce as declared; record approver identity and authority. |
+| 1A | Policy service unavailable | Terminate, quiesce, or `continue-degraded` as declared; under `continue-degraded` no operation requiring fresh policy evaluation is admitted and no new authority is granted. |
+| 1A | Audit pipeline degraded below stop threshold | Terminate, quiesce, or `continue-degraded` as declared; under `continue-degraded` loss counters are exposed and effects requiring attribution are denied. |
+| 1A | Lifecycle daemon unavailable | Not manifest-selectable: containment holds, no new authority, transitions wait for recovery. |
+| 1B | Git gateway grant withdrawn | `agentbound-gateway` MUST deny new Git operations; terminate or quiesce as declared. |
+| 1B | Gateway unavailable | `agentbound-gateway` failure MUST produce the declared terminate or quiesce behavior and a distinct availability event. |
+| 1C | Inference grant revoked | Gateway MUST deny new inference operations; terminate or quiesce as declared. |
+| 1C | Approved execution binding revoked | Deny the binding; terminate or quiesce as declared; record binding identity. |
 
 At each milestone, only cases for components that exist are testable. The evidence table MUST identify demonstrated cases; it MUST NOT claim later gateway or inference cases before the relevant component exists.
 

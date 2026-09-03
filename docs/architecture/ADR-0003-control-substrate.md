@@ -1,6 +1,6 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Version:** 0.4
+**Version:** 0.5
 **Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built
 **Date:** 28 August 2026
 **Applies to:** Phase 1 milestone 1D control arm
@@ -12,6 +12,7 @@
 - **0.2** — Froze the Linux local-socket and Firecracker/vsock configurations; added vsock CID-lifetime binding, per-atomic-test classification rules, comparative decision rule, per-arm code accounting; configuration values left open for 0.3.
 - **0.3** — Status reconciled with the architecture README; version pins, guest init, guest audit source, comparative thresholds, confidence method, operator script, VM instance token format, and SLOC comparability rule filled in; open questions reduced to WP1 verification items.
 - **0.4** — Unblinding and operator-familiarity recording; per-ID `control-arm-register.md` as a 1D prerequisite; open questions disposed via the register.
+- **0.5** — T-6.8 register row extended to 013.
 
 
 ## Context
@@ -218,7 +219,7 @@ entry MUST be executed separately as guest root and guest unprivileged.
 | T-6.5-001…010: encoding; size; path/TOCTOU; replay; policy/catalogue change; version downgrade; smuggled fields; signatures; allocation; caller identity | I for each catalogue-expanded bullet | authenticated initiator attacks common resolver/constructor / same common resolver and VM launcher binding | constructor validation and provenance |
 | T-6.6-001…008: principal/task; approval; quorum; owner; excessive grant; catalogue; rollback; ambiguity | I for each catalogue-expanded bullet | authenticated initiator attacks common derivation / same common derivation | bounded derivation |
 | T-6.7-001: narrowed mounts, descriptors, grants, limits, and recovery paths | I | parent session derives child / both corpora derive same authority subset | monotonic delegation |
-| T-6.8-001…010: initiator; approval; authority; policy/catalogue; cancellation; control-plane loss; reclassification; Git grant; gateway loss; inference binding | I for each milestone bullet | hostile session during common revocation / both VM corpora during same revocation | declared lifecycle and revocation behavior |
+| T-6.8-001…013: initiator; approval; authority; policy/catalogue; cancellation; policy-service loss; reclassification; Git grant; gateway loss; inference binding; audit degradation; lifecycle-daemon loss; forbidden degraded mapping | I for each milestone bullet (T-6.8-012: VM arm kills the same host daemon; identical) | hostile session during common revocation / both VM corpora during same revocation | declared lifecycle and revocation behavior |
 | T-6.9-001…008: PIDs; FDs; memory/CPU; disk; I/O/network; connections; audit; gateway budgets | SE, SE, SE, SE, SE, SE, SE, I | session process exhausts applicable limits / both corpora exhaust guest limits; guest RSS plus VMM RSS recorded | enforced present resource classes and absent-class disclosure |
 | F-C-01…09: pipe/eventfd barrier; mount namespace; source resolution; root; proc; descriptor closure; UID/LSM/cap/seccomp; record/grant/socket; exec | SE for each point | evaluator fault-injects Linux construction / evaluator fault-injects Firecracker/jailer/guest construction | no runnable partial session, credential, or ambiguous audit record |
 | F-T-01…11: admission; freeze; kill; reap; no-live proof; grant close; broker close; unmount; socket unmount; identity reclaim; record seal | SE for each point | evaluator interrupts Linux teardown / evaluator interrupts termination, CID invalidation, and cleanup | ordered termination, invalidation, and cleanup |

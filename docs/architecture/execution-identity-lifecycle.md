@@ -1,6 +1,6 @@
 # Execution-Identity Lifecycle Specification
 
-**Version:** 0.4  
+**Version:** 0.5  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed sessions  
@@ -12,6 +12,7 @@
 - **0.2** — Allocator placed inside the `agentbound-lifecycle` daemon; helper references replaced; `loginuid` restated as corroborating evidence with the single R-CON-6 fail rule; host credential scan retained as a reclamation precondition.
 - **0.3** — Identifier terminology aligned with manifest schema §4.
 - **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Reference range 200000–299999; ID-1 carried to WP1.
+- **0.5** — Normative text now states the 24 h quarantine floor (§4.2, administrator may only increase) and the closed five-path registered host domain (§4.1).
 
 
 ---
@@ -87,7 +88,7 @@ An allocation record MUST contain at least:
 | state and sequence | Lifecycle state and monotonic append sequence. |
 | allocator actor and timestamp | Constructor or `agentbound-lifecycle` identity and trusted timestamp. |
 | scope/cgroup and PID namespace IDs | Expected containment evidence. |
-| managed-domain manifest | Registered host paths, mounts, stores, grants, IPC/cgroup references. |
+| managed-domain manifest | Registered host paths (Phase 1: the closed five-path set of §4.1), mounts, stores, grants, IPC/cgroup references. |
 | reclamation and quarantine evidence | Filled on transition from `in-use` onward. |
 
 The per-session primary GID and every supplementary group MUST be allocated with the UID. The session MUST NOT inherit a durable principal's owning group or an unreviewed host group. Phase 1 SHOULD use no supplementary groups unless a manifest-required, per-session group is necessary; each such group MUST be unique to the session and recorded.
@@ -115,7 +116,7 @@ No transition may skip `reclaiming` or `quarantined`. Allocator operations MUST 
 Reclamation is a **condition**, not an elapsed period. `agentbound-lifecycle` MUST evaluate it across the declared managed reclamation domain:
 
 1. session namespaces and mounts;
-2. manifest-registered host paths;
+2. manifest-registered host paths — for the Phase 1 reference deployment this set is **closed** and contains exactly the per-session workspace image, the per-session runtime tmpfs, the launch-record store, the allocator store, and the audit spool; no additional host path may carry a session UID without a reviewed revision of this specification;
 3. session runtime and workspace stores;
 4. broker and storage-service grants;
 5. IPC namespaces; and
@@ -135,7 +136,7 @@ If any check cannot be completed, has contradictory evidence, or finds a live pr
 
 After the reclamation condition passes, the allocator MUST place the identity in `quarantined`. The quarantine's purpose is to expose late-arriving audit, kernel, gateway, and storage-correlation records before the UID is reused.
 
-The ordinal minimum is: **do not leave quarantine until `agentbound-audit` has sealed all records referencing the authorization ID.** In addition, a host-configurable quarantine floor applies. The allocator MUST enforce whichever condition completes later. The floor MAY be increased but MUST NOT be shortened automatically under allocation pressure.
+The ordinal minimum is: **do not leave quarantine until `agentbound-audit` has sealed all records referencing the authorization ID.** In addition, a quarantine floor applies: for the Phase 1 reference deployment the floor is **24 hours after `cleaned/sealed`**; an administrator MAY increase it but MUST NOT reduce it in a conforming deployment. The allocator MUST enforce whichever condition completes later. The floor MAY be increased but MUST NOT be shortened automatically under allocation pressure.
 
 ---
 

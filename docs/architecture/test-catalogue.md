@@ -1,6 +1,6 @@
 # Phase 1 Test Catalogue
 
-**Version:** 0.3  
+**Version:** 0.4  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Governs:** Agentbound milestones 1A–1D  
@@ -13,6 +13,7 @@
 - **0.1** — Initial WP0 pre-registration.
 - **0.2** — Gateway-free 1A form (`channel_topology: none`) applied to 1A tests; load profiles, correlation deadlines, and repetition seeds fixed; T-6.4 rows rewritten for the local-socket corpus; one-connection-per-process rule in T-6.4-007; control-arm column declared to be populated by ADR-0003; identifier terminology aligned.
 - **0.3** — Control-arm column points to the committed per-ID register as a 1D prerequisite.
+- **0.4** — T-6.8-006 narrowed to policy-service outage; T-6.8-011–013 added (audit degradation, lifecycle-daemon outage, forbidden degraded mapping).
 
 
 ## 1. Purpose and status
@@ -301,11 +302,14 @@ change the denominator.
 | T-6.8-003 | 1A | 21 | R-LC-1..4 | ANI | authority revoked | declared action and audit | LC,AR | |
 | T-6.8-004 | 1A | 21 | R-LC-1..4 | ANI | policy/catalogue withdrawal | declared action and audit | LC,AR | |
 | T-6.8-005 | 1A | 21 | R-LC-1..4 | ANI | approver cancellation | declared action and audit | LC,AR | |
-| T-6.8-006 | 1A | 21 | R-LC-2..4 | ANI | control plane unavailable | manifest behavior; no new authority | LC,DR,AR | |
+| T-6.8-006 | 1A | 21 | R-LC-2..4 | ANI | policy service unavailable | declared terminate/quiesce, or `continue-degraded` with no fresh-policy operation admitted and no new authority | LC,DR,AR | |
 | T-6.8-007 | 1A | 21 | R-LC-3 | ANI | U reclassification request | fail closed, unchanged projection, policy audit | LR,DR,AR | |
 | T-6.8-008 | 1B | 21 | R-LC-3 | ANI | Git grant withdrawn | new Git operation denied | GA,LC,DR | |
 | T-6.8-009 | 1B | 21 | R-LC-3 | RR | gateway unavailable | declared behavior plus availability event | GA,LC,AR | |
 | T-6.8-010 | 1C | 21,22 | R-LC-3,R-GW-8 | ANI | inference grant/binding revoked | new inference denied; declared action | GA,LC,DR | |
+| T-6.8-011 | 1A | 21 | R-LC-2..4 | ANI | audit pipeline degraded below stop threshold | declared terminate/quiesce, or `continue-degraded` with loss counters exposed and attribution-requiring effects denied | LC,DR,AR | |
+| T-6.8-012 | 1A | 21 | R-LC-1,R-LC-4..5 | ANI | lifecycle daemon unavailable (daemon killed while session active) | containment holds; no new authority; no transition until restart; §7 reconciliation completes | LC,KA,LR | |
+| T-6.8-013 | 1A | 21 | R-LC-2 | ANI | manifest declaring `continue-degraded` for a non-permitted trigger | rejected by `agentbound-policy`; `request.rejected` | DR,AR | |
 
 ### 7.9 Resource exhaustion
 
@@ -380,7 +384,7 @@ one or more atomic IDs.
 | §6.5 bullets 1–10 | T-6.5-001..010 |
 | §6.6 bullets 1–8 | T-6.6-001..008 |
 | §6.7 sole bullet | T-6.7-001 |
-| §6.8 1A cases | T-6.8-001..007 |
+| §6.8 1A cases | T-6.8-001..007, T-6.8-011..013 |
 | §6.8 1B cases | T-6.8-008..009 |
 | §6.8 1C case | T-6.8-010 |
 | §6.9 bullets 1–8 | T-6.9-001..008 |

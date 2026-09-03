@@ -1,6 +1,6 @@
 # Phase 1 Normative Requirements
 
-**Version:** 0.4  
+**Version:** 0.5  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
@@ -13,6 +13,7 @@
 - **0.2** — Local-socket topology only (ADR-0002 0.2); `agentbound-lifecycle` daemon replaces the systemd-invoked helper; `loginuid` made corroborating evidence with one fail rule; storage bounds restated for tmpfs/images; quiesce redefined; termination deadline; SLOC accounting rules; attribution metric referenced to the test catalogue; bypass-corpus rule made non-tautological; resource-class milestone matrix; comparative decision rule referenced to ADR-0003.
 - **0.3** — R-ID-8 restated with the two identifiers; R-GW-1 covers `channel_topology: none` at 1A; pinned versions aligned with ADR-0003 0.3.
 - **0.4** — Open questions disposed per the open-question register; answers written into the normative text. Evaluation-arm manifests: attribution `required`, audit-loss *stop*; `nosuid,nodev` plus image digest; per-key approval sequence; sixth SLOC figure.
+- **0.5** — R-LC-2 restriction on `continue-degraded`; R-LC-3 trigger list uses the split outage vocabulary.
 
 
 ---
@@ -169,9 +170,9 @@ The in-scope adversary and exclusions are those of technical-report §8, restric
 
 **R-LC-1 (1A) [Inv 21].** Every state transition of the [session lifecycle](session-lifecycle.md) MUST have an authorized actor, an audit event, a defined idempotency rule, failure cleanup, and an externally observable status.
 
-**R-LC-2 (1A) [Inv 21] [assumption].** For each revocation trigger, the manifest MUST declare one of *terminate*, *quiesce*, or *continue-degraded*; the system MUST implement the declared behaviour. The choice is policy and is recorded as an assumption.
+**R-LC-2 (1A) [Inv 21] [assumption].** For each revocation trigger, the manifest MUST declare one of *terminate*, *quiesce*, or *continue-degraded*; the system MUST implement the declared behaviour. *continue-degraded* is valid only for `policy_service_unavailable` and `audit_pipeline_degraded_below_stop_threshold` (session lifecycle §6); `agentbound-policy` MUST reject any other mapping to it. The choice among permitted values is policy and is recorded as an assumption.
 
-**R-LC-3 (1A/1B/1C) [Inv 21].** Triggers MUST be demonstrated at the milestone where the affected component exists: 1A — initiator disabled, approval expired, authority revoked, policy or catalogue withdrawn, approver cancel, control plane unavailable; reclassification request (fail closed and audit when no labeled resource exists in profile U); 1B — Git grant withdrawn, gateway unavailable; 1C — inference grant or binding revoked. Invariant 21 MUST NOT be marked complete before 1C.
+**R-LC-3 (1A/1B/1C) [Inv 21].** Triggers MUST be demonstrated at the milestone where the affected component exists: 1A — initiator disabled, approval expired, authority revoked, policy or catalogue withdrawn, approver cancel, policy service unavailable, audit pipeline degraded below stop threshold, lifecycle daemon unavailable; reclassification request (fail closed and audit when no labeled resource exists in profile U); 1B — Git grant withdrawn, gateway unavailable; 1C — inference grant or binding revoked. Invariant 21 MUST NOT be marked complete before 1C.
 
 **R-LC-4 (1A).** *Quiesce* MUST mean: gateway admission denied, no new attachments or grants, then the session cgroup **frozen** for the manifest-declared bound, after which terminate applies. No-new-child semantics are provided by the freeze alone; a quiesced session is never thawed except by the termination protocol.
 

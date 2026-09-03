@@ -1,6 +1,6 @@
 # Phase 1 invariant-to-test traceability matrix
 
-**Version:** 0.3  
+**Version:** 0.4  
 **Status:** Draft for WP0 review  
 **Date:** 28 August 2026  
 **Conformance target:** [technical report](../papers/technical-report.md) §7, Unix-governed profile U  
@@ -12,6 +12,7 @@
 - **0.1** — Initial WP0 draft.
 - **0.2** — Result column renamed to expected mechanism class / pass criterion with observed class unconstrained; Inv 14 and 21 split into detective/assumption and enforced halves; Inv 10/13 rows aligned with ADR-0002 0.2; test references point to the test catalogue.
 - **0.3** — Requirement-coverage check performed and recorded (§8); R-ID-7 and R-AUD-5 traced; test-catalogue and identifier terminology aligned.
+- **0.4** — T-6.8 references extended to 013.
 
 
 ## 1. Result vocabulary
@@ -53,7 +54,7 @@ The "expected mechanism class / pass criterion" column in §3 is the pre-registe
 | 10 | Gateway-only egress | 1B | R-GW-1…4 | Single `SOCK_SEQPACKET` gateway socket, no network interface, seccomp socket-family deny (ADR-0002); typed adapter | T-6.4-001..014; D-09 | enforced and passed | Gateway and upstream TLS endpoint trusted / gateway owner / adapter or topology change |
 | 11 | Credential confinement | 1B | R-GW-3, R-GW-6 | No upstream secret in session; gateway/broker holds credential | T-6.3-001..008; D-10 | enforced and passed, or assumption where hardware-backed non-exportability is claimed | Authentication credential exportability / gateway owner / mechanism change |
 | 12 | Complete descendant control | 1A | R-ISO-3…4 | systemd scope, cgroup v2, PID-ns init/subreaper, pidfd, `cgroup.kill` | T-6.2-001..008; D-06, D-07, D-08; F-T-01..11 | enforced and passed | D-state can delay but not escape; kernel trusted / platform owner / kernel change |
-| 13 | Attribution of mediated effects | 1B | R-CON-6, R-GW-3, R-AUD-1…5 | Signed launch record; per-operation `SCM_CREDENTIALS` process evidence; trace identity; corroborating loginuid; kernel and gateway audit correlation | D-10, D-12; T-6.4-006..009, T-6.4-013; T-6.8-001..010; metric and load profiles per test catalogue §5; pass at ≥99% nominal and 100% gateway corpus | detected only (attribution is detective); VM arm records session-level for the process leg | Audit availability and loss / audit owner / load or audit configuration change |
+| 13 | Attribution of mediated effects | 1B | R-CON-6, R-GW-3, R-AUD-1…5 | Signed launch record; per-operation `SCM_CREDENTIALS` process evidence; trace identity; corroborating loginuid; kernel and gateway audit correlation | D-10, D-12; T-6.4-006..009, T-6.4-013; T-6.8-001..013; metric and load profiles per test catalogue §5; pass at ≥99% nominal and 100% gateway corpus | detected only (attribution is detective); VM arm records session-level for the process leg | Audit availability and loss / audit owner / load or audit configuration change |
 | 14a | Policy provenance — historical record | 1A | R-ID-8, R-AUD-4 | Policy/catalogue versions and derivation inputs in signed append-only launch record | T-6.5-008; D-11 | detected only |
 | 14b | Policy provenance — version currency | 1A | R-ID-8, R-REQ-5 | Constructor rejects withdrawn or superseded versions | T-6.5-006; T-6.6-007 | enforced and passed | Signing key and launch-record store / policy owner / key or store change |
 | 15 | Launch privilege disposal | 1A | R-CON-3…5 | Capability bounding/drop, `no_new_privs`, separate enumerated `agentbound-lifecycle` daemon | T-6.2-001, T-6.2-003, T-6.2-004; privileged-code review under requirements §12; D-05 | enforced and passed | `agentbound-lifecycle` trusted / implementation owner / daemon operation change |
@@ -61,7 +62,7 @@ The "expected mechanism class / pass criterion" column in §3 is the pre-registe
 | 19 | Integrity promotion (protected-object subset) | 1B | R-GW-5 | Git adapter restricts staging ref; independent branch protection promotes | T-6.4-011, T-6.4-013; D-13 | enforced and passed for staging boundary | Git host branch protection / repository owner / protection-rule change |
 | 20 | Bounded external resources | 1B; inference classes 1C | R-RES-1…5, R-GW-7, R-GW-9 | cgroup/rlimit/storage bounds, audit queue policy, delegation counters, plus per-operation gateway budgets | T-6.9-001..008 (class-by-milestone per R-RES-5); D-07, D-14 where relevant | enforced and passed for every present class; absent classes listed | Gateway accounting and upstream billing reconciliation / service owner / resource-class addition |
 | 21a | Lifecycle and revocation — policy choice | 1A | R-LC-2 | Manifest declares terminate/quiesce/continue-degraded per trigger | manifest review | assumption |
-| 21b | Lifecycle and revocation — implementation of declared behaviour | Latest applicable service (1C in full programme) | R-LC-1, 3…5 | `agentbound-lifecycle`; per-operation gateway grant checks | T-6.8-001..010 by milestone (T-6.8-007 is the U reclassification case); D-16; F-T-01..11 | enforced and passed | Correct choice of terminate/quiesce/degrade / policy owner / trigger or service addition |
+| 21b | Lifecycle and revocation — implementation of declared behaviour | Latest applicable service (1C in full programme) | R-LC-1, 3…5 | `agentbound-lifecycle`; per-operation gateway grant checks | T-6.8-001..013 by milestone (T-6.8-007 is the U reclassification case; 011–013 are the outage and forbidden-degraded cases); D-16; F-T-01..11 | enforced and passed | Correct choice of terminate/quiesce/degrade / policy owner / trigger or service addition |
 | 22 | Execution-binding control | 1C | R-GW-8 | Inference adapter compares live operation with approved manifest binding | D-14; T-6.8-010 | enforced and passed | Gateway is only inference path / gateway owner / new inference path or adapter |
 
 ## 4. Not applicable to profile U
