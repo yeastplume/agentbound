@@ -1,6 +1,6 @@
 # Phase 1 Normative Requirements
 
-**Version:** 0.7  
+**Version:** 0.8  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** milestones 1A–1D of the [Phase 1 plan](../plans/phase-1-reference-implementation.md)  
@@ -16,6 +16,7 @@
 - **0.5** — R-LC-2 restriction on `continue-degraded`; R-LC-3 trigger list uses the split outage vocabulary.
 - **0.6** — Post-freeze editorial maintenance (no normative change): R-CON-1 rollback list names the gateway-socket projection instead of a firewall rule; host firewall removed from the trusted list.
 - **0.7** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. R-ISO-4 and §12 prose split; Oxford spelling.
+- **0.8** — §12 pinned-version row follows ADR-0003 0.8 (systemd 257 series).
 
 
 ---
@@ -219,7 +220,7 @@ These values are fixed before any test runs and MAY be changed only by a recorde
 | Privileged-code reviewability bound | `agentbound-launch` + `agentbound-lifecycle` (including allocator) + gateway authentication path ≤ 6 000 **direct** SLOC. SLOC accounting: pinned counting tool and version; five separately reported figures — direct privileged SLOC, generated SLOC, transitive dependency SLOC in privileged processes, configuration/rule SLOC (seccomp, Landlock, systemd units, D-Bus policy), and SLOC in a language without memory safety by default (allowed only with a listed justification per file). The bound applies to the first figure; all five are published, plus a sixth unbounded figure, gateway core SLOC (dispatch and adapters), which is reviewed line by line but not bounded in Phase 1 | R-CON-8 |
 | Policy-exception rate | Zero manifest fields overridden by administrators outside the catalogue during the evaluation run; every privileged manual repair recorded | Gate 4 |
 | Fault-injection coverage | Every fault point in the test catalogue's finite inventory (F-C-01…09, F-T-01…11) injected at least once; after each, no live process, usable grant, mount, or unsealed record; sealed failed records are the only permitted remnant; reconciliation completes within the catalogue deadline | R-CON-1, R-ISO-4 |
-| Pinned versions | Linux 6.12 LTS series (exact patch release recorded; `openat2`, new mount API, pidfd, `SOCK_SEQPACKET` credentials verified per ADR-0002 Decision 7), systemd 258 series (exact release recorded), LSM policy digest, Firecracker v1.16.1 and the ADR-0003 `pinned-configuration.json` digest (control arm), Git host version; recorded in the evaluation report and unchanged within a run | all |
+| Pinned versions | Linux 6.12 LTS series (exact patch release recorded; `openat2`, new mount API, pidfd, `SOCK_SEQPACKET` credentials verified per ADR-0002 Decision 7), systemd 257 series as shipped by Debian 13 (exact release recorded), LSM policy digest, Firecracker v1.16.1 and the ADR-0003 `pinned-configuration.json` digest (control arm), Git host version; recorded in the evaluation report and unchanged within a run | all |
 | Control-arm equivalence and decision rule | The ADR-0003 per-test classification and the pre-registered comparative decision rule, frozen before any control-arm result | Gate 4 comparative claim |
 
 ---

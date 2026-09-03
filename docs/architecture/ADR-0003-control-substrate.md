@@ -1,6 +1,6 @@
 # ADR-0003: MicroVM control substrate and pre-registered test equivalence
 
-**Version:** 0.7
+**Version:** 0.8
 **Status:** Accepted for Phase 1 (substrate, configuration, classification rules, and decision rule); image digests are recorded in `pinned-configuration.json` when the images are built
 **Date:** 28 August 2026
 **Applies to:** Phase 1 milestone 1D control arm
@@ -15,6 +15,7 @@
 - **0.5** — T-6.8 register row extended to 013.
 - **0.6** — Post-freeze editorial maintenance (no normative change): catalogue described as frozen; typo.
 - **0.7** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Configuration and comparability rules split; owns the microVM, VM-attribution, and register rationale.
+- **0.8** — systemd pin changed from the 258 series to the 257 series as shipped by Debian 13, the reference host distribution; no Phase 1 facility differs between them. Pinned-value change to a frozen artefact, made before any WP1 evidence is recorded.
 
 
 ## Context
@@ -64,7 +65,7 @@ creates one microVM per session. The pinned set is:
 | VMM | Firecracker v1.16.1, release binary, SHA-256 recorded |
 | Host kernel (both arms) | Linux 6.12 LTS series, one exact patch release chosen at image build, `CONFIG_SECCOMP_FILTER`, `CONFIG_CGROUP_FREEZER`, `CONFIG_VSOCKETS`, `CONFIG_VHOST_VSOCK`, `CONFIG_AUDIT`, Landlock enabled |
 | Guest kernel | Same 6.12 patch release, Firecracker microvm config, `CONFIG_VIRTIO_VSOCKETS`, `CONFIG_AUDIT` |
-| systemd (host) | 258 stable series, one exact release |
+| systemd (host) | 257 stable series as shipped by Debian 13, one exact release recorded. *Rationale:* the reference host is a Debian 13 VM; every systemd facility Phase 1 depends on (`cgroup.freeze`/`cgroup.kill` via scopes, pidfd-based process tracking, scope `UnitRemoved`/`PropertiesChanged` signals) is present and unchanged in 257, and a stable distribution pin is more reproducible than a hand-backported 258 |
 | Guest rootfs | Minimal Debian-derived image built reproducibly from a committed manifest; ext4, read-only; SHA-256 recorded |
 | Guest init | `agentbound-guest-init`: a static, single-binary init from this repository (subreaper, vsock forwarder, workload exec, audit shipper); its build digest is recorded |
 | Guest audit source | Linux Audit (`auditd` not used); `agentbound-guest-init` reads the audit netlink socket directly and ships records over the single vsock service, tagged with the VM instance token |
