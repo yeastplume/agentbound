@@ -1,0 +1,29 @@
+# spike: seqpacket-creds
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: 518e54c
+# date: 2026-09-03T13:34:34Z
+# args: 
+
+spike seqpacket-creds; uid=0 pid=1356
+SO_PEERCRED at accept: pid=1357 uid=0 gid=0
+recv#1 n=8 cmsgs=1 scm_credentials=1 payload="packet-1"
+RESULT D7-1a.one-credential-per-packet PASS cmsg_count=1 scm_credentials=1 pid_matches_peercred=true
+RESULT D7-1b.second-packet-independent PASS n=8 payload="packet-2" scm_credentials=1
+recv#3 (oversize) n=1024 MSG_TRUNC=true all_AB=true
+recv#4 n=9 payload="after-big"
+RESULT D7-1c.oversize-truncates-not-splits PASS MSG_TRUNC=true delivered=1024 next_packet="after-big" (remainder discarded, boundary preserved)
+peer pid=1357 pidfd=5 pidfs_ino=1658 starttime=44598 pidns_ino(pidfd)=4026531836 pidns_ino(proc)=Some(4026531836)
+RESULT D7-2a.pidfd_open-live-peer PASS pidfd=5 pidfs_inode=1658
+RESULT D7-2b.starttime-and-pidns-via-pidfd PASS starttime=44598 pidns_via_ioctl=4026531836 pidns_via_proc=Some(4026531836) (PIDFD_GET_PID_NAMESPACE 6.11+; start time via /proc then pidfd-liveness recheck)
+reuse: forced ns_last_pid; new pid=1357 reused=true new_pidfs_ino=1659 new_starttime=44598
+RESULT D7-2c.recycled-pid-detected-via-pidfd PASS old_pidfd_exited=true pidfd_send_signal_errno=3 pid_recycled=true pidfs_inode_old=1658 new=1659 (the held pidfd and its pidfs inode identify the process instance)
+RESULT D7-2d.starttime-alone-detects-reuse FAIL pid_recycled=true old_starttime=44598 new_starttime=44598 CLK_TCK=100 (FINDING: start time is not a sufficient reuse check; the pidfs inode is)
+SCM_RIGHTS packet: n=11 cmsgs=2 rights=1 creds=1
+RESULT D7-3a.scm_rights-detectable-and-rejected PASS SCM_RIGHTS cmsgs=1 (fds closed, connection closed) SCM_CREDENTIALS still present=true
+establishing pid=1359 packet1 pid=1359 packet2 pid=1360 payload2="from-child"
+RESULT D7-3b.inherited-descriptor-fails-pid-check PASS establishing_pid=1359 inherited_packet_pid=1360 mismatch_detected=true child_next_send_errno=32 (kernel-supplied PID; no protocol cooperation needed)
+forge attempt: first packet payload="forge:-1:1" cred=Some((1361, 65534, 65534))
+RESULT X-1.unprivileged-cannot-forge-credentials PASS forged sendmsg result=forge:-1:1 (expect -1:EPERM=1), genuine cred pid=Some(1361) uid=Some(65534)
+done
+
+# exit: 0
