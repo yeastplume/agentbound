@@ -1,0 +1,31 @@
+# spike: audit-loginuid
+# host: agentbound-dev;6.12.107+deb13-cloud-amd64;systemd 257 (257.13-1~deb13u1);
+# commit: a4ee051
+# date: 2026-09-03T14:09:12Z
+# args: 
+
+re-executing under systemd-run (current loginuid=0 is a PAM value, not a service context)
+spike audit-loginuid; self loginuid=4294967295 sessionid=4294967295 CONFIG_AUDIT_LOGINUID_IMMUTABLE sysctl present=false
+constructor (this process) loginuid unset=true (4294967295 = unset)
+RESULT LU-1.child-unset-before-barrier-release PASS child loginuid before release=4294967295 (inherits constructor's unset value; a constructor with a loginuid would make the child's value already-set → R-CON-6 'already-set' outcome)
+RESULT LU-3.loginuid-write-once-on-baseline PASS second privileged write errno=0: write_once=false; readback after both writes=200043 (FINDING if write_once=false: loginuid is re-settable by CAP_AUDIT_CONTROL on this kernel because CONFIG_AUDIT_LOGINUID_IMMUTABLE is absent; sessions never hold the capability so it stays corroborating-only, as the specs already say)
+RESULT LU-2.set-before-exec-with-cap-audit-control PASS first write /proc/self/loginuid=200042: errno=0; sessionid assigned=124
+RESULT LU-4.set-without-cap-denied PASS write after setuid(200042) errno=13 (EACCES: /proc/self/loginuid is 0644 root-owned; EPERM if writable but CAP_AUDIT_CONTROL missing)
+RESULT LU-5.inherited-across-fork-exec PASS exec'd grandchild sees loginuid=Some(200043) sessionid=Some(124)
+audit SYSCALL records for key ab-spike: 4
+  msg=audit(1788444553.781:9771): syscall=259 ppid=10953 pid=10969 auid=4294967295 uid=200042 ses=4294967295
+  msg=audit(1788444553.781:9772): syscall=259 ppid=10953 pid=10970 auid=4294967295 uid=200042 ses=4294967295
+  msg=audit(1788444553.781:9773): syscall=259 ppid=10953 pid=10971 auid=4294967295 uid=200042 ses=4294967295
+  msg=audit(1788444553.781:9775): syscall=259 ppid=10953 pid=10972 auid=200042 uid=200042 ses=125
+RESULT AC-1.records-emitted-for-exec-uid PASS 4 records (3 unset-loginuid + 1 set)
+RESULT AC-2.set-loginuid-appears-as-auid PASS record for pid 10972: auid=Some("200042") ses=Some("125") uid=Some("200042")
+RESULT AC-3.unset-loginuid-is-4294967295 PASS 3 records with auid=4294967295 ses=4294967295 — attribution would rest on uid+pid alone (R-CON-6 'denied/unset' case)
+RESULT AC-4.record-lacks-pidns-and-starttime PASS SYSCALL record carries uid/auid/ses/pid/ppid/comm/exe but no PID-namespace id or start time; the join to a launch record must go through (uid=execution UID, boot ID, time window) + the daemon's own pid→pidfd table, exactly as identity lifecycle §6 says
+burst of 20000 audited syscalls in 87 ms; backlog_limit 8192→64; lost 48881→73294; backlog now 0
+RESULT AL-1.kernel-loss-counter-observable PASS auditctl -s lost advanced by 24413 (kernel-side drop is countable → loss_behaviour stop/quarantine has an observable trigger)
+with backlog_wait_time=200 (jiffies): 2000 audited syscalls took 207 ms; lost 73294→73294
+RESULT AL-2.backlog-wait-trades-loss-for-producer-stall PASS producer took 207 ms for 2000 calls (vs 87 ms for 20000 unthrottled); additional loss=0. The host audit policy chooses loss vs stall; the daemon can only observe `lost` and the daemon-side queue
+restored backlog_limit=8192
+done
+
+# exit: 0

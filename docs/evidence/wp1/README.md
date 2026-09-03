@@ -32,7 +32,7 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | ADR-0002 Decision 7 verification | in progress (items 1–5 done; 6–9 are WP2) | above | ADR-0002 |
 | `agentbound-lifecycle` D-Bus scope-signal subscription, pidfd-watch fallback, systemd-kills-first race | **PASS + FINDINGS F-4, F-5** | [scope-kill](scope-kill.md) C-* | session lifecycle §4; component interfaces |
 | Git staging-ref adapter and protected-branch behaviour | pending | — | plan §3.3 |
-| `loginuid` and audit correlation, loss behaviour under load | pending | — | requirements R-CON-6; identity lifecycle §6 |
+| `loginuid` and audit correlation, loss behaviour under load | **PASS + FINDING F-6** | [audit-loginuid](audit-loginuid.md) | requirements R-CON-6; identity lifecycle §6 |
 | Minimal control-arm launcher | pending (boot check only in WP1) | — | ADR-0003 |
 
 ## Open-question register items
@@ -54,3 +54,4 @@ Status values: **PASS**, **FAIL**, **FINDING** (item passed; an amendment to the
 | F-3 | `cgroup.freeze` never reaches `frozen 1` while a D-state member exists; §5 step 4 must not wait for the frozen state before `cgroup.kill`. | session lifecycle §5 step 4 | recorded; amendment pending |
 | F-4 | PID-namespace init ignores external `SIGTERM`; `systemctl stop` stalls for `DefaultTimeoutStopSec` (90 s) unless `TimeoutStopUSec` is set at `StartTransientUnit` (cannot be set later on a scope). | session lifecycle §3 scope prerequisites, §4 | recorded; amendment pending |
 | F-5 | `UnitRemoved` is emitted at unit GC (~1.5 s later); `PropertiesChanged`/`ActiveState` and the held pidfd are the prompt triggers. | session lifecycle §4 (guidance only) | recorded; no obligation change |
+| F-6 | Pinned kernel lacks `CONFIG_AUDIT_LOGINUID_IMMUTABLE`: `loginuid` is re-settable by `CAP_AUDIT_CONTROL` (never held by sessions). Replace "write-once" with the capability-conditional statement; note the host-global `lost` counter. | R-CON-6; identity lifecycle §6; technical report §5; ADR-0003 kernel row | recorded; amendment pending |
