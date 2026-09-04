@@ -8,7 +8,7 @@ fn detail_members(kind: &str) -> Option<&'static [&'static str]> {
         "session.requested" => &["peer_uid", "request_digest"], "session.rejected" => &["failed_input", "request_digest"], "session.authorized" => &["manifest_digest"],
         "session.manifest_verified" => &["key_id", "manifest_digest"], "identity.allocated" => &["gid", "state_seq"],
         "session.launch_record_committed" => &["commit_seq", "manifest_digest", "trust_anchor"], "session.activated" => &["event", "privilege_disposal", "runtime_artifact_digest"],
-        "session.construction_failed" => &["detail", "event", "failed_step", "ledger", "rollback", "rule"],
+        "session.construction_failed" => &["detail", "failed_step", "ledger", "rollback", "rule"],
         "session.revocation_received" => &["behaviour", "source", "trigger"], "session.quiesce_started" => &["admission", "bound_s", "freeze_requested", "trigger"],
         "session.degraded" => &["compensating_control", "remaining_authority", "trigger"], "session.termination_started" => &["bound_s", "ordering_deviation", "reason", "scope_id"],
         "session.terminated" | "session.termination_incomplete" => &["cgroup_kill_written", "cgroup_procs_remaining", "credential_scan_inside_scope", "credential_scan_outside_scope", "d_state", "elapsed_ms", "freeze_written", "frozen_observed", "init_pid", "init_pidfd_exited", "sigterm_sent"],

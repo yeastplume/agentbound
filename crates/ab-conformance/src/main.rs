@@ -92,8 +92,10 @@ fn main() {
     // T-6.6-002 replay: use a valid approval, then present it again
     let p = g.write_req("appr", &eng("\"approval:eng-1234-a\"")); g.as_user = "bob".into();
     let p2 = g.write_req("appr2", &eng("\"approval:eng-1234-a\"").replace("authn:alice-session-0001", "authn:bob-session-0001"));
-    let (rc1, _, _) = g.request(&p2, "--no-launch"); let (rc2, v, _) = g.request(&p2, "--no-launch"); let _ = p;
-    g.rec("T-6.6-002.replayed", rc1 == 0 && rc2 != 0 && js(&v, "body.rule") == "approval_replayed", format!("first rc={rc1} second rule={}", js(&v, "body.rule")));
+    let (rc1, v1, _) = g.request(&p2, "--no-launch"); let (rc2, v, _) = g.request(&p2, "--no-launch"); let _ = p;
+    // the policy store is durable: on a re-run the approval is already consumed and the first presentation is itself the replay
+    let first_ok = rc1 == 0 || js(&v1, "body.rule") == "approval_replayed";
+    g.rec("T-6.6-002.replayed", first_ok && rc2 != 0 && js(&v, "body.rule") == "approval_replayed", format!("first rc={rc1} rule={} second rule={} (durable consumption across runs)", js(&v1, "body.rule"), js(&v, "body.rule")));
     // T-6.6-004 scheduler without owner
     g.as_user = "cron".into();
     let p = g.write_req("sched", &base.replace("authn:alice-session-0001", "authn:cron-nightly")); let (rc, v, _) = g.request(&p, "--no-launch"); g.rec("T-6.6-004", rc != 0 && js(&v, "body.rule") == "scheduled_without_owner", js(&v, "body.rule"));

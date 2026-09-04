@@ -63,7 +63,7 @@ impl Sink {
         let mut line = crate::json::canonical(&ev); line.push(b'\n');
         let local = self.file.as_mut().and_then(|f| f.write_all(&line).and_then(|_| f.sync_data()).ok()).is_some();
         let fwd = self.forward.as_deref().and_then(|p| crate::wire::connect(p).ok()).and_then(|c| c.call(&crate::wire::request("emit", ev.get("event_id").unwrap().as_str().unwrap(), ev.clone())).ok()).map(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).unwrap_or(false);
-        if !local && !fwd { self.lost += 1 } else if !fwd { self.unforwarded += 1 }
+        if !local && !fwd { self.lost += 1 } else if !fwd { self.unforwarded += 1; if let Some(f) = self.file.as_mut() { let _ = f.write_all(format!("{{\"unforwarded\":{}}}\n", crate::json::canonical(&Value::s(ev.get("event_id").unwrap().as_str().unwrap())).iter().map(|b| *b as char).collect::<String>()).as_bytes()); } }
     }
 }
 trait Mode0600 { fn mode_0600(&mut self) -> &mut Self; }
