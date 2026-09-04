@@ -6,6 +6,7 @@
 use crate::json::{canonical, Value};
 use crate::sig::*;
 
+#[derive(Debug)]
 pub struct Verified { pub digest: String, pub issued_at: i64, pub key_id: String }
 
 fn members(v: &Value, want: &[&str]) -> Result<(), SigError> {
