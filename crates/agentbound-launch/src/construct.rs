@@ -108,8 +108,10 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
         let target = cfg.catalogue.get("mount_targets").and_then(|t| t.get(mi.target_template_id)).and_then(|x| x.as_str()).ok_or(Fail { step: 3, rule: "mount_target_unresolvable", detail: mi.target_template_id.into() })?.to_string();
         let (base, rel) = (src.get("base").and_then(|x| x.as_str()).unwrap_or(""), src.get("relative").and_then(|x| x.as_str()).unwrap_or(""));
         let bfd = unsafe { libc::open(c(base).as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) }; if bfd < 0 { return fail(3, "mount_base", format!("{base} errno={}", errno())); }
-        if fault("mount-symlink") { let _ = std::os::unix::fs::symlink("/etc", format!("{base}/{rel}-evil")); }
-        let d = openat2(bfd, rel, (libc::O_PATH | libc::O_DIRECTORY) as u64).map_err(|e| Fail { step: 3, rule: if e == libc::EXDEV || e == libc::ELOOP { "mount_source_escape" } else { "mount_source_resolve" }, detail: format!("{rel} errno={e}") })?;
+        // F-C-03: the catalogue path is replaced (as a compromised base would) by a symlink escaping the base; confined resolution must refuse it
+        let rel_owned; let rel = if fault("mount-symlink") { let evil = format!("{rel}-evil"); let _ = std::fs::remove_file(format!("{base}/{evil}")); let _ = std::os::unix::fs::symlink("/etc", format!("{base}/{evil}")); rel_owned = evil; rel_owned.as_str() } else { rel };
+        let d = openat2(bfd, rel, (libc::O_PATH | libc::O_DIRECTORY) as u64); if fault("mount-symlink") { let _ = std::fs::remove_file(format!("{base}/{rel}")); }
+        let d = d.map_err(|e| Fail { step: 3, rule: if e == libc::EXDEV || e == libc::ELOOP { "mount_source_escape" } else { "mount_source_resolve" }, detail: format!("{rel} errno={e}") })?;
         unsafe { libc::close(bfd) };
         let t = open_tree_clone(d).map_err(|e| Fail { step: 3, rule: "mount_open_tree", detail: format!("errno={e}") })?; unsafe { libc::close(d) };
         let ro = mi.access == "read-only";
