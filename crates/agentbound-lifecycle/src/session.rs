@@ -155,15 +155,24 @@ impl Service {
             for sub in ["rootfs", ""] {
                 let p = if sub.is_empty() { dir.clone() } else { format!("{dir}/{sub}") };
                 let c = std::ffi::CString::new(p).unwrap();
-                let r = unsafe { libc::umount2(c.as_ptr(), libc::MNT_DETACH) };
-                unmounts.push(Value::obj(vec![("path_class", Value::s(if sub.is_empty() { "session-dir" } else { sub })), ("errno", Value::Int(if r == 0 { 0 } else { std::io::Error::last_os_error().raw_os_error().unwrap_or(-1) as i64 }))]));
+                let r = unsafe { libc::umount2(c.as_ptr(), libc::MNT_DETACH) }; let e = if r == 0 { 0 } else { std::io::Error::last_os_error().raw_os_error().unwrap_or(-1) };
+                // ENOENT / EINVAL (not a mount point) are the expected 1A results: the session's mounts live in its own namespace and died with it
+                unmounts.push(Value::obj(vec![("errno", Value::Int(e as i64)), ("path_class", Value::s(if sub.is_empty() { "session-dir" } else { sub })), ("result", Value::s(match e { 0 => "unmounted", libc::ENOENT | libc::EINVAL => "not-a-host-mount", _ => "failed" }))]));
             }
         }
         let mut paths: Vec<String> = self.cfg.managed_paths.clone(); if let Some(d) = &session_dir { paths.push(d.clone()); }
         let mut residue = Vec::new();
         for p in &paths { scan_owned(p, uid, gid, &mut residue); }
-        let removed: Vec<Value> = residue.iter().map(|r| { let ok = std::fs::remove_file(r).or_else(|_| std::fs::remove_dir_all(r)).is_ok();
-            Value::obj(vec![("path_class", Value::s(if session_dir.as_deref().map(|d| r.starts_with(d)).unwrap_or(false) { "session-dir" } else { "registered-path" })), ("removed", Value::Bool(ok))]) }).collect();
+        residue.sort(); residue.dedup();
+        // remove deepest first so a directory is not counted after its contents are already gone
+        residue.sort_by(|a, b| b.len().cmp(&a.len()));
+        // workspace roots (registered mount sources) are durable projections: reset their group to the projection owner's
+        // group instead of removing; everything else the identity owns is session residue and is removed
+        let removed: Vec<Value> = residue.iter().map(|r| {
+            let is_ws = self.cfg.workspace_roots.iter().any(|w| r == w);
+            if !is_ws && std::fs::symlink_metadata(r).is_err() { return Value::obj(vec![("path_class", Value::s("already-gone")), ("removed", Value::Bool(true))]); }
+            let ok = if is_ws { std::fs::metadata(r).ok().map(|m| { use std::os::unix::fs::MetadataExt; std::os::unix::fs::chown(r, None, Some(m.uid())).is_ok() }).unwrap_or(false) } else { std::fs::remove_file(r).or_else(|_| std::fs::remove_dir_all(r)).is_ok() };
+            Value::obj(vec![("path_class", Value::s(if is_ws { "workspace-root-group-reset" } else if session_dir.as_deref().map(|d| r.starts_with(d)).unwrap_or(false) { "session-dir" } else { "registered-path" })), ("removed", Value::Bool(ok))]) }).collect();
         if let Some(d) = &session_dir { let _ = std::fs::remove_dir_all(d); }
         let (inside, outside) = credential_scan(uid, gid, &scope);
         let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_bool()) == Some(true));

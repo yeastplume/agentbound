@@ -11,7 +11,7 @@ use ab_common::sig::{launch_record_digest, now_unix, object_digest, Keyring};
 use ab_common::wire::{self, Conn, Req};
 use std::os::fd::OwnedFd;
 
-pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String, pub managed_paths: Vec<String> }
+pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String, pub managed_paths: Vec<String>, pub workspace_roots: Vec<String> }
 
 pub struct Service { pub store: Store, pub cfg: Config, pub sessions: Sessions, pub audit: audit::Sink }
 

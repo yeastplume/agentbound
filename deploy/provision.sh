@@ -13,7 +13,7 @@ printf 'd /run/agentbound 1770 root agentbound -\nd /run/agentbound/leases 0750 
 install -d -m 0750 /var/lib/agentbound /var/lib/agentbound/sessions /var/lib/agentbound/images
 install -d -m 2750 -o agentbound-policy -g agentbound /var/lib/agentbound/spool
 install -d -m 0750 -o agentbound-audit -g agentbound /var/lib/agentbound/audit
-install -d -m 0755 /var/lib/agentbound/workspaces /var/lib/agentbound/workspaces/finance /var/lib/agentbound/workspaces/eng
+install -d -m 0755 /var/lib/agentbound/workspaces; install -d -m 0770 -o root -g root /var/lib/agentbound/workspaces/finance /var/lib/agentbound/workspaces/eng
 touch /var/lib/agentbound/audit-lifecycle.jsonl /var/lib/agentbound/audit-launch.jsonl /var/lib/agentbound/audit-policy.jsonl /var/lib/agentbound/policy.jsonl
 chown agentbound-policy:agentbound /var/lib/agentbound/audit-policy.jsonl /var/lib/agentbound/policy.jsonl
 chmod 0750 /var/lib/agentbound; chgrp agentbound /var/lib/agentbound

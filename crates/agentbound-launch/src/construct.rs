@@ -114,13 +114,20 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
         let t = open_tree_clone(d).map_err(|e| Fail { step: 3, rule: "mount_open_tree", detail: format!("errno={e}") })?; unsafe { libc::close(d) };
         let ro = mi.access == "read-only";
         mount_setattr(t, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | if ro { MOUNT_ATTR_RDONLY } else { 0 }).map_err(|e| Fail { step: 3, rule: "mount_setattr", detail: format!("errno={e}") })?;
-        // read-write workspaces are owned by the execution identity for the session (durable projection is a carry-in)
-        if !ro { let p = format!("{base}/{rel}"); let _ = std::os::unix::fs::chown(&p, Some(uid), Some(gids[0])); }
+        // read-write workspaces: the session GID is granted through the directory group for the session's duration;
+        // ownership stays with the durable projection principal (durable-ownership carry-in), so cleanup resets the group
+        if !ro { let p = format!("{base}/{rel}"); let _ = std::os::unix::fs::chown(&p, None, Some(gids[0])); let _ = std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o2770)); }
         led.fds.push(t); mounts.push((t, target.clone(), ro));
         projections.push(Value::obj(vec![("access", Value::s(mi.access)), ("catalogue_version", Value::s(cfg.catalogue.get("catalogue_version").and_then(|x| x.as_str()).unwrap_or(""))), ("mount_id", Value::s(mi.mount_id)), ("target_template_projection", Value::s(mi.target_template_id))]));
     }
     led.note(3, "mounts", &format!("{} intents resolved", mounts.len()));
     let session_dir = format!("{}/{}", cfg.session_root, aid.trim_start_matches("allocation:")); std::fs::create_dir_all(&session_dir).map_err(|e| Fail { step: 3, rule: "session_dir", detail: e.to_string() })?; led.session_dir = Some(session_dir.clone());
+    // the descriptor allowlist is stdin/stdout/stderr; at 1A they are /dev/null and a per-session console log owned by the identity
+    let devnull = unsafe { libc::open(c("/dev/null").as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    let console_path = format!("{session_dir}/console.log");
+    let console = unsafe { libc::open(c(&console_path).as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_APPEND | libc::O_CLOEXEC, 0o600) };
+    if devnull < 0 || console < 0 || unsafe { libc::fchown(console, uid, gids[0]) } != 0 { return fail(3, "console", errno().to_string()); }
+    led.fds.push(devnull); led.fds.push(console);
     // ---- step 1: clone3 into the scope's cgroup with new namespaces; child blocks on the barrier ----
     let mut sp = [0i32; 2]; let mut bp = [0i32; 2];
     unsafe { libc::pipe2(sp.as_mut_ptr(), libc::O_CLOEXEC); libc::pipe2(bp.as_mut_ptr(), libc::O_CLOEXEC); }
@@ -130,7 +137,7 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     if pid == 0 {
         unsafe { libc::close(sp[0]); libc::close(bp[1]); }
         crate::child::run(ChildPlan { rootfs_fd: rootfs, mounts, uid, gids: gids.clone(), argv, env: envv, status_w: sp[1], barrier_r: bp[0], keep_fds: vec![0, 1, 2], tmpfs_size: "16m".into(), workspace_uid_chown: true,
-            nproc_limit: lv("pids").map(|n| n as u64), nofile_limit: lv("file_descriptors").map(|n| n as u64) });
+            nproc_limit: lv("pids").map(|n| n as u64), nofile_limit: lv("file_descriptors").map(|n| n as u64), stdio: (devnull, console) });
     }
     unsafe { libc::close(sp[1]); libc::close(bp[0]); libc::kill(holder, libc::SIGKILL); libc::waitpid(holder, std::ptr::null_mut(), 0); }
     led.child_pid = pid; led.child_pidfd = Some(unsafe { OwnedFd::from_raw_fd(pidfd) }); led.note(1, "clone3", &format!("pid={pid}"));
@@ -188,7 +195,7 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     call(&cfg.lifecycle_sock, "report_activation", &format!("{authorization_id}/activate"), act, &[], 9)?;
     led.note(9, "activated", &line);
     let _ = std::fs::remove_file(&path); let _ = std::fs::remove_file(&lease); led.lease = None;
-    Ok(Value::obj(vec![("allocation_id", Value::s(&aid)), ("init_pid", Value::Int(pid as i64)), ("launch_record_digest", Value::s(&lrd)), ("scope_id", Value::s(&format!("{scope_name}.scope"))), ("uid", Value::Int(uid as i64))]))
+    Ok(Value::obj(vec![("allocation_id", Value::s(&aid)), ("console", Value::s(&console_path)), ("init_pid", Value::Int(pid as i64)), ("launch_record_digest", Value::s(&lrd)), ("scope_id", Value::s(&format!("{scope_name}.scope"))), ("uid", Value::Int(uid as i64))]))
 }
 
 /// Reverse rollback (§3): kill and reap the child, stop the scope, release the allocation via lifecycle, drop the lease.

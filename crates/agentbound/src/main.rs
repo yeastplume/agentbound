@@ -17,6 +17,7 @@ fn main() {
     let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
     let (pol, lc, au) = (env("AGENTBOUND_POLICY_SOCKET", "/run/agentbound/policy.sock"), env("AGENTBOUND_LIFECYCLE_SOCKET", "/run/agentbound/lifecycle.sock"), env("AGENTBOUND_AUDIT_SOCKET", "/run/agentbound/audit.sock"));
     let launcher = env("AGENTBOUND_LAUNCHER", "sudo -n /usr/local/bin/agentbound-launch");
+    if a.len() < 3 && !matches!(a.get(1).map(|s| s.as_str()), Some("list") | Some("audit-status") | None) { eprintln!("missing argument"); std::process::exit(2); }
     let ok = match a.get(1).map(|s| s.as_str()) {
         Some("request") => {
             let bytes = std::fs::read(&a[2]).expect("request file");
@@ -35,7 +36,7 @@ fn main() {
         Some("list") => out(&call(&lc, "list", Value::obj(vec![]))),
         Some("terminate") => out(&call(&lc, "terminate", Value::obj(vec![("launch_record_digest", Value::s(&a[2])), ("reason", Value::s(a.get(3).map(|s| s.as_str()).unwrap_or("operator")))]))),
         Some("quiesce") => out(&call(&lc, "quiesce", Value::obj(vec![("launch_record_digest", Value::s(&a[2])), ("reason", Value::s("operator"))]))),
-        Some("revoke") => out(&call(&lc, "revocation_signal", Value::obj(vec![("launch_record_digest", Value::s(&a[2])), ("source", Value::s("cli")), ("trigger", Value::s(&a[3]))]))),
+        Some("revoke") if a.len() > 3 => out(&call(&lc, "revocation_signal", Value::obj(vec![("launch_record_digest", Value::s(&a[2])), ("source", Value::s("cli")), ("trigger", Value::s(&a[3]))]))),
         Some("audit") => out(&call(&au, "query", key(&a[2]))),
         Some("audit-status") => out(&call(&au, "status", Value::obj(vec![]))),
         _ => { eprintln!("usage: agentbound request <file> [--no-launch] [--fault f] | status <id> | list | terminate <lrd> [reason] | quiesce <lrd> | revoke <lrd> <trigger> | audit <id> | audit-status"); false }

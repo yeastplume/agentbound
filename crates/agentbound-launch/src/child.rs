@@ -16,6 +16,7 @@ pub struct ChildPlan {
     pub keep_fds: Vec<RawFd>,           // stdin/stdout/stderr (0,1,2) per descriptor allowlist
     pub tmpfs_size: String, pub workspace_uid_chown: bool,
     pub nproc_limit: Option<u64>, pub nofile_limit: Option<u64>,
+    pub stdio: (RawFd, RawFd),                // (stdin source, console sink) dup'd onto 0 and 1/2 so the harness pipe is never inherited
 }
 
 fn report(w: RawFd, step: u32, ok: bool, detail: &str) { write_all_fd(w, format!("step {step} {} {detail}\n", if ok { "ok" } else { "fail" }).as_bytes()); }
@@ -24,7 +25,7 @@ macro_rules! step { ($w:expr, $n:expr, $e:expr) => { match $e { Ok(v) => { repor
 /// Never returns.
 pub fn run(p: ChildPlan) -> ! {
     let w = p.status_w;
-    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL); }
+    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL); libc::dup2(p.stdio.0, 0); libc::dup2(p.stdio.1, 1); libc::dup2(p.stdio.1, 2); libc::close(p.stdio.0); libc::close(p.stdio.1); }
     // 2 — no propagation back to the host
     step!(w, 2, if unsafe { libc::mount(c("none").as_ptr(), c("/").as_ptr(), std::ptr::null(), libc::MS_REC | libc::MS_PRIVATE, std::ptr::null()) } == 0 { Ok(()) } else { Err(errno()) });
     // 4 — tmpfs root; image and intents attached by mount fd; pivot; detach old root
