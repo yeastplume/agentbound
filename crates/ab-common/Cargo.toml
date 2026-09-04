@@ -1,0 +1,16 @@
+[package]
+name = "ab-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agentbound shared: JCS canonicalization, digests, Ed25519 envelopes, schemas, SEQPACKET framing, audit event"
+
+[dependencies]
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
+rand_core.workspace = true
+hex.workspace = true
+base64.workspace = true

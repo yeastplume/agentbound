@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/ab-common",
+  "crates/agentbound-policy",
+  "crates/agentbound-launch",
+  "crates/agentbound-lifecycle",
+  "crates/agentbound-audit",
+  "crates/agentbound",
+  "crates/ab-conformance",
+]
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+sha2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+hex = "0.4"
+base64 = "0.22"
+
+[profile.release]
+debug = 1

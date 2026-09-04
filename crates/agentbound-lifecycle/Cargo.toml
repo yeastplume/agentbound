@@ -1,0 +1,10 @@
+[package]
+name = "agentbound-lifecycle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ab-common = { path = "../ab-common" }
+libc.workspace = true
+rusqlite.workspace = true
