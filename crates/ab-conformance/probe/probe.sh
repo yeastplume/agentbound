@@ -6,7 +6,7 @@ ok() { [ "$2" -ne 0 ] && r "$1" PASS "denied rc=$2 $3" || r "$1" FAIL "succeeded
 # host has hundreds of processes; a private pidns shows only ours (init, workload shell, this pipeline)
 n=$(ls /proc | grep -c '^[0-9]'); [ "$n" -le 8 ] && r T-6.1-001 PASS "pids_visible=$n" || r T-6.1-001 FAIL "pids_visible=$n"
 # host pid 1 (systemd) and the lifecycle daemon are not addressable: every visible pid is ours
-for pid in $(ls /proc | grep '^[0-9]'); do c=$(cat /proc/$pid/comm 2>/dev/null); case "$c" in agentbound-laun*|sh|sleep|ls|grep|cat|busybox) ;; *) r T-6.1-001.foreign FAIL "pid $pid comm=$c"; break;; esac; done
+foreign=""; for pid in $(ls /proc | grep '^[0-9]'); do c=$(cat /proc/$pid/comm 2>/dev/null) || continue; case "$c" in ""|agentbound-laun*|sh|sleep|ls|grep|cat|busybox) ;; *) foreign="$foreign $pid:$c";; esac; done; [ -z "$foreign" ] && r T-6.1-001.foreign PASS "all visible pids ours" || r T-6.1-001.foreign FAIL "$foreign"
 [ "$$" -le 4 ] && r T-6.2-006.pidns PASS "pid=$$" || r T-6.2-006.pidns FAIL "pid=$$"
 cat /proc/1/environ >/dev/null 2>&1; ok T-6.1-001.init-environ $? "(init environ)"
 # T-6.1-002 / T-6.1-010: signal host init (pid 1 outside ns is unreachable; inside ns pid 1 is our init — signal it must be denied for a *host* target: use pid 2 kthreadd absent)
@@ -22,7 +22,7 @@ ls /var/lib/agentbound 2>/dev/null; ok T-6.1-007 $? "ls /var/lib/agentbound"
 ls /etc/agentbound 2>/dev/null; ok T-6.1-007.etc $? "ls /etc/agentbound"
 # T-6.1-009: descriptors at start
 # fds: 0,1,2 plus the shell's own script fd (10) and the /proc/self/fd handle of `ls`; nothing else may be present
-ls -l /proc/$$/fd > /tmp/fds 2>/dev/null; extra=$(awk 'NR>1{print $9"="$11}' /tmp/fds | grep -vE '^(0|1|2)=|probe.sh$' | tr '\n' ' '); [ -z "$extra" ] && r T-6.1-009 PASS "fds=$(awk 'NR>1{printf "%s ", $9}' /tmp/fds)" || r T-6.1-009 FAIL "extra=$extra"
+sh -c 'ls -l /proc/$$/fd' > /tmp/fds 2>/dev/null; extra=$(awk 'NR>1{print $9"="$11}' /tmp/fds | grep -vE '^(0|1|2)=|probe.sh$|=$|/fd$' | tr '\n' ' '); [ -z "$extra" ] && r T-6.1-009 PASS "fds=$(awk 'NR>1{printf "%s ", $9}' /tmp/fds)" || r T-6.1-009 FAIL "extra=$extra"
 # T-6.2-001: cgroup migration
 echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null; ok T-6.2-001 $? "write cgroup.procs"
 [ -d /sys/fs/cgroup ] && r T-6.2-001.sysfs FAIL "cgroupfs visible" || r T-6.2-001.sysfs PASS "no cgroupfs"
@@ -36,7 +36,9 @@ grep -q 'NoNewPrivs:.1' /proc/$$/status && r T-6.2-004.nnp PASS nnp=1 || r T-6.2
 # T-6.2-007: persistence outside workspace
 touch /image/persist 2>/dev/null; ok T-6.2-007.image $? "write image (ro)"
 touch /persist 2>/dev/null; ok T-6.2-007.root $? "write root tmpfs"
-echo $$ > /workspace/probe-$$ 2>/dev/null && r T-6.2-007.workspace PASS "workspace writable" || r T-6.2-007.workspace FAIL "workspace not writable $(id) $(ls -ld /workspace)"
+me=$(cat /proc/self/status | awk '/^Uid/{print $2}'); werr=$(echo $me 2>&1 > /workspace/probe-$me) && r T-6.2-007.workspace PASS "workspace writable as $me" || r T-6.2-007.workspace FAIL "workspace not writable: $werr $(id) $(ls -ld /workspace)"
+# T-6.1-007.sibling: files left by earlier sessions (other UIDs, 0644) are not writable by this identity
+for f in /workspace/probe-*; do [ "$f" = "/workspace/probe-$me" ] && continue; echo x >> "$f" 2>/dev/null; ok T-6.1-007.sibling $? "append to $(stat -c %U $f 2>/dev/null || echo other)-owned $f"; break; done
 # T-6.2-009: sysfs
 ls /sys/class/net 2>/dev/null; ok T-6.2-009 $? "ls /sys/class/net"
 # network: seccomp forbids non-AF_UNIX sockets; netns private anyway
@@ -47,7 +49,7 @@ cat /proc/net/dev 2>/dev/null | grep -qv '^ *lo\|Inter\|face' ; ok T-6.2-002.net
 # T-6.9-001: pid fan-out bound (TasksMax from manifest)
 # fork failures (EAGAIN at TasksMax) abort a busybox sh loop, so fan out from a subshell and count survivors
 ( i=0; while [ $i -lt 400 ]; do sleep 1000 & i=$((i+1)); done ) 2>/dev/null
-live=$(ls /proc | grep -c '^[0-9]'); [ "${live:-0}" -gt 0 ] && [ "$live" -lt 400 ] && r T-6.9-001 PASS "procs=$live (TasksMax bound)" || r T-6.9-001 FAIL "procs=$live"
+live=0; for d in /proc/[0-9]*; do live=$((live+1)); done; [ "$live" -gt 0 ] && [ "$live" -lt 400 ] && r T-6.9-001 PASS "procs=$live (TasksMax bound)" || r T-6.9-001 FAIL "procs=$live"
 # leave the survivors running: D-06/D-07 verify at termination that they die with the scope
 # T-6.9-002: fd bound
 i=$( ( i=0; while [ $i -lt 2000 ]; do eval "exec $((i+10))</dev/null" 2>/dev/null || break; i=$((i+1)); done; echo $i ) 2>/dev/null ); [ "${i:-0}" -lt 2000 ] && r T-6.9-002 PASS "fds_opened=$i" || r T-6.9-002 FAIL "fds_opened=$i"
