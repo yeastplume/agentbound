@@ -46,10 +46,14 @@ pub fn pivot_root(new: &str, old: &str) -> Result<(), i32> { r(unsafe { libc::sy
 pub fn close_range_from(first: u32) -> Result<(), i32> { r(unsafe { libc::syscall(SYS_CLOSE_RANGE, first, u32::MAX, 0u32) }).map(|_| ()) }
 pub fn clone3(a: &mut CloneArgs) -> Result<i32, i32> { r(unsafe { libc::syscall(SYS_CLONE3, a as *mut CloneArgs, std::mem::size_of::<CloneArgs>()) }) }
 pub fn pidfd_send_signal(pidfd: RawFd, sig: i32) -> bool { unsafe { libc::syscall(libc::SYS_pidfd_send_signal, pidfd, sig, 0usize, 0u32) == 0 } }
+/// Open descriptors with their targets. The `read_dir` handle on the fd directory is itself transient
+/// (target `/proc/<pid>/fd`, closed on return) and is excluded.
 pub fn open_fds() -> Vec<(i32, String)> {
-    std::fs::read_dir("/proc/self/fd").map(|d| d.filter_map(|e| { let e = e.ok()?; let fd: i32 = e.file_name().to_str()?.parse().ok()?; Some((fd, std::fs::read_link(e.path()).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default())) }).collect()).unwrap_or_default()
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir("/proc/self/fd") { for e in rd.flatten() { if let Some(fd) = e.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) { out.push((fd, std::fs::read_link(e.path()).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default())); } } }
+    out.retain(|(_, t)| !(t.starts_with("/proc/") && t.ends_with("/fd")));
+    out
 }
-
 // ---- seccomp: kill on foreign arch; socket(2) with family != AF_UNIX → EPERM (netns-seccomp spike SC-1..5) ----
 const SECCOMP_SET_MODE_FILTER: libc::c_uint = 1; const SECCOMP_FILTER_FLAG_TSYNC: libc::c_ulong = 1;
 const SECCOMP_RET_ERRNO: u32 = 0x0005_0000; const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000; const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
@@ -63,14 +67,12 @@ pub fn seccomp_af_unix_only() -> Result<(), i32> {
     let p = Prog { len: f.len() as u16, filter: f.as_ptr() };
     r(unsafe { libc::syscall(libc::SYS_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, &p as *const Prog) }).map(|_| ())
 }
-/// Drop the capability bounding set and ambient set entirely.
+/// Drop the capability bounding set and ambient set (requires CAP_SETPCAP; call while still privileged).
+/// Permitted/effective/inheritable are cleared by the subsequent setresuid to non-zero.
 pub fn drop_caps() -> Result<(), i32> {
     for cap in 0..=40 { let v = unsafe { libc::prctl(libc::PR_CAPBSET_DROP, cap as libc::c_ulong, 0, 0, 0) }; if v < 0 && errno() != libc::EINVAL { return Err(errno()); } }
     if unsafe { libc::prctl(libc::PR_CAP_AMBIENT, libc::PR_CAP_AMBIENT_CLEAR_ALL as libc::c_ulong, 0, 0, 0) } < 0 { return Err(errno()); }
-    // clear permitted/effective/inheritable
-    #[repr(C)] struct Hdr { version: u32, pid: i32 } #[repr(C)] #[derive(Default, Clone, Copy)] struct Data { e: u32, p: u32, i: u32 }
-    let h = Hdr { version: 0x2008_0522, pid: 0 }; let d = [Data::default(); 2];
-    r(unsafe { libc::syscall(libc::SYS_capset, &h as *const Hdr, d.as_ptr()) }).map(|_| ())
+    Ok(())
 }
 pub fn write_all_fd(fd: RawFd, b: &[u8]) -> bool { let mut off = 0; while off < b.len() { let n = unsafe { libc::write(fd, b[off..].as_ptr() as *const libc::c_void, b.len() - off) }; if n <= 0 { return false; } off += n as usize; } true }
 pub fn read_line_fd(fd: RawFd, timeout_ms: i32) -> Option<String> {

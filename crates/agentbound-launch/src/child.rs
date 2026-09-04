@@ -66,23 +66,25 @@ pub fn run(p: ChildPlan) -> ! {
     })());
     // 7 — credentials, then irreversibility
     step!(w, 7, (|| -> Result<(), i32> {
-        if let Some(n) = p.nproc_limit { let l = libc::rlimit { rlim_cur: n, rlim_max: n }; if unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &l) } != 0 { return Err(errno()); } }
-        if let Some(n) = p.nofile_limit { let l = libc::rlimit { rlim_cur: n, rlim_max: n }; if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &l) } != 0 { return Err(errno()); } }
+        let e = |tag: &str| -> i32 { write_all_fd(w, format!("sub {tag}\n").as_bytes()); errno() };
+        if let Some(n) = p.nproc_limit { let l = libc::rlimit { rlim_cur: n, rlim_max: n }; if unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &l) } != 0 { return Err(e("rlimit_nproc")); } }
+        if let Some(n) = p.nofile_limit { let l = libc::rlimit { rlim_cur: n, rlim_max: n }; if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &l) } != 0 { return Err(e("rlimit_nofile")); } }
+        // bounding and ambient sets need CAP_SETPCAP: drop them while still root; the UID change then clears the rest
+        drop_caps().map_err(|_| e("drop_caps"))?;
         let gids: Vec<libc::gid_t> = p.gids.iter().map(|g| *g as libc::gid_t).collect();
-        if unsafe { libc::setgroups(gids.len(), gids.as_ptr()) } != 0 { return Err(errno()); }
-        if unsafe { libc::setresgid(gids[0], gids[0], gids[0]) } != 0 { return Err(errno()); }
-        if unsafe { libc::setresuid(p.uid, p.uid, p.uid) } != 0 { return Err(errno()); }
-        // verify
-        let (mut ru, mut eu, mut su) = (0, 0, 0); unsafe { libc::getresuid(&mut ru, &mut eu, &mut su) }; if (ru, eu, su) != (p.uid, p.uid, p.uid) { return Err(-1); }
-        let mut got = vec![0 as libc::gid_t; 64]; let n = unsafe { libc::getgroups(64, got.as_mut_ptr()) }; if n < 0 { return Err(errno()); } got.truncate(n as usize); got.sort(); let mut want = gids.clone(); want.sort(); if got != want { return Err(-2); }
-        if unsafe { libc::setuid(0) } == 0 { return Err(-3); } // must fail
-        if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 { return Err(errno()); }
-        drop_caps()?;
-        if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 { return Err(errno()); }
-        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 { return Err(errno()); }
-        seccomp_af_unix_only()?;
-        // prove the filter: a non-AF_UNIX socket must fail with EPERM
-        let s = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) }; if s >= 0 || errno() != libc::EPERM { return Err(-4); }
+        if unsafe { libc::setgroups(gids.len(), gids.as_ptr()) } != 0 { return Err(e("setgroups")); }
+        if unsafe { libc::setresgid(gids[0], gids[0], gids[0]) } != 0 { return Err(e("setresgid")); }
+        if unsafe { libc::setresuid(p.uid, p.uid, p.uid) } != 0 { return Err(e("setresuid")); }
+        let (mut ru, mut eu, mut su) = (0, 0, 0); unsafe { libc::getresuid(&mut ru, &mut eu, &mut su) }; if (ru, eu, su) != (p.uid, p.uid, p.uid) { return Err(e("verify_uid")); }
+        let mut got = vec![0 as libc::gid_t; 64]; let n = unsafe { libc::getgroups(64, got.as_mut_ptr()) }; if n < 0 { return Err(e("getgroups")); } got.truncate(n as usize); got.sort(); let mut want = gids.clone(); want.sort(); if got != want { return Err(e("verify_groups")); }
+        if unsafe { libc::setuid(0) } == 0 { return Err(e("setuid0_succeeded")); }
+        if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 { return Err(e("no_new_privs")); }
+        let st = std::fs::read_to_string("/proc/self/status").unwrap_or_default(); let z = |k: &str| st.lines().find(|l| l.starts_with(k)).map(|l| l[k.len()..].trim() == "0000000000000000").unwrap_or(false);
+        if !(z("CapEff:") && z("CapPrm:") && z("CapBnd:") && z("CapAmb:") && z("CapInh:")) { return Err(e("verify_caps")); }
+        if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 { return Err(e("subreaper")); }
+        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 { return Err(e("dumpable")); }
+        seccomp_af_unix_only().map_err(|_| e("seccomp"))?;
+        let s = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) }; if s >= 0 || errno() != libc::EPERM { return Err(e("seccomp_proof")); }
         Ok(())
     })());
     // wait for the parent's commit (step 8) — barrier release

@@ -141,6 +141,7 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
         loop {
             let line = read_line_fd(sp[0], 15_000).ok_or(Fail { step: expect, rule: "child_silent", detail: "no status within bound".into() })?;
             if let Some(rest) = line.strip_prefix("fds ") { fdlist = rest.to_string(); continue; }
+            if let Some(rest) = line.strip_prefix("sub ") { led.note(expect, "sub", rest); continue; }
             let parts: Vec<&str> = line.splitn(4, ' ').collect();
             if parts.len() < 3 || parts[0] != "step" || parts[1].parse::<u32>().ok() != Some(expect) { return fail(expect, "child_protocol", line); }
             if parts[2] != "ok" { return fail(expect, "child_step_failed", parts.get(3).copied().unwrap_or("")); }

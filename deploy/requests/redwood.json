@@ -1,0 +1,1 @@
+{"schema_version":"agentbound.session-request.v0.1","agent_principal_id":"agent:finance-agent","task_purpose_id":"task:redwood-analysis","requested_runtime":"runtime:scripted-loop","requested_resources":["resource:workspace-finance"],"initiator_credential_ref":"authn:alice-session-0001","approval_references":[]}

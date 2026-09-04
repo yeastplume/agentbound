@@ -28,7 +28,7 @@ fn main() {
                 let mut parts = launcher.split_whitespace(); let prog = parts.next().unwrap();
                 let mut cmd = std::process::Command::new(prog); cmd.args(parts).args(["--authorization", &az]);
                 if let Some(f) = a.iter().position(|x| x == "--fault").and_then(|i| a.get(i + 1)) { cmd.args(["--fault", f]); }
-                cmd.status().map(|s| s.success()).unwrap_or(false)
+                let st = cmd.status().map(|s| s.success()).unwrap_or(false); if !st { eprintln!("launch failed for {az}"); } st
             }
         }
         Some("status") => out(&call(&lc, "status", key(&a[2]))),

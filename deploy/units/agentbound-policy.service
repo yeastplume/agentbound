@@ -1,0 +1,12 @@
+[Unit]
+Description=Agentbound policy resolver (unprivileged, file-backed)
+After=agentbound-audit.service
+[Service]
+Type=simple
+User=agentbound-policy
+Group=agentbound
+UMask=0007
+ExecStart=/usr/local/bin/agentbound-policy --cli-uids 1001,1002,1003,1004
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
