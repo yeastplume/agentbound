@@ -11,7 +11,7 @@ use ab_common::sig::{launch_record_digest, now_unix, object_digest, Keyring};
 use ab_common::wire::{self, Conn, Req};
 use std::os::fd::OwnedFd;
 
-pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String }
+pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String, pub managed_paths: Vec<String> }
 
 pub struct Service { pub store: Store, pub cfg: Config, pub sessions: Sessions, pub audit: audit::Sink }
 
@@ -101,7 +101,7 @@ impl Service {
     }
 
     fn register_session(&mut self, b: &Value, fds: Vec<OwnedFd>) -> Reply {
-        closed(b, &["allocation_id", "descriptors", "init_pid", "launch_record_digest", "pid_namespace_id", "scope_id"])?;
+        closed(b, &["allocation_id", "descriptors", "init_pid", "launch_record_digest", "pid_namespace_id", "scope_id", "session_dir"])?;
         let (aid, lrd) = (gs(b, "allocation_id")?, gs(b, "launch_record_digest")?);
         if !self.store.record_exists("binding", "launch_record_digest", lrd).map_err(store_err)? { return err(wire::CLASS_CONFLICT, "binding_not_committed", ""); }
         let ds = b.get("descriptors").and_then(|x| x.as_arr()).ok_or((wire::CLASS_INVALID, "descriptors", String::new()))?;
@@ -117,6 +117,7 @@ impl Service {
         let mut fds: Vec<Option<OwnedFd>> = fds.into_iter().map(Some).collect();
         let init_pid = b.get("init_pid").and_then(|x| x.as_int()).ok_or((wire::CLASS_INVALID, "init_pid", String::new()))? as i32;
         self.sessions.register(lrd, fds[pi].take().unwrap(), fds[ci].take().unwrap(), init_pid, gs(b, "scope_id")?, gs(b, "pid_namespace_id")?).map_err(|r| (wire::CLASS_CONFLICT, r, String::new()))?;
+        if let Some(s) = self.sessions.get_mut(lrd) { s.session_dir = b.get("session_dir").and_then(|x| x.as_str()).map(str::to_string); }
         let _ = aid;
         Ok(Value::obj(vec![("registered", Value::Bool(true))]))
     }

@@ -49,7 +49,7 @@ Peer rule: `reserve_identity`, `commit_binding`, `register_session`, `report_act
 |---|---|---|
 | `reserve_identity` | `authorization_id`, `authorization_manifest_digest`, `agent_global_id`, `session_id`, `trace_id`, `reclamation_domain_id` | `allocation_id`, `uid`, `gids` (array), `state_seq` |
 | `commit_binding` | `allocation_id`, `launch_binding` (object, §3.7), `envelope` (§4 signature envelope), `authorization_manifest` (object), `manifest_envelope` | `launch_record_digest`, `store_seq` |
-| `register_session` | `allocation_id`, `launch_record_digest`, `scope_id`, `pid_namespace_id`, `init_pid`, `descriptors`: array of `{"kind":"init_pidfd"|"cgroup_dir"|"rootfs_mount","index":n}` | `registered:true` |
+| `register_session` | `allocation_id`, `launch_record_digest`, `scope_id`, `pid_namespace_id`, `init_pid`, `session_dir` (host path of the per-session runtime directory, one of the closed managed-domain paths), `descriptors`: array of `{"kind":"init_pidfd"|"cgroup_dir"|"rootfs_mount","index":n}` | `registered:true` |
 | `report_activation` | `allocation_id`, `launch_record_digest`, `runtime_artifact_digest`, `privilege_disposal` (object: `uid`, `gids`, `no_new_privs`, `cap_bounding_empty`, `seccomp`) | `state:"active"` |
 | `report_construction_failed` | `allocation_id`, `launch_record_digest` (nullable), `failed_step` (0–9), `rule`, `ledger` (array of `{"resource","action","result"}`) | `state:"construction-failed"`, `identity_state` |
 | `status` | `authorization_id` **or** `launch_record_digest` | `state`, `identity_state`, `reason` (nullable), `observation_seq`, `record_ref` |
