@@ -1,0 +1,335 @@
+{
+ "agent_authority_version": "agent-authz:v2026-08-28",
+ "approvals": {
+  "approval:eng-1234-a": {
+   "approver_id": "human:dave",
+   "approver_key": "key:dave",
+   "decision": "approve",
+   "expires_at": "2100-01-01T00:00:00Z",
+   "sequence": 5,
+   "subject": "task:fix-issue-1234"
+  },
+  "approval:eng-1234-b": {
+   "approver_id": "human:dave",
+   "approver_key": "key:dave",
+   "decision": "approve",
+   "expires_at": "2100-01-01T00:00:00Z",
+   "sequence": 6,
+   "subject": "task:fix-issue-1234"
+  },
+  "approval:eng-1234-expired": {
+   "approver_id": "human:dave",
+   "approver_key": "key:dave",
+   "decision": "approve",
+   "expires_at": "2020-01-01T00:00:00Z",
+   "sequence": 7,
+   "subject": "task:fix-issue-1234"
+  },
+  "approval:eng-1234-stale": {
+   "approver_id": "human:dave",
+   "approver_key": "key:dave",
+   "decision": "approve",
+   "expires_at": "2100-01-01T00:00:00Z",
+   "sequence": 1,
+   "subject": "task:fix-issue-1234"
+  }
+ },
+ "catalogue_version": "catalogue:v2026-08-28",
+ "initiators": {
+  "authn:alice-session-0001": {
+   "enabled": true,
+   "id": "human:alice",
+   "owner": null,
+   "relationship": "delegation",
+   "uid": 1001
+  },
+  "authn:bob-session-0001": {
+   "enabled": true,
+   "id": "human:bob",
+   "owner": null,
+   "relationship": "delegation",
+   "uid": 1002
+  },
+  "authn:carol-disabled": {
+   "enabled": false,
+   "id": "human:carol",
+   "owner": null,
+   "relationship": "delegation",
+   "uid": 1003
+  },
+  "authn:cron-nightly": {
+   "enabled": true,
+   "id": "svc:cron",
+   "owner": null,
+   "relationship": "scheduled",
+   "uid": 1004
+  },
+  "authn:cron-owned": {
+   "enabled": true,
+   "id": "svc:cron",
+   "owner": "human:alice",
+   "relationship": "scheduled",
+   "uid": 1004
+  }
+ },
+ "invocation_profiles": {
+  "profile:scripted-loop": {
+   "argv": [
+    "/bin/sh",
+    "/image/loop.sh"
+   ],
+   "env": [
+    "PATH=/bin:/usr/bin",
+    "HOME=/workspace"
+   ]
+  },
+  "profile:sh-interactive": {
+   "argv": [
+    "/bin/sh"
+   ],
+   "env": [
+    "PATH=/bin:/usr/bin",
+    "HOME=/workspace",
+    "TERM"
+   ]
+  }
+ },
+ "mount_sources": {
+  "mount-source:workspace-eng": {
+   "base": "/var/lib/agentbound/workspaces",
+   "relative": "eng"
+  },
+  "mount-source:workspace-finance": {
+   "base": "/var/lib/agentbound/workspaces",
+   "relative": "finance"
+  }
+ },
+ "mount_targets": {
+  "mount-target:workspace": "/workspace"
+ },
+ "policy_version": "policy:v2026-08-28",
+ "principals": {
+  "agent:engineering-agent": {
+   "budget": {
+    "memory_bytes": 268435456,
+    "pids": 128,
+    "wall_clock_seconds": 3600
+   },
+   "durable_ownership_projection": {
+    "kind": "storage-principal",
+    "reference": "storage:engineering-agent"
+   },
+   "resources": [
+    "resource:workspace-eng"
+   ],
+   "runtimes": [
+    "runtime:sh",
+    "runtime:scripted-loop"
+   ]
+  },
+  "agent:finance-agent": {
+   "budget": {
+    "memory_bytes": 268435456,
+    "pids": 128,
+    "wall_clock_seconds": 3600
+   },
+   "durable_ownership_projection": {
+    "kind": "storage-principal",
+    "reference": "storage:finance-agent"
+   },
+   "resources": [
+    "resource:workspace-finance"
+   ],
+   "runtimes": [
+    "runtime:sh",
+    "runtime:scripted-loop"
+   ]
+  }
+ },
+ "resource_limits": {
+  "accelerator": {
+   "absence_evidence": "deployment:no-accelerator",
+   "enforcement_owner": "none",
+   "status": "absent"
+  },
+  "audit_capacity": {
+   "enforcement_owner": "agentbound-audit",
+   "limit": 10000,
+   "status": "enforced",
+   "unit": "events"
+  },
+  "connection_count": {
+   "absence_evidence": "phase1:no-network-topology",
+   "enforcement_owner": "none",
+   "status": "absent"
+  },
+  "cpu": {
+   "enforcement_owner": "cgroup",
+   "limit": 1000,
+   "status": "enforced",
+   "unit": "milli-cpu"
+  },
+  "delegation_fanout": {
+   "enforcement_owner": "policy",
+   "limit": 0,
+   "status": "enforced",
+   "unit": "children"
+  },
+  "disk_bytes": {
+   "enforcement_owner": "session-image",
+   "limit": 268435456,
+   "status": "enforced",
+   "unit": "bytes"
+  },
+  "disk_inodes": {
+   "enforcement_owner": "session-image",
+   "limit": 65536,
+   "status": "enforced",
+   "unit": "inodes"
+  },
+  "external_spend": {
+   "absence_evidence": "phase1:no-gateway-accounting",
+   "enforcement_owner": "none",
+   "status": "absent"
+  },
+  "file_descriptors": {
+   "enforcement_owner": "rlimit",
+   "limit": 1024,
+   "status": "enforced",
+   "unit": "descriptors"
+  },
+  "io_bandwidth": {
+   "enforcement_owner": "cgroup",
+   "limit": 52428800,
+   "status": "enforced",
+   "unit": "bytes-per-second"
+  },
+  "memory_bytes": {
+   "enforcement_owner": "cgroup",
+   "limit": 268435456,
+   "status": "enforced",
+   "unit": "bytes"
+  },
+  "model_tokens": {
+   "absence_evidence": "phase1:no-inference-adapter",
+   "enforcement_owner": "none",
+   "status": "absent"
+  },
+  "network_bandwidth": {
+   "absence_evidence": "phase1:no-network-topology",
+   "enforcement_owner": "none",
+   "status": "absent"
+  },
+  "pids": {
+   "enforcement_owner": "cgroup",
+   "limit": 128,
+   "status": "enforced",
+   "unit": "processes"
+  },
+  "request_rate": {
+   "absence_evidence": "phase1:no-network-topology",
+   "enforcement_owner": "none",
+   "status": "absent"
+  },
+  "storage_bytes": {
+   "absence_evidence": "phase1:no-gateway-accounting",
+   "enforcement_owner": "none",
+   "status": "absent"
+  }
+ },
+ "resources": {
+  "resource:workspace-eng": {
+   "access": "read-write",
+   "catalogue_id": "mount-source:workspace-eng",
+   "mount_id": "mount:workspace",
+   "target_template_id": "mount-target:workspace"
+  },
+  "resource:workspace-finance": {
+   "access": "read-write",
+   "catalogue_id": "mount-source:workspace-finance",
+   "mount_id": "mount:workspace",
+   "target_template_id": "mount-target:workspace"
+  }
+ },
+ "runtimes": {
+  "runtime:scripted-loop": {
+   "artifact_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+   "invocation_profile": "profile:scripted-loop"
+  },
+  "runtime:sh": {
+   "artifact_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+   "invocation_profile": "profile:sh-interactive"
+  }
+ },
+ "tasks": {
+  "task:degraded-bad": {
+   "approvals_required": 0,
+   "resources": [],
+   "revocation": {
+    "approval_expired": "terminate",
+    "audit_pipeline_degraded_below_stop_threshold": "terminate",
+    "authority_revoked": "terminate",
+    "catalogue_withdrawn": "terminate",
+    "gateway_grant_withdrawn": "terminate",
+    "gateway_unavailable": "terminate",
+    "initiator_disabled": "terminate",
+    "policy_service_unavailable": "terminate",
+    "policy_withdrawn": "terminate",
+    "reclassification": "terminate",
+    "task_cancelled": "continue-degraded"
+   },
+   "runtimes": [
+    "runtime:sh"
+   ],
+   "version": "task:v1"
+  },
+  "task:fix-issue-1234": {
+   "approvals_required": 1,
+   "audit_loss_behaviour": "quarantine",
+   "resources": [
+    "resource:workspace-eng"
+   ],
+   "runtimes": [
+    "runtime:sh",
+    "runtime:scripted-loop"
+   ],
+   "version": "task:v17"
+  },
+  "task:quiesce-cases": {
+   "approvals_required": 0,
+   "resources": [
+    "resource:workspace-finance"
+   ],
+   "revocation": {
+    "approval_expired": "quiesce",
+    "audit_pipeline_degraded_below_stop_threshold": "continue-degraded",
+    "authority_revoked": "terminate",
+    "catalogue_withdrawn": "quiesce",
+    "gateway_grant_withdrawn": "terminate",
+    "gateway_unavailable": "quiesce",
+    "initiator_disabled": "terminate",
+    "policy_service_unavailable": "continue-degraded",
+    "policy_withdrawn": "terminate",
+    "reclassification": "quiesce",
+    "task_cancelled": "terminate"
+   },
+   "runtimes": [
+    "runtime:sh",
+    "runtime:scripted-loop"
+   ],
+   "version": "task:v1"
+  },
+  "task:redwood-analysis": {
+   "approvals_required": 0,
+   "audit_loss_behaviour": "quarantine",
+   "resources": [
+    "resource:workspace-finance"
+   ],
+   "runtimes": [
+    "runtime:sh",
+    "runtime:scripted-loop"
+   ],
+   "version": "task:v3"
+  }
+ }
+}
