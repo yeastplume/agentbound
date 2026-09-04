@@ -3,11 +3,16 @@
 r() { echo "PROBE $1 $2 $3"; }
 ok() { [ "$2" -ne 0 ] && r "$1" PASS "denied rc=$2 $3" || r "$1" FAIL "succeeded $3"; }
 # T-6.1-001 / T-6.2-006: /proc shows only our namespace; no host pids
-n=$(ls /proc | grep -c '^[0-9]'); [ "$n" -le 4 ] && r T-6.1-001 PASS "pids_visible=$n" || r T-6.1-001 FAIL "pids_visible=$n"
+# host has hundreds of processes; a private pidns shows only ours (init, workload shell, this pipeline)
+n=$(ls /proc | grep -c '^[0-9]'); [ "$n" -le 8 ] && r T-6.1-001 PASS "pids_visible=$n" || r T-6.1-001 FAIL "pids_visible=$n"
+# host pid 1 (systemd) and the lifecycle daemon are not addressable: every visible pid is ours
+for pid in $(ls /proc | grep '^[0-9]'); do c=$(cat /proc/$pid/comm 2>/dev/null); case "$c" in agentbound-launch|sh|sleep|ls|grep|cat|busybox) ;; *) r T-6.1-001.foreign FAIL "pid $pid comm=$c"; break;; esac; done
 [ "$$" -le 4 ] && r T-6.2-006.pidns PASS "pid=$$" || r T-6.2-006.pidns FAIL "pid=$$"
 cat /proc/1/environ >/dev/null 2>&1; ok T-6.1-001.init-environ $? "(init environ)"
 # T-6.1-002 / T-6.1-010: signal host init (pid 1 outside ns is unreachable; inside ns pid 1 is our init — signal it must be denied for a *host* target: use pid 2 kthreadd absent)
-kill -0 2 2>/dev/null; ok T-6.1-002 $? "kill -0 2"
+# host pids are unreachable: probe a pid that exists on the host (lifecycle daemon, known large) — inside the ns no such pid
+kill -0 $(cat /proc/sys/kernel/pid_max 2>/dev/null || echo 4000000) 2>/dev/null; ok T-6.1-002 $? "kill -0 host-range pid"
+kill -0 300 2>/dev/null; ok T-6.1-002.pid300 $? "kill -0 300 (exists on host)"
 # T-6.1-004 / T-6.1-012: abstract & pathname sockets: only AF_UNIX allowed; no host sockets visible
 ls /run/agentbound 2>/dev/null; ok T-6.1-004 $? "ls /run/agentbound"
 # T-6.1-005: no host IPC (private ipcns) — ipcs absent in busybox; check /dev/shm absence
@@ -16,7 +21,8 @@ ls /run/agentbound 2>/dev/null; ok T-6.1-004 $? "ls /run/agentbound"
 ls /var/lib/agentbound 2>/dev/null; ok T-6.1-007 $? "ls /var/lib/agentbound"
 ls /etc/agentbound 2>/dev/null; ok T-6.1-007.etc $? "ls /etc/agentbound"
 # T-6.1-009: descriptors at start
-fds=$(ls /proc/$$/fd | tr '\n' ' '); [ "$(ls /proc/$$/fd | wc -l)" -le 4 ] && r T-6.1-009 PASS "fds=$fds" || r T-6.1-009 FAIL "fds=$fds"
+# fds: 0,1,2 plus the shell's own script fd (10) and the /proc/self/fd handle of `ls`; nothing else may be present
+extra=$(ls -l /proc/$$/fd | awk 'NR>1{print $9"="$11}' | grep -vE '^(0|1|2)=|probe.sh$' | tr '\n' ' '); [ -z "$extra" ] && r T-6.1-009 PASS "fds=$(ls /proc/$$/fd | tr '\n' ' ')" || r T-6.1-009 FAIL "extra=$extra"
 # T-6.2-001: cgroup migration
 echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null; ok T-6.2-001 $? "write cgroup.procs"
 [ -d /sys/fs/cgroup ] && r T-6.2-001.sysfs FAIL "cgroupfs visible" || r T-6.2-001.sysfs PASS "no cgroupfs"

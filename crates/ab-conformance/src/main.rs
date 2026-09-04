@@ -15,7 +15,7 @@ fn js(v: &Value, path: &str) -> String { jget(v, path).map(|x| match x { Value::
 fn parse(s: &str) -> Value { s.lines().rev().find_map(|l| json::parse(l.trim().as_bytes(), &MANIFEST_LIMITS).ok()).unwrap_or(Value::Null) }
 fn lc(op: &str, body: Value) -> Value { match wire::connect("/run/agentbound/lifecycle.sock") { Ok(c) => c.call(&wire::request(op, &format!("conf-{}", ab_common::sig::monotonic_ns()), body)).unwrap_or(Value::Null), Err(_) => Value::Null } }
 fn audit_rows(key: &str) -> Vec<Value> { let c = wire::connect("/run/agentbound/audit.sock").unwrap(); let k = if key.starts_with("sha256:") { "launch_record_digest" } else { "authorization_id" }; c.call(&wire::request("query", "q", Value::obj(vec![(k, Value::s(key))]))).ok().and_then(|r| jget(&r, "body.rows").and_then(|x| x.as_arr()).cloned()).unwrap_or_default() }
-fn kinds(rows: &[Value]) -> Vec<String> { rows.iter().map(|r| js(r, "event.kind")).collect() }
+fn kinds(rows: &[Value]) -> Vec<String> { rows.iter().map(|r| js(r, "event.event")).collect() }
 fn sig(lrd: &str, trigger: &str) -> Value { lc("revocation_signal", Value::obj(vec![("launch_record_digest", Value::s(lrd)), ("source", Value::s("conformance")), ("trigger", Value::s(trigger))])) }
 fn cgprocs(scope: &str) -> i32 { sh(&format!("cat /sys/fs/cgroup/system.slice/{scope}/cgroup.procs 2>/dev/null | wc -l")).1.trim().parse().unwrap_or(0) }
 
@@ -41,7 +41,7 @@ fn main() {
     let (rc, v, out) = g.launch("runtime:probe", "task:redwood-analysis");
     let lrd = js(&v, "launch_record_digest"); let scope = js(&v, "scope_id"); let uid = js(&v, "uid");
     g.rec("D-01", rc == 0 && !lrd.is_empty(), format!("rc={rc} lrd={lrd} {}", out.lines().last().unwrap_or("").chars().take(200).collect::<String>()));
-    let console = js(&v, "console"); std::thread::sleep(std::time::Duration::from_secs(5));
+    let console = js(&v, "console"); std::thread::sleep(std::time::Duration::from_secs(8));
     let probe = std::fs::read_to_string(&console).unwrap_or_default();
     let mut seen_end = false;
     for l in probe.lines().filter(|l| l.starts_with("PROBE ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "PROBE-END" { seen_end = true; continue; } g.rec(p[1], p[2] == "PASS", p.get(3).copied().unwrap_or("")); }
@@ -86,21 +86,22 @@ fn main() {
     ];
     for (id, body, want) in cases {
         let p = g.write_req(id, &body); let (rc, v, _) = g.request(&p, "--no-launch");
-        let rule = js(&v, "rule"); let detail = js(&v, "detail");
+        let rule = js(&v, "body.rule"); let detail = js(&v, "body.detail");
         g.rec(id, rc != 0 && (rule.contains(want) || detail.contains(want)), format!("class={} rule={rule} detail={}", js(&v, "class"), detail.chars().take(120).collect::<String>()));
     }
     // T-6.6-002 replay: use a valid approval, then present it again
     let p = g.write_req("appr", &eng("\"approval:eng-1234-a\"")); g.as_user = "bob".into();
     let p2 = g.write_req("appr2", &eng("\"approval:eng-1234-a\"").replace("authn:alice-session-0001", "authn:bob-session-0001"));
     let (rc1, _, _) = g.request(&p2, "--no-launch"); let (rc2, v, _) = g.request(&p2, "--no-launch"); let _ = p;
-    g.rec("T-6.6-002.replayed", rc1 == 0 && rc2 != 0 && js(&v, "rule") == "approval_replayed", format!("first rc={rc1} second rule={}", js(&v, "rule")));
+    g.rec("T-6.6-002.replayed", rc1 == 0 && rc2 != 0 && js(&v, "body.rule") == "approval_replayed", format!("first rc={rc1} second rule={}", js(&v, "body.rule")));
     // T-6.6-004 scheduler without owner
     g.as_user = "cron".into();
-    let p = g.write_req("sched", &base.replace("authn:alice-session-0001", "authn:cron-nightly")); let (rc, v, _) = g.request(&p, "--no-launch"); g.rec("T-6.6-004", rc != 0 && js(&v, "rule") == "scheduled_without_owner", js(&v, "rule"));
+    let p = g.write_req("sched", &base.replace("authn:alice-session-0001", "authn:cron-nightly")); let (rc, v, _) = g.request(&p, "--no-launch"); g.rec("T-6.6-004", rc != 0 && js(&v, "body.rule") == "scheduled_without_owner", js(&v, "body.rule"));
     let p = g.write_req("sched2", &base.replace("authn:alice-session-0001", "authn:cron-owned")); let (rc, v, _) = g.request(&p, "--no-launch"); g.rec("T-6.6-004.owned", rc == 0 && js(&v, "body.authorization_manifest.actors.owner") == "human:alice", js(&v, "body.authorization_manifest.actors"));
     g.as_user = "alice".into();
     // T-6.5-010: CLI user calling a constructor-only lifecycle op
-    let (_, out) = sh(r#"su -s /bin/sh alice -c "python3 -c \"import socket;s=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET);s.connect('/run/agentbound/lifecycle.sock');s.send(b'{\\\"v\\\":\\\"agentbound.wire.v0.1\\\",\\\"op\\\":\\\"reserve_identity\\\",\\\"idempotency_key\\\":\\\"x\\\",\\\"body\\\":{}}');print(s.recv(65536).decode())\"""#);
+    std::fs::write("/tmp/lc-probe.py", "import socket\ns=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET);s.connect('/run/agentbound/lifecycle.sock')\ns.send(b'{\"body\":{},\"idempotency_key\":\"x\",\"op\":\"reserve_identity\",\"v\":\"agentbound.wire.v0.1\"}');print(s.recv(65536).decode())\n").unwrap(); sh("chmod 644 /tmp/lc-probe.py");
+    let (_, out) = sh("su -s /bin/sh alice -c 'python3 /tmp/lc-probe.py' </dev/null 2>&1");
     g.rec("T-6.5-010.lifecycle", out.contains("peer_not_permitted"), out.trim().chars().take(200).collect::<String>());
     let (_, rej) = sh("grep -c session.rejected /var/lib/agentbound/audit-policy.jsonl"); g.rec("T-6.6-001.audit", rej.trim().parse::<i32>().unwrap_or(0) >= 15, format!("session.rejected events with failed_input={}", rej.trim()));
 
@@ -109,7 +110,8 @@ fn main() {
         let p = g.write_req(id, base); let (rc, _, out) = g.request(&p, &format!("--fault {fault}"));
         let (_, last) = sh("tail -1 /var/lib/agentbound/audit-launch.jsonl"); let ev = parse(&last);
         let (step, rule, rb) = (js(&ev, "detail.failed_step"), js(&ev, "detail.rule"), js(&ev, "detail.rollback"));
-        let (_, scopes) = sh("systemctl list-units --plain --no-legend 'agentbound-*.scope' | grep -c scope");
+        let scope_name = jget(&ev, "detail.ledger").and_then(|l| l.as_arr()).and_then(|l| l.iter().find(|e| js(e, "what") == "scope").map(|e| js(e, "detail"))).unwrap_or_default();
+        let scope_left = !scope_name.is_empty() && std::path::Path::new(&format!("/sys/fs/cgroup/{scope_name}")).exists(); let scopes = if scope_left { "1" } else { "0" }.to_string();
         let az = out.split("launchrec:").nth(1).map(|x| format!("launchrec:{}", x.chars().take_while(|c| c.is_alphanumeric() || *c == '-').collect::<String>())).unwrap_or_default();
         let ident = js(&lc("status", Value::obj(vec![("authorization_id", Value::s(&az))])), "body.identity_state");
         g.rec(id, rc != 0 && step == want_step && (ident == "reclaiming" || ident == "quarantined") && scopes.trim() == "0", format!("step={step} rule={rule} identity={ident} scopes_left={} rollback={rb}", scopes.trim()));

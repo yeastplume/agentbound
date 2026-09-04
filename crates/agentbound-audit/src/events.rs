@@ -1,7 +1,7 @@
 //! Closed event schema (R-AUD-1 fields + per-kind detail member sets). Unknown kind or member ⇒ reject.
 use ab_common::json::Value;
 
-const BASE: [&str; 17] = ["actor", "allocation_id", "authorization_id", "boot_id", "clock_source", "detail", "event_id", "execution_uid", "host_id", "kind", "launch_record_digest", "monotonic_ns", "outcome", "session_id", "trace_id", "wall_clock", "wall_clock_trusted"];
+const BASE: [&str; 17] = ["actor", "allocation_id", "authorization_id", "boot_id", "clock_source", "detail", "event", "event_id", "execution_uid", "host_id", "launch_record_digest", "monotonic_ns", "outcome", "session_id", "trace_id", "wall_clock", "wall_clock_trusted"];
 
 fn detail_members(kind: &str) -> Option<&'static [&'static str]> {
     Some(match kind {
@@ -23,7 +23,7 @@ pub fn check(ev: &Value) -> Result<(), &'static str> {
     let m = ev.as_obj().ok_or("event_not_object")?;
     if m.len() != BASE.len() { return Err("event_member_count"); }
     for k in m.keys() { if !BASE.contains(&k.0.as_str()) { return Err("unknown_event_member"); } }
-    let kind = ev.get("kind").and_then(|x| x.as_str()).ok_or("kind")?;
+    let kind = ev.get("event").and_then(|x| x.as_str()).ok_or("event")?;
     let want = detail_members(kind).ok_or("unknown_event_kind")?;
     let d = ev.get("detail").and_then(|x| x.as_obj()).ok_or("detail_not_object")?;
     for k in d.keys() { if !want.contains(&k.0.as_str()) { return Err("unknown_detail_member"); } }

@@ -24,8 +24,12 @@ fn main() {
     let mut svc = service::Service { store, cfg: service::Config { cli_uids, keyring, host_id, boot_id, launch_version_digest: String::new(), managed_paths: arg("--managed-paths", "/var/lib/agentbound/sessions,/var/lib/agentbound").split(',').map(str::to_string).collect(), workspace_roots: workspace_roots(&arg("--catalogue", "/etc/agentbound/catalogue.json")) }, sessions: state::Sessions::default(), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/audit-lifecycle.jsonl")) };
     svc.reconcile_on_start();
     let listener = ab_common::wire::listen(&socket, 0o660).expect("listen");
+    // accept with a bounded wait so the pidfd/deadline poll runs on its own cadence, not only when a client connects
+    use std::os::fd::AsRawFd;
     loop {
-        match ab_common::wire::accept(&listener) { Ok(c) => svc.serve(c), Err(e) => eprintln!("accept: {e}") }
+        let mut pfd = libc::pollfd { fd: listener.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        let ready = unsafe { libc::poll(&mut pfd, 1, 250) };
+        if ready > 0 { match ab_common::wire::accept(&listener) { Ok(c) => svc.serve(c), Err(e) => eprintln!("accept: {e}") } }
         svc.poll_sessions();
     }
 }
