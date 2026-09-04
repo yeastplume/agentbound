@@ -247,6 +247,7 @@ pub fn parse_canonical(bytes: &[u8], lim: &Limits) -> Result<Value, JsonError> {
 // ---- accessors used by schema code ----
 impl Value {
     pub fn as_obj(&self) -> Option<&BTreeMap<Utf16Key, Value>> { if let Value::Obj(m) = self { Some(m) } else { None } }
+    pub fn as_obj_mut(&mut self) -> Option<&mut BTreeMap<Utf16Key, Value>> { if let Value::Obj(m) = self { Some(m) } else { None } }
     pub fn as_arr(&self) -> Option<&Vec<Value>> { if let Value::Arr(a) = self { Some(a) } else { None } }
     pub fn as_str(&self) -> Option<&str> { if let Value::Str(s) = self { Some(s) } else { None } }
     pub fn as_int(&self) -> Option<i64> { if let Value::Int(n) = self { Some(*n) } else { None } }

@@ -50,15 +50,20 @@ pub fn event(kind: &str, actor: &str, outcome: &str, c: &Correlation, detail: Va
 /// Append-only sink: one canonical JSON line per event, O_APPEND, fsync per write.
 /// Component-local buffer used when the audit daemon is unreachable; the
 /// daemon-side store (agentbound-audit) hash-chains the events.
-pub struct Sink { file: Option<std::fs::File>, pub lost: u64 }
+pub struct Sink { file: Option<std::fs::File>, pub lost: u64, pub forward: Option<String>, pub unforwarded: u64 }
 impl Sink {
     pub fn open(path: &str) -> Sink {
         let file = std::fs::OpenOptions::new().create(true).append(true).mode_0600().open(path).ok();
-        Sink { file, lost: 0 }
+        Sink { file, lost: 0, forward: std::env::var("AGENTBOUND_AUDIT_SOCKET").ok().or(Some("/run/agentbound/audit.sock".into())), unforwarded: 0 }
     }
+    /// Durable local append first (the component-side buffer), then synchronous forward to agentbound-audit.
+    /// `lost` counts events that reached neither; `unforwarded` counts local-only events awaiting the daemon.
     pub fn emit(&mut self, ev: &Value) {
-        let mut line = crate::json::canonical(ev); line.push(b'\n');
-        match self.file.as_mut().and_then(|f| f.write_all(&line).and_then(|_| f.sync_data()).ok()) { Some(()) => {}, None => self.lost += 1 }
+        let mut ev = ev.clone(); ev.set("event_id", Value::s(&crate::sig::object_digest(&ev)));
+        let mut line = crate::json::canonical(&ev); line.push(b'\n');
+        let local = self.file.as_mut().and_then(|f| f.write_all(&line).and_then(|_| f.sync_data()).ok()).is_some();
+        let fwd = self.forward.as_deref().and_then(|p| crate::wire::connect(p).ok()).and_then(|c| c.call(&crate::wire::request("emit", ev.get("event_id").unwrap().as_str().unwrap(), ev.clone())).ok()).map(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).unwrap_or(false);
+        if !local && !fwd { self.lost += 1 } else if !fwd { self.unforwarded += 1 }
     }
 }
 trait Mode0600 { fn mode_0600(&mut self) -> &mut Self; }
