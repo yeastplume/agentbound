@@ -111,7 +111,7 @@ pub fn run(p: ChildPlan) -> ! {
     loop {
         if TERM.swap(false, std::sync::atomic::Ordering::SeqCst) { unsafe { libc::kill(-1, libc::SIGTERM) }; }
         let mut st = 0; let r = unsafe { libc::wait(&mut st) };
-        if r == pid { code = if libc::WIFEXITED(st) { libc::WEXITSTATUS(st) } else { 128 + libc::WTERMSIG(st) }; unsafe { libc::kill(-1, libc::SIGKILL) }; }
+        if r == pid { code = if libc::WIFEXITED(st) { libc::WEXITSTATUS(st) } else { 128 + libc::WTERMSIG(st) }; write_all_fd(2, format!("agentbound-init: workload exited status={code} raw={st}\n").as_bytes()); unsafe { libc::kill(-1, libc::SIGKILL) }; }
         if r < 0 && errno() == libc::ECHILD { break; }
         if r < 0 && errno() != libc::EINTR { break; }
     }

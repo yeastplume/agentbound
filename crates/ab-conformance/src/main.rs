@@ -33,7 +33,7 @@ impl Rig {
 
 fn main() {
     let mut g = Rig { rows: vec![], as_user: "alice".into() };
-    sh("rm -f /var/lib/agentbound/workspaces/finance/probe-was-here");
+    sh("rm -f /var/lib/agentbound/workspaces/finance/*");
     let base = r#"{"schema_version":"agentbound.session-request.v0.1","agent_principal_id":"agent:finance-agent","task_purpose_id":"task:redwood-analysis","requested_runtime":"runtime:scripted-loop","requested_resources":["resource:workspace-finance"],"initiator_credential_ref":"authn:alice-session-0001","approval_references":[]}"#;
     let eng = |s: &str| base.replace("task:redwood-analysis", "task:fix-issue-1234").replace("agent:finance-agent", "agent:engineering-agent").replace("workspace-finance", "workspace-eng").replace("\"approval_references\":[]", &format!("\"approval_references\":[{s}]"));
 
