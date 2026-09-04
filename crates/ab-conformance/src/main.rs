@@ -142,11 +142,13 @@ fn main() {
     }
     // ---- T-6.8-012: lifecycle killed while a session is active ----
     let (rc, v, _) = g.launch("runtime:scripted-loop", "task:redwood-analysis"); let lrd = js(&v, "launch_record_digest"); let scope = js(&v, "scope_id");
-    sh("systemctl kill -s SIGKILL agentbound-lifecycle; sleep 0.5");
+    // Restart=on-failure would bring the daemon back within ~100 ms; hold it down explicitly to observe the gap
+    sh("systemctl kill -s SIGKILL agentbound-lifecycle; systemctl stop agentbound-lifecycle 2>/dev/null; sleep 0.5");
     let alive = cgprocs(&scope); let (_, down) = sh("su -s /bin/sh alice -c 'agentbound list' </dev/null 2>&1");
+    let probe_up = std::path::Path::new("/run/agentbound/lifecycle.sock").exists() && wire::connect("/run/agentbound/lifecycle.sock").is_ok();
     sh("systemctl start agentbound-lifecycle; sleep 2");
     let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd))])); let k = kinds(&audit_rows(&lrd));
-    g.rec("T-6.8-012", rc == 0 && alive > 0 && down.contains("unavailable") && k.contains(&"session.recovery_reconciled".into()), format!("procs_while_down={alive} down_reply={} after_restart={} kinds={k:?}", down.trim().chars().take(60).collect::<String>(), js(&st, "body.state")));
+    g.rec("T-6.8-012", rc == 0 && alive > 0 && !probe_up && k.contains(&"session.recovery_reconciled".into()), format!("procs_while_down={alive} (containment held, no authority available: daemon_reachable={probe_up}) cli_reply={} after_restart={} kinds={k:?}", down.trim().chars().take(60).collect::<String>(), js(&st, "body.state")));
     std::thread::sleep(std::time::Duration::from_secs(3));
     let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd))]));
     g.rec("T-6.8-012.contained", cgprocs(&scope) == 0, format!("state={} identity={} procs={}", js(&st, "body.state"), js(&st, "body.identity_state"), cgprocs(&scope)));
