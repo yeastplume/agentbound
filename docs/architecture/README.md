@@ -15,6 +15,7 @@ Decision status (is the architecture settled?) and specification completeness (a
 | [Session lifecycle and failure states](session-lifecycle.md) | 0.7 | frozen (WP0); WP1 findings applied | complete; LC-2 answered by WP1 |
 | [Execution-identity lifecycle](execution-identity-lifecycle.md) | 0.7 | frozen (WP0); WP1 findings applied | complete; ID-1 answered by WP1 |
 | [Component interfaces (skeleton)](component-interfaces.md) | 0.3 | frozen (WP0); security-relevant decisions | wire formats and versioning negotiation deferred to WP1 by design |
+| [Component wire formats](component-wire-formats.md) | 0.1 | draft (WP2) | defines the message schemas, error payload, event schema, and versioning deferred by component interfaces §10 |
 | [Test catalogue](test-catalogue.md) | 0.7 | frozen (WP0); pre-registration; WP1 findings applied | load profiles, deadlines, seeds fixed; fixtures and commands are WP1 outputs by design |
 | [Invariant-to-test traceability matrix](traceability-matrix.md) | 0.7 | frozen (WP0); WP1 finding applied | complete; requirement-coverage check performed (§8) |
 | [Open-question disposition register](open-question-register.md) | 0.5 | frozen (WP0) | all 32 WP0 questions disposed: 28 answered in their owning documents, 4 verified in WP1 (VM-1 took its pre-registered fallback; ADR-0003 revised and re-accepted) |
