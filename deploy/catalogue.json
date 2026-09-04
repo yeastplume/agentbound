@@ -73,6 +73,16 @@
   }
  },
  "invocation_profiles": {
+  "profile:probe": {
+   "argv": [
+    "/bin/sh",
+    "/image/probe.sh"
+   ],
+   "env": [
+    "PATH=/bin:/usr/bin",
+    "HOME=/workspace"
+   ]
+  },
   "profile:scripted-loop": {
    "argv": [
     "/bin/sh",
@@ -142,7 +152,8 @@
    ],
    "runtimes": [
     "runtime:sh",
-    "runtime:scripted-loop"
+    "runtime:scripted-loop",
+    "runtime:probe"
    ]
   }
  },
@@ -222,7 +233,7 @@
   },
   "pids": {
    "enforcement_owner": "cgroup",
-   "limit": 128,
+   "limit": 64,
    "status": "enforced",
    "unit": "processes"
   },
@@ -252,6 +263,10 @@
   }
  },
  "runtimes": {
+  "runtime:probe": {
+   "artifact_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+   "invocation_profile": "profile:probe"
+  },
   "runtime:scripted-loop": {
    "artifact_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
    "invocation_profile": "profile:scripted-loop"
@@ -315,7 +330,8 @@
    },
    "runtimes": [
     "runtime:sh",
-    "runtime:scripted-loop"
+    "runtime:scripted-loop",
+    "runtime:probe"
    ],
    "version": "task:v1"
   },
@@ -327,7 +343,8 @@
    ],
    "runtimes": [
     "runtime:sh",
-    "runtime:scripted-loop"
+    "runtime:scripted-loop",
+    "runtime:probe"
    ],
    "version": "task:v3"
   }

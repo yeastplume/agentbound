@@ -31,8 +31,9 @@ if [ ! -x $img/bin/sh ]; then
   install -d $img/bin $img/usr/bin $img/lib $img/lib64 $img/sbin $img/image
   cp /bin/busybox $img/bin/busybox
   for a in sh ls cat echo sleep id ps mount touch cp rm mkdir ln env true false kill sync dd head tail grep readlink stat uname hostname; do ln -sf busybox $img/bin/$a; done
-  printf '#!/bin/sh\nwhile :; do sleep 1; done\n' > $img/loop.sh; chmod 0755 $img/loop.sh
+  printf "#!/bin/sh\nwhile :; do sleep 1; done\n" > $img/loop.sh; chmod 0755 $img/loop.sh
 fi
+install -m 0755 crates/ab-conformance/probe/probe.sh $img/probe.sh
 # CLI users may invoke the constructor as root, nothing else
 printf '%%agentbound ALL=(root) NOPASSWD: /usr/local/bin/agentbound-launch\n' > /etc/sudoers.d/agentbound; chmod 0440 /etc/sudoers.d/agentbound
 puid=$(id -u agentbound-policy)
