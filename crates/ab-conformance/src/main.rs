@@ -67,11 +67,11 @@ fn main() {
     // ---- request-layer rejections (T-6.5 / T-6.6 / T-6.8-013) ----
     let cases: Vec<(&str, String, &str)> = vec![
         ("T-6.5-001.unknown", base.replace("\"approval_references\":[]", "\"approval_references\":[],\"uid\":0"), "unknown-member"),
-        ("T-6.5-001.dup", base.replace("\"approval_references\":[]", "\"approval_references\":[],\"approval_references\":[]"), "duplicate"),
+        ("T-6.5-001.dup", base.replace("\"approval_references\":[]", "\"approval_references\":[],\"approval_references\":[]"), "duplicate-member"),
         ("T-6.5-007", base.replace("\"approval_references\":[]", "\"approval_references\":[],\"mount\":\"/etc\""), "unknown-member"),
         ("T-6.5-006", base.replace("agentbound.session-request.v0.1", "agentbound.session-request.v0.0"), "version"),
-        ("T-6.5-002.deep", format!("{{\"a\":{}1{}}}", "[".repeat(10), "]".repeat(10)), "depth"),
-        ("T-6.5-002.big", format!("{{\"schema_version\":\"{}\"}}", "x".repeat(20000)), "size"),
+        ("T-6.5-002.deep", format!("{{\"a\":{}1{}}}", "[".repeat(10), "]".repeat(10)), "depth-limit"),
+        ("T-6.5-002.big", format!("{{\"schema_version\":\"{}\"}}", "x".repeat(20000)), "size-limit"),
         ("T-6.6-001.principal", base.replace("agent:finance-agent", "agent:nobody"), "unknown_principal"),
         ("T-6.6-001.authority", base.replace("resource:workspace-finance", "resource:workspace-eng"), "authority_exceeded"),
         ("T-6.6-003", eng(""), "approval_missing"),

@@ -21,7 +21,8 @@ fn main() {
     let ok = match a.get(1).map(|s| s.as_str()) {
         Some("request") => {
             let bytes = std::fs::read(&a[2]).expect("request file");
-            let req = json::parse(&bytes, &REQUEST_LIMITS).unwrap_or_else(|e| { eprintln!("request: {e}"); std::process::exit(2) });
+            // client-side structural pre-check with the same limits the policy applies; the reject is structured like a policy reply
+            let req = match json::parse(&bytes, &REQUEST_LIMITS) { Ok(v) => v, Err(e) => { let rule = match e { json::JsonError::DuplicateMember(_) => "duplicate-member", json::JsonError::TooDeep(_) => "depth-limit", json::JsonError::TooLarge(_) => "size-limit", _ => "request_syntax" }; out(&wire::reply_err("reject", rule, &e.to_string())); std::process::exit(1) } };
             let r = call(&pol, "submit_request", Value::obj(vec![("request", req)]));
             if !out(&r) { std::process::exit(1) }
             let az = r.get("body").and_then(|b| b.get("authorization_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
