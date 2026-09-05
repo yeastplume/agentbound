@@ -15,18 +15,18 @@ me=$(id -u); w=work-$me; rm -rf $w 2>/dev/null; git init -q $w; cd $w
 # T-6.1-007.sibling: another session's clone is not modifiable by this identity
 for d in /workspace/work-*; do [ "$d" = "/workspace/$w" ] && continue; touch $d/x 2>/dev/null && r T-6.1-007.sibling FAIL "wrote $d" || r T-6.1-007.sibling PASS "sibling $d not writable"; break; done
 echo "fix for issue 1234 $(date +%s)" > fix.txt; git add fix.txt; git -c commit.gpgsign=false commit -q -m "fix issue 1234"
-git remote | grep -q . && r GS-1 FAIL "remote present" || r GS-1 PASS "no remote"
+git remote | grep -q . && r T-6.3-002.no-remote FAIL "remote present" || r T-6.3-002.no-remote PASS "no git remote or credential in the worker repository (WP1 GS-1)"
 git bundle create -q /tmp/fix.bundle HEAD 2>/dev/null || git bundle create /tmp/fix.bundle HEAD >/dev/null 2>&1
-tip=$(git rev-parse HEAD); r bundle PASS "tip=$tip bytes=$(stat -c %s /tmp/fix.bundle)"
+tip=$(git rev-parse HEAD); r D-10.bundle FIXTURE "tip=$tip bytes=$(stat -c %s /tmp/fix.bundle)"
 # D-10/D-13: the granted typed operation
 ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging "{\"expect_old\":null,\"ref_tail\":\"fix-1234\",\"repository_id\":\"repo:demo\",\"tip\":\"$tip\"}" /tmp/fix.bundle > /tmp/out 2>&1; rc=$?
 cat /tmp/out; [ $rc = 0 ] && r D-10 PASS "push_staging accepted rc=0" || r D-10 FAIL "rc=$rc"
 # GS-4 refusal set through the gateway: other ref names, traversal, other session namespace, force operation
 for tail in "../main" "main:refs/heads/main" "+fix" "fix.lock" "a b" "" "refs/heads/main"; do id=$(echo "$tail" | tr " " _);
-  ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging "{\"expect_old\":null,\"ref_tail\":\"$tail\",\"repository_id\":\"repo:demo\",\"tip\":\"$tip\"}" /tmp/fix.bundle >/tmp/o 2>&1 && r "GS-4[$id]" FAIL "accepted" || { rule=$(grep -o '"rule":"[^"]*"' /tmp/o | head -1); [ -n "$rule" ] && r "GS-4[$id]" PASS "$rule" || r "GS-4[$id]" FAIL "no gateway verdict: $(head -c 120 /tmp/o)"; }
+  ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging "{\"expect_old\":null,\"ref_tail\":\"$tail\",\"repository_id\":\"repo:demo\",\"tip\":\"$tip\"}" /tmp/fix.bundle >/tmp/o 2>&1 && r "T-6.4-011.gs4[$id]" FAIL "accepted" || { rule=$(grep -o '"rule":"[^"]*"' /tmp/o | head -1); [ -n "$rule" ] && r "T-6.4-011.gs4[$id]" PASS "$rule" || r "T-6.4-011.gs4[$id]" FAIL "no gateway verdict: $(head -c 120 /tmp/o)"; }
 done
 ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging "{\"expect_old\":null,\"ref_tail\":\"x\",\"repository_id\":\"repo:other\",\"tip\":\"$tip\"}" /tmp/fix.bundle >/tmp/o 2>&1 && r T-6.4-011 FAIL accepted || { rule=$(grep -o '"rule":"[^"]*"' /tmp/o | head -1); [ -n "$rule" ] && r T-6.4-011 PASS "$rule" || r T-6.4-011 FAIL "no verdict: $(head -c 120 /tmp/o)"; }
-ab-gwclient /run/gateway.sock op:git-push-staging-force git.push_staging_force "{\"expect_old\":null,\"ref_tail\":\"fix-1234\",\"repository_id\":\"repo:demo\",\"tip\":\"$tip\"}" /tmp/fix.bundle >/tmp/o 2>&1 && r GS-8.force FAIL accepted || { rule=$(grep -o '"rule":"[^"]*"' /tmp/o | head -1); [ -n "$rule" ] && r GS-8.force PASS "$rule" || r GS-8.force FAIL "no verdict: $(head -c 120 /tmp/o)"; }
+ab-gwclient /run/gateway.sock op:git-push-staging-force git.push_staging_force "{\"expect_old\":null,\"ref_tail\":\"fix-1234\",\"repository_id\":\"repo:demo\",\"tip\":\"$tip\"}" /tmp/fix.bundle >/tmp/o 2>&1 && r T-6.4-011.force FAIL accepted || { rule=$(grep -o '"rule":"[^"]*"' /tmp/o | head -1); [ -n "$rule" ] && r T-6.4-011.force PASS "$rule" || r T-6.4-011.force FAIL "no verdict: $(head -c 120 /tmp/o)"; }
 # T-6.4-006 / T-6.4-007: descriptor transfer and inherited connection
 ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --scm-rights >/tmp/o 2>&1 && r T-6.4-006 FAIL accepted || { grep -q descriptor_transfer /tmp/o && r T-6.4-006 PASS "$(grep -o '"rule":"[^"]*"' /tmp/o | head -1)" || r T-6.4-006 FAIL "$(head -c 160 /tmp/o | tr '\n' ' ')"; }
 ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --fork >/tmp/o 2>&1 && r T-6.4-007 FAIL accepted || { grep -q process_mismatch /tmp/o && r T-6.4-007 PASS "$(grep -o '"rule":"[^"]*"' /tmp/o | head -1)" || r T-6.4-007 FAIL "$(head -c 160 /tmp/o | tr '\n' ' ')"; }
@@ -48,11 +48,11 @@ ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging "{\"expect_ol
 # T-6.9-006: connection-count bound — 20 concurrent held connections against connection_count 16
 i=0; while [ $i -lt 20 ]; do (sleep 6 | ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --hold > /tmp/cc.$i 2>&1) & i=$((i+1)); done; sleep 3
 refused=$(grep -l "closed by gateway\|connect errno" /tmp/cc.* 2>/dev/null | wc -l); ok=$(grep -l '"ok":true' /tmp/cc.* 2>/dev/null | wc -l)
-[ "$ok" -le 16 ] && [ "$refused" -ge 4 ] && r T-6.9-006 PASS "held=$ok refused=$refused (limit 16)" || r T-6.9-006 FAIL "held=$ok refused=$refused"
+[ "$ok" -le 16 ] && [ "$refused" -ge 4 ] && r T-6.9-006 WEAK "held=$ok refused=$refused (limit 16)" || r T-6.9-006 FAIL "held=$ok refused=$refused"
 sleep 4
 # T-6.4-014: hold an established connection open; the driver revokes the session while it is held; the second packet must be refused
 # the driver (host) writes /workspace/revoked-<uid> after signalling revocation; the held client then sends its second packet
 rm -f /workspace/held-*.out /workspace/revoked-* 2>/dev/null; ( (i=0; while [ ! -f /workspace/revoked-$me ] && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done) | ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --hold > /workspace/held-$me.out 2>&1) &
-sleep 1; r GW-HELD PASS "connection held for revocation test"
+sleep 1; r GW-HELD FIXTURE "connection held for revocation test"
 r GW-END PASS done
 while :; do sleep 1; done

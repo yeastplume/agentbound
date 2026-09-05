@@ -45,7 +45,7 @@ ls /sys/class/net 2>/dev/null; ok T-6.2-009 $? "ls /sys/class/net"
 busybox nc -l -p 1 2>/dev/null & sleep 0.2; kill %1 2>/dev/null; wait 2>/dev/null
 cat /proc/net/dev 2>/dev/null | grep -qv '^ *lo\|Inter\|face' ; ok T-6.2-002.netdev $? "interfaces other than lo"
 # T-6.2-005 / D-07: double-fork orphan (reaped by init later; lifecycle proves at termination)
-(sleep 1000 &) ; r T-6.2-005 PASS "orphan spawned"
+(sleep 1000 &) ; r T-6.2-005 FIXTURE "orphan spawned; asserted by D-07 at termination"
 # T-6.9-001: pid fan-out bound (TasksMax from manifest)
 # fork failures (EAGAIN at TasksMax) abort a busybox sh loop, so fan out from a subshell and count survivors
 ( i=0; while [ $i -lt 400 ]; do sleep 1000 & i=$((i+1)); done ) 2>/dev/null

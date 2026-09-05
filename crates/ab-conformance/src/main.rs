@@ -8,6 +8,21 @@ use std::process::Command;
 
 struct Row { id: String, verdict: &'static str, evidence: String }
 struct Rig { rows: Vec<Row>, as_user: String }
+/// Verdict classes (WP3.1 harness integrity). Only `PASS` counts toward catalogue coverage.
+/// `WEAK`: the assertion holds but is weaker than the catalogue row's intent (stated in evidence).
+/// `RECORDED`: a 1A partial / N-A verdict re-asserted under 1B by the property that would have changed.
+/// `FIXTURE`: setup or completion marker, never counted. `FAIL`: assertion false or measurement missing.
+const CLASSES: [&str; 5] = ["PASS", "WEAK", "RECORDED", "FAIL", "FIXTURE"];
+/// The catalogue ID a runner row belongs to: `T-6.4-003.only` → `T-6.4-003`; `GS-4[+fix]` → `GS-4`; `D-06.storage-principal` → `D-06`.
+fn catalogue_id(row: &str) -> String {
+    // strip a bracketed parameter, then keep the id prefix: `T-6.4-003.only` → `T-6.4-003`; `D-06.storage-principal` → `D-06`; `GS-4[+fix]` → `GS-4`; `D4.7-reconstruct` stays as is (not a catalogue id)
+    let base = row.split('[').next().unwrap_or(row);
+    if let Some(rest) = base.strip_prefix("T-") { let mut parts = rest.splitn(3, '.'); let a = parts.next().unwrap_or(""); let b = parts.next().unwrap_or(""); return format!("T-{a}.{b}"); }
+    base.split('.').next().unwrap_or(base).to_string()
+}
+#[cfg(test)]
+mod tests { #[test] fn ids() { for (r, c) in [("T-6.4-003.only", "T-6.4-003"), ("T-6.4-010.stream", "T-6.4-010"), ("T-6.1-001.init-environ", "T-6.1-001"), ("D-06.storage-principal", "D-06"), ("D-02.1B", "D-02"), ("GS-4[../main]", "GS-4"), ("F-C-09.record", "F-C-09"), ("T-6.8-setup", "T-6.8-setup"), ("D4.7-reconstruct", "D4"), ("D7-9.diagnostics", "D7-9"), ("T-6.5-001.dup", "T-6.5-001")] { assert_eq!(super::catalogue_id(r), c, "{r}"); } } }
+fn expected_ids() -> Vec<(String, String)> { let t = include_str!("../expected-ids.txt"); t.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).map(|l| { let mut it = l.split_whitespace(); (it.next().unwrap().to_string(), it.next().unwrap_or("").to_string()) }).collect() }
 
 fn sh(cmd: &str) -> (i32, String) { let o = Command::new("sh").arg("-c").arg(cmd).output().unwrap(); (o.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))) }
 fn jget<'a>(v: &'a Value, path: &str) -> Option<&'a Value> { let mut c = Some(v); for k in path.split('.') { c = c.and_then(|x| x.get(k)); } c }
@@ -20,7 +35,12 @@ fn sig(lrd: &str, trigger: &str) -> Value { lc("revocation_signal", Value::obj(v
 fn cgprocs(scope: &str) -> i32 { sh(&format!("cat /sys/fs/cgroup/system.slice/{scope}/cgroup.procs 2>/dev/null | wc -l")).1.trim().parse().unwrap_or(0) }
 
 impl Rig {
-    fn rec(&mut self, id: &str, pass: bool, ev: impl Into<String>) { let ev = ev.into().replace('\n', " "); println!("{} {} {}", if pass { "PASS" } else { "FAIL" }, id, ev.chars().take(160).collect::<String>()); self.rows.push(Row { id: id.into(), verdict: if pass { "PASS" } else { "FAIL" }, evidence: ev }); }
+    fn put(&mut self, id: &str, verdict: &'static str, ev: impl Into<String>) { let ev = ev.into().replace('\n', " "); println!("{verdict} {id} {}", ev.chars().take(160).collect::<String>()); self.rows.push(Row { id: id.into(), verdict, evidence: ev }); }
+    fn rec(&mut self, id: &str, pass: bool, ev: impl Into<String>) { self.put(id, if pass { "PASS" } else { "FAIL" }, ev) }
+    /// Assertion holds but is weaker than the catalogue intent; a false assertion is still FAIL.
+    fn weak(&mut self, id: &str, pass: bool, ev: impl Into<String>) { self.put(id, if pass { "WEAK" } else { "FAIL" }, ev) }
+    fn recorded(&mut self, id: &str, pass: bool, ev: impl Into<String>) { self.put(id, if pass { "RECORDED" } else { "FAIL" }, ev) }
+    fn fixture(&mut self, id: &str, ok: bool, ev: impl Into<String>) { self.put(id, if ok { "FIXTURE" } else { "FAIL" }, ev) }
     fn cli(&self, args: &str) -> (i32, Value, String) { let (rc, out) = sh(&format!("su -s /bin/sh {} -c 'agentbound {}' </dev/null 2>&1", self.as_user, args)); (rc, parse(&out), out) }
     fn request(&self, file: &str, extra: &str) -> (i32, Value, String) { self.cli(&format!("request {file} {extra}")) }
     fn write_req(&self, name: &str, body: &str) -> String { let p = format!("/tmp/conf-{name}.json"); std::fs::write(&p, body).unwrap(); sh(&format!("chmod 644 {p}")); p }
@@ -68,8 +88,8 @@ fn main() {
     let console = js(&v, "console"); std::thread::sleep(std::time::Duration::from_secs(8));
     let probe = std::fs::read_to_string(&console).unwrap_or_default();
     let mut seen_end = false;
-    for l in probe.lines().filter(|l| l.starts_with("PROBE ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "PROBE-END" { seen_end = true; continue; } g.rec(p[1], p[2] == "PASS", p.get(3).copied().unwrap_or("")); }
-    g.rec("PROBE-COMPLETE", seen_end, format!("probe lines={}", probe.lines().count()));
+    for l in probe.lines().filter(|l| l.starts_with("PROBE ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "PROBE-END" { seen_end = true; continue; } g.put(p[1], CLASSES.iter().find(|c| **c == p[2]).copied().unwrap_or("FAIL"), p.get(3).copied().unwrap_or("")); }
+    g.fixture("PROBE-COMPLETE", seen_end, format!("probe lines={}", probe.lines().count()));
     let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd))]));
     g.rec("D-01.status", js(&st, "body.state") == "active" && js(&st, "body.identity_state") == "in-use", js(&st, "body"));
     let procs = cgprocs(&scope); g.rec("D-06", procs >= 2, format!("scope procs={procs} (init + workload + orphan/fan-out survivors)"));
@@ -156,13 +176,13 @@ fn main() {
     g.rec("T-6.5-009", q.contains("quarantined") && !q.contains("in-use") && early.trim() == "0", format!("allocator latest states: {}; free-before-floor violations={}", q.trim(), early.trim()));
 
     // ---- revocation behaviours (T-6.8) ----
-    let (rc, v, _) = g.launch("runtime:scripted-loop", "task:quiesce-cases"); let lrd = js(&v, "launch_record_digest"); let scope = js(&v, "scope_id"); g.rec("T-6.8.setup", rc == 0, &lrd);
+    let (rc, v, _) = g.launch("runtime:scripted-loop", "task:quiesce-cases"); let lrd = js(&v, "launch_record_digest"); let scope = js(&v, "scope_id"); g.fixture("T-6.8-setup", rc == 0, &lrd);
     let r = sig(&lrd, "policy_service_unavailable"); g.rec("T-6.8-006", js(&r, "body.behaviour") == "continue-degraded" && js(&r, "body.state") == "active", js(&r, "body"));
     let r = sig(&lrd, "audit_pipeline_degraded_below_stop_threshold"); g.rec("T-6.8-011", js(&r, "body.behaviour") == "continue-degraded", js(&r, "body"));
     let r = sig(&lrd, "reclassification"); g.rec("T-6.8-007", js(&r, "body.behaviour") == "quiesce" && js(&r, "body.state") == "quiescing", js(&r, "body"));
     let (_, frozen) = sh(&format!("cat /sys/fs/cgroup/system.slice/{scope}/cgroup.events")); g.rec("F-T-02", frozen.contains("frozen 1"), frozen.trim().to_string());
     let r = sig(&lrd, "authority_revoked"); g.rec("T-6.8-003", js(&r, "body.behaviour") == "terminate" && js(&r, "body.state") == "cleaned/sealed", js(&r, "body"));
-    let k = kinds(&audit_rows(&lrd)); g.rec("T-6.8.audit", k.iter().filter(|x| *x == "session.revocation_received").count() == 4 && k.contains(&"session.degraded".into()) && k.contains(&"session.quiesce_started".into()), format!("{k:?}"));
+    let k = kinds(&audit_rows(&lrd)); g.rec("T-6.8-006.audit", k.iter().filter(|x| *x == "session.revocation_received").count() == 4 && k.contains(&"session.degraded".into()) && k.contains(&"session.quiesce_started".into()), format!("{k:?}"));
     for (id, trig, want) in [("T-6.8-001", "initiator_disabled", "terminate"), ("T-6.8-002", "approval_expired", "quiesce"), ("T-6.8-004", "catalogue_withdrawn", "quiesce"), ("T-6.8-005", "task_cancelled", "terminate")] {
         let (rc, v, _) = g.launch("runtime:scripted-loop", "task:quiesce-cases"); let l = js(&v, "launch_record_digest");
         let r = sig(&l, trig); g.rec(id, rc == 0 && js(&r, "body.behaviour") == want, format!("trigger={trig} behaviour={} state={}", js(&r, "body.behaviour"), js(&r, "body.state")));
@@ -198,8 +218,8 @@ fn main() {
     g.rec("D-10.launch", rc == 0 && !glrd.is_empty(), format!("rc={rc} lrd={glrd} topology=local-socket"));
     let gcon = js(&v, "console"); std::thread::sleep(std::time::Duration::from_secs(24));
     let worker = std::fs::read_to_string(&gcon).unwrap_or_default(); let mut gend = false;
-    for l in worker.lines().filter(|l| l.starts_with("GW ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "GW-END" { gend = true; continue; } g.rec(&format!("{}", p[1]), p[2] == "PASS", p.get(3).copied().unwrap_or("")); }
-    g.rec("GW-COMPLETE", gend, format!("worker lines={}", worker.lines().count()));
+    for l in worker.lines().filter(|l| l.starts_with("GW ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "GW-END" { gend = true; continue; } g.put(p[1], CLASSES.iter().find(|c| **c == p[2]).copied().unwrap_or("FAIL"), p.get(3).copied().unwrap_or("")); }
+    g.fixture("GW-COMPLETE", gend, format!("worker lines={}", worker.lines().count()));
     let rec = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&glrd))]));
     let sid = js(&rec, "body.binding.authorization_manifest.session_trace.session_id").trim_start_matches("session:").to_string(); let trace = js(&rec, "body.binding.authorization_manifest.session_trace.trace_id");
     // D-13: staging ref present at the session's tip, main unchanged, host hook logged the trace
@@ -210,7 +230,7 @@ fn main() {
     g.rec("D-13.trace", hook.lines().any(|l| l.contains(&format!("agentbound-trace={trace}")) && l.contains(&sid)), format!("host hook log carries trace {trace}"));
     // GS-6: host protected-branch rule composes even if the gateway were bypassed
     let (rc6, o6) = sh("su -s /bin/sh agentbound-gateway -c 'cd /tmp && rm -rf gs6 && git clone -q -b main /var/lib/agentbound/git/demo.git gs6 && cd gs6 && git -c user.name=x -c user.email=x@x commit -q --allow-empty -m bypass && git push -q origin HEAD:refs/heads/main' 2>&1");
-    g.rec("GS-6", rc6 != 0 && o6.contains("protected"), format!("direct push to main as gateway user refused by host hook: {}", o6.lines().find(|l| l.contains("protected")).unwrap_or("").trim()));
+    g.rec("T-6.4-012.host-hook", rc6 != 0 && o6.contains("protected"), format!("direct push to main as gateway user refused by host hook: {}", o6.lines().find(|l| l.contains("protected")).unwrap_or("").trim()));
     // ---- T-6.4-001/002/003/004/010: boundary from inside (root exec into the session's pidns/mntns/netns via nsenter) ----
     let (_, ipid) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{gscope}/cgroup.procs")); let ipid = ipid.trim().to_string();
     let ns = |cmd: &str| sh(&format!("nsenter -t {ipid} -m -n -p -i -u -- /bin/sh -c '{cmd}' 2>&1"));
@@ -276,11 +296,11 @@ fn main() {
     // of the credential pid and the establishing pid. Evidence: a `process_mismatch` whose detail names both instances.
     let (_, pr) = sh("grep -c 'process_mismatch' /var/lib/agentbound/gateway/audit-gateway.jsonl");
     let (_, pr_detail) = sh("grep 'process_mismatch' /var/lib/agentbound/gateway/audit-gateway.jsonl | grep -o '\"detail\":\"[^\"]*\"' | sort | uniq -c | sort -rn | head -3 | tr '\\n' ';'");
-    g.rec("T-6.4-009", pr.trim().parse::<i32>().unwrap_or(0) >= 1 && pr_detail.contains("credential pid"), format!("process-instance denials={}; classes: {} (pidfs inode is the instance key; start time corroborating; a same-tick PID reuse is not reproducible on demand — the check is inode-based so the tick is irrelevant)", pr.trim(), pr_detail.trim()));
+    g.weak("T-6.4-009", pr.trim().parse::<i32>().unwrap_or(0) >= 1 && pr_detail.contains("credential pid"), format!("process-instance denials={}; classes: {} (pidfs inode is the instance key; start time corroborating; a same-tick PID reuse is not reproducible on demand — the check is inode-based so the tick is irrelevant)", pr.trim(), pr_detail.trim()));
     // ---- T-6.4-012: upstream identity — the operation's scoped repository resolves to the catalogue URL only; a caller cannot redirect it ----
     let redir_args = format!(r#"{{"expect_old":null,"ref_tail":"x","repository_id":"repo:demo","tip":"{}","url":"/tmp/evil.git"}}"#, "3".repeat(40));
     let (_, redir) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging {} /image/probe.sh' 2>&1 | grep -o \"rule[^,]*\" | head -2 | tr \"\\n\" \" \"", redir_args.replace('"', "\\\"")));
-    g.rec("T-6.4-012", redir.contains("args_schema"), format!("caller-supplied url ignored; bundle path enforced: {}", redir.replace('\n', " ")));
+    g.weak("T-6.4-012", redir.contains("args_schema"), format!("caller-supplied url ignored; bundle path enforced: {}", redir.replace('\n', " ")));
     // ---- D7 item 9: a denial names requirement, authorization, launch record and trace of *this* session only ----
     let (_, den) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging-force git.push_staging_force {{}}' 2>&1 | grep \"^{{\" | head -c 1200"));
     let dv = parse(den.lines().find(|l| l.contains("\"rule\"")).unwrap_or("")); let az2 = js(&dv, "body.authorization_id");
@@ -306,21 +326,40 @@ fn main() {
     // ---- 1A partial / N-A rows re-run under local-socket (recorded verdicts; the driver asserts the property that changed) ----
     // D-02 / T-6.1-003: still no PTY or attach interface at 1B; the descriptor allowlist is unchanged (0/1/2 + one gateway socket mount) — remains partial by design
     let (_, alw) = sh(&format!("grep -c gateway_socket /dev/null; echo {}", rec.get("body").and_then(|b| b.get("binding")).and_then(|b| b.get("launch_binding")).and_then(|b| b.get("descriptor_allowlist")).and_then(|a| a.as_arr()).map(|a| a.len()).unwrap_or(0)));
-    g.rec("D-02.1B", alw.trim().ends_with('4'), format!("descriptor allowlist entries={} (stdin, stdout, stderr, gateway_socket mount); no attach/PTY path exists to deny — partial stays recorded", alw.trim()));
-    g.rec("T-6.1-003.1B", alw.trim().ends_with('4'), "no PTY projected under local-socket either; N/A stays recorded");
+    g.recorded("D-02.1B", alw.trim().ends_with('4'), format!("descriptor allowlist entries={} (stdin, stdout, stderr, gateway_socket mount); no attach/PTY path exists to deny — partial stays recorded", alw.trim()));
+    g.recorded("T-6.1-003.1B", alw.trim().ends_with('4'), "no PTY projected under local-socket either; N/A stays recorded");
     // T-6.1-013: broker socket reuse — the sibling's projected socket path is not present in this mount namespace; the gateway directory is not reachable
     // T-6.1-013: broker socket reuse — the previous session's socket node is gone from the host and its mount is not in a new session; connecting to a stale path fails
     let (_, stale) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}; python3 -c \"import socket\ns=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET)\ntry:\n s.connect('/run/agentbound/gw/{}.sock'); print('connected')\nexcept OSError as e: print('err',e.errno)\"", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x"), js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
     g.rec("T-6.1-013", stale.starts_with('0') && stale.contains("err"), format!("sealed session's socket: nodes left={} connect={}", stale.lines().next().unwrap_or(""), stale.lines().last().unwrap_or("")));
     // T-6.2-008: the git-worker image has git + sh + the client only; no package loader; interpreter set is closed by the image
     let (_, img) = sh("ls /var/lib/agentbound/images/rootfs/usr/bin /var/lib/agentbound/images/rootfs/bin | grep -cE '^(python|perl|pip|npm|node|apt|dpkg|curl|wget)'");
-    g.rec("T-6.2-008.1B", img.trim() == "0", format!("loaders/interpreters beyond sh+git in image: {}", img.trim()));
+    g.recorded("T-6.2-008.1B", img.trim() == "0", format!("loaders/interpreters beyond sh+git in image: {}", img.trim()));
     // D-15: delegation — no child-session operation exists in the catalogue; a session cannot request a session (lifecycle/policy sockets unreachable: T-6.4-003)
     let (_, ops) = sh("python3 -c \"import json;c=json.load(open('/etc/agentbound/catalogue.json'));print([o for o in c['operations'] if 'deleg' in o or 'session' in o])\"");
-    g.rec("D-15.1B", ops.trim() == "[]", format!("delegation operations in catalogue: {} — residual stays recorded (no delegation path to narrow)", ops.trim()));
-    let pass = g.rows.iter().filter(|r| r.verdict == "PASS").count();
-    let mut md = format!("# Agentbound conformance run — 1A + 1B rows (machine output)\n\n- Host: {}\n- Kernel: {}\n- systemd: {}\n- git: {}\n- Date: {}\n- Rows: {} PASS / {} FAIL\n\n| Row | Verdict | Evidence |\n|---|---|---|\n", sh("hostname").1.trim(), sh("uname -r").1.trim(), sh("systemctl --version | head -1").1.trim(), sh("git --version").1.trim(), sh("date -u +%FT%TZ").1.trim(), pass, g.rows.len() - pass);
+    g.recorded("D-15.1B", ops.trim() == "[]", format!("delegation operations in catalogue: {} — residual stays recorded (no delegation path to narrow)", ops.trim()));
+    // ---- harness integrity: coverage of the frozen catalogue population, duplicates, provenance, class counts ----
+    let count = |c: &str| g.rows.iter().filter(|r| r.verdict == c).count();
+    let (pass, weak, recorded, fail, fixture) = (count("PASS"), count("WEAK"), count("RECORDED"), count("FAIL"), count("FIXTURE"));
+    let mut dup = std::collections::HashMap::<String, usize>::new(); for r in &g.rows { *dup.entry(r.id.clone()).or_default() += 1; }
+    let dups: Vec<String> = dup.iter().filter(|(_, n)| **n > 1).map(|(k, n)| format!("{k}×{n}")).collect();
+    let best = |cid: &str| -> &'static str { let mut b = "NOT-EXECUTED"; for r in &g.rows { if catalogue_id(&r.id) == cid { b = match (b, r.verdict) { (_, "FAIL") => "FAIL", ("FAIL", _) => "FAIL", (_, "PASS") => "PASS", ("PASS", _) => "PASS", (_, "WEAK") => "WEAK", ("WEAK", _) => "WEAK", (_, "RECORDED") => "RECORDED", (o, _) => o }; } } b };
+    let expected = expected_ids();
+    let mut cov: Vec<(String, String, &str)> = expected.iter().map(|(id, ms)| (id.clone(), ms.clone(), best(id))).collect();
+    let known: std::collections::HashSet<String> = expected.iter().map(|(i, _)| i.clone()).collect();
+    let extra: Vec<String> = { let mut e: Vec<String> = g.rows.iter().filter(|r| r.verdict != "FIXTURE").map(|r| catalogue_id(&r.id)).filter(|c| !known.contains(c)).collect(); e.sort(); e.dedup(); e };
+    let n_not = cov.iter().filter(|c| c.2 == "NOT-EXECUTED").count(); let n_cov_pass = cov.iter().filter(|c| c.2 == "PASS").count();
+    cov.sort_by(|a, b| a.0.cmp(&b.0));
+    let (_, commit) = sh("cd /root/wp2 && git rev-parse --short HEAD 2>/dev/null || cat /root/wp2/COMMIT 2>/dev/null || echo unknown");
+    let (_, bins) = sh("cd /usr/local/bin && sha256sum agentbound agentbound-launch agentbound-lifecycle agentbound-policy agentbound-audit agentbound-gateway ab-conformance 2>/dev/null | awk '{print $2\"=\"substr($1,1,16)}' | tr '\\n' ' '; sha256sum /var/lib/agentbound/images/rootfs/bin/ab-gwclient /var/lib/agentbound/images/rootfs/probe.sh /var/lib/agentbound/images/rootfs/git-worker.sh 2>/dev/null | awk '{n=split($2,a,\"/\"); print a[n]\"=\"substr($1,1,16)}' | tr '\\n' ' '");
+    let run_id = format!("run-{}", ab_common::sig::monotonic_ns());
+    let ok = fail == 0 && dups.is_empty() && n_not == 0 && extra.is_empty();
+    let mut md = format!("# Agentbound conformance run — 1A + 1B rows (machine output)\n\n- Host: {}\n- Kernel: {}\n- systemd: {}\n- git: {}\n- Date: {}\n- Run id: {run_id}\n- Repository commit: {}\n- Binary digests (sha256/16): {}\n- Expected population: {} catalogue ids (test-catalogue 1A+1B)\n- Assertions: {} PASS, {} WEAK, {} RECORDED, {} FAIL ({} fixtures excluded)\n- Catalogue coverage: {} PASS, {} WEAK, {} RECORDED, {} FAIL, **{} NOT-EXECUTED**\n- Duplicate row ids: {}\n- Row ids outside the catalogue: {}\n- **Run verdict: {}**\n\n## Catalogue coverage\n\n| Catalogue id | Milestone | Best verdict |\n|---|---|---|\n", sh("hostname").1.trim(), sh("uname -r").1.trim(), sh("systemctl --version | head -1").1.trim(), sh("git --version").1.trim(), sh("date -u +%FT%TZ").1.trim(), commit.trim(), bins.trim(), expected.len(), pass, weak, recorded, fail, fixture, n_cov_pass, cov.iter().filter(|c| c.2 == "WEAK").count(), cov.iter().filter(|c| c.2 == "RECORDED").count(), cov.iter().filter(|c| c.2 == "FAIL").count(), n_not, if dups.is_empty() { "none".to_string() } else { dups.join(", ") }, if extra.is_empty() { "none".to_string() } else { extra.join(", ") }, if ok { "PASS" } else { "FAIL (coverage or assertion)" });
+    for (id, ms, v) in &cov { md.push_str(&format!("| {id} | {ms} | {v} |\n")); }
+    md.push_str("\n## Rows\n\n| Row | Verdict | Evidence |\n|---|---|---|\n");
     for r in &g.rows { md.push_str(&format!("| {} | {} | {} |\n", r.id, r.verdict, r.evidence.replace('|', "\\|"))); }
     std::fs::write("/root/wp2/conformance-run.md", md).unwrap();
-    println!("\n{pass}/{} PASS; register at /root/wp2/conformance-run.md", g.rows.len());
+    for (id, _, v) in &cov { if *v == "NOT-EXECUTED" { println!("NOT-EXECUTED {id}"); } }
+    println!("\nassertions: {pass} PASS {weak} WEAK {recorded} RECORDED {fail} FAIL; catalogue: {n_cov_pass}/{} PASS, {n_not} not executed; dups={} extra={}; run verdict {}; register at /root/wp2/conformance-run.md", expected.len(), dups.len(), extra.len(), if ok { "PASS" } else { "FAIL" });
+    if !ok { std::process::exit(1); }
 }
