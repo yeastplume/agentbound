@@ -130,6 +130,55 @@ impl Conn {
     }
 }
 
+/// Result of one gateway-side packet receive (ADR-0002 Decision 2): raw bytes plus ancillary accounting.
+pub struct Packet { pub bytes: Vec<u8>, pub creds: Vec<Peer>, pub rights_fds: usize, pub truncated: bool }
+
+/// Gateway packet receive: `SO_PASSCRED` must already be enabled. Every control message is counted;
+/// any `SCM_RIGHTS` descriptors are closed immediately. The caller enforces "exactly one credential".
+pub fn recv_packet(fd: RawFd, max_len: usize) -> io::Result<Option<Packet>> {
+    let mut buf = vec![0u8; max_len + 1];
+    let mut iov = libc::iovec { iov_base: buf.as_mut_ptr() as *mut libc::c_void, iov_len: buf.len() };
+    let space = unsafe { libc::CMSG_SPACE(std::mem::size_of::<libc::ucred>() as u32) * 4 + libc::CMSG_SPACE(64 * 4) } as usize;
+    let mut cbuf = vec![0u8; space];
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_iov = &mut iov; msg.msg_iovlen = 1; msg.msg_control = cbuf.as_mut_ptr() as *mut libc::c_void; msg.msg_controllen = space;
+    let n = unsafe { libc::recvmsg(fd, &mut msg, libc::MSG_CMSG_CLOEXEC | libc::MSG_TRUNC) };
+    if n < 0 { return Err(io::Error::last_os_error()); }
+    if n == 0 { return Ok(None); }
+    let (mut creds, mut rights) = (Vec::new(), 0usize);
+    unsafe {
+        let mut c = libc::CMSG_FIRSTHDR(&msg);
+        while !c.is_null() {
+            if (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SCM_CREDENTIALS {
+                let u = &*(libc::CMSG_DATA(c) as *const libc::ucred); creds.push(Peer { pid: u.pid, uid: u.uid, gid: u.gid });
+            } else if (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SCM_RIGHTS {
+                let cnt = ((*c).cmsg_len - libc::CMSG_LEN(0) as usize) / 4; let p = libc::CMSG_DATA(c) as *const RawFd;
+                for i in 0..cnt { libc::close(*p.add(i)); rights += 1; }
+            } else { creds.push(Peer { pid: -1, uid: u32::MAX, gid: u32::MAX }); } // unknown control message counts as a defect
+            c = libc::CMSG_NXTHDR(&msg, c);
+        }
+    }
+    let truncated = (n as usize) > max_len || (msg.msg_flags & (libc::MSG_TRUNC | libc::MSG_CTRUNC)) != 0;
+    buf.truncate((n as usize).min(max_len)); Ok(Some(Packet { bytes: buf, creds, rights_fds: rights, truncated }))
+}
+pub fn set_passcred(fd: RawFd) -> io::Result<()> { let one: libc::c_int = 1; os(unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_PASSCRED, &one as *const _ as *const libc::c_void, 4) }).map(|_| ()) }
+pub fn send_raw(fd: RawFd, bytes: &[u8]) -> io::Result<()> { os(unsafe { libc::send(fd, bytes.as_ptr() as *const libc::c_void, bytes.len(), libc::MSG_NOSIGNAL) } as i32).map(|_| ()) }
+
+/// Process-instance identity from a pidfd (ADR-0002 D2, WP1 F-1): the pidfs inode is the key; start time corroborates.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcInstance { pub pid: i32, pub pidfs_ino: u64, pub start_time: u64, pub pidns: u64, pub cgroup: String }
+pub fn proc_instance(pid: i32) -> io::Result<(OwnedFd, ProcInstance)> {
+    let pfd = os(unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) } as i32)?; let pfd = unsafe { OwnedFd::from_raw_fd(pfd) };
+    let mut st: libc::stat = unsafe { std::mem::zeroed() }; os(unsafe { libc::fstat(pfd.as_raw_fd(), &mut st) })?;
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?; let after = stat.rsplit(") ").next().unwrap_or(""); let start_time: u64 = after.split(' ').nth(19).and_then(|x| x.parse().ok()).unwrap_or(0);
+    let pidns = std::fs::metadata(format!("/proc/{pid}/ns/pid")).map(|m| { use std::os::unix::fs::MetadataExt; m.ino() }).unwrap_or(0);
+    let cgroup = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap_or_default().trim().rsplit(':').next().unwrap_or("").to_string();
+    // the process may have exited and been replaced between pidfd_open and the /proc reads: re-check liveness of the same instance
+    let mut st2: libc::stat = unsafe { std::mem::zeroed() }; os(unsafe { libc::fstat(pfd.as_raw_fd(), &mut st2) })?;
+    if st2.st_ino != st.st_ino || start_time == 0 { return Err(io::Error::new(io::ErrorKind::NotFound, "process instance changed")); }
+    Ok((pfd, ProcInstance { pid, pidfs_ino: st.st_ino, start_time, pidns, cgroup }))
+}
+
 // ---- message envelope (wire-format document §2) ----
 /// Request: {"v":PROTOCOL_VERSION,"op":..., "idempotency_key":..., "body":{...}}
 pub fn request(op: &str, idem: &str, body: Value) -> Value {
