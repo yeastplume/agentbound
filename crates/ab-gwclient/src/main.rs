@@ -7,6 +7,18 @@ use std::os::fd::AsRawFd;
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
+    if a.get(1).map(String::as_str) == Some("--families") { // T-6.4-001: socket() for non-AF_UNIX families under the session seccomp filter
+        for (name, fam) in [("inet", libc::AF_INET), ("inet6", libc::AF_INET6), ("packet", libc::AF_PACKET), ("netlink", libc::AF_NETLINK), ("vsock", libc::AF_VSOCK)] {
+            let r = unsafe { libc::socket(fam, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            println!("{name} {}", if r >= 0 { "OPENED".to_string() } else { format!("errno={e}") }); if r >= 0 { unsafe { libc::close(r) }; }
+        }
+        return;
+    }
+    if a.get(1).map(String::as_str) == Some("--fds") { // T-6.3-003: enumerate inherited descriptors
+        for e in std::fs::read_dir("/proc/self/fd").unwrap().flatten() { let n = e.file_name().to_string_lossy().to_string(); if let Ok(t) = std::fs::read_link(e.path()) { println!("{n} {}", t.display()); } }
+        return;
+    }
     if a.len() < 5 { eprintln!("usage"); std::process::exit(2); }
     let (fork, rights) = (a.iter().any(|x| x == "--fork"), a.iter().any(|x| x == "--scm-rights"));
     let hold = a.iter().any(|x| x == "--hold"); // keep the connection open after the first reply, send the next packet on stdin EOF (T-6.4-014)

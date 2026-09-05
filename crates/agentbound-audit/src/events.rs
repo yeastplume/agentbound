@@ -17,7 +17,7 @@ fn detail_members(kind: &str) -> Option<&'static [&'static str]> {
         "session.recovery_reconciled" => &["cgroup_live", "credential_scan_inside", "credential_scan_outside", "identity_state", "scope_id"],
         "audit.self_test" => &["note"],
         // gateway (ADR-0002 Decision 5): connection, operation, denial, revocation and close records
-        "gateway.reconstructed" => &["projections"], "gateway.projected" => &["socket_type", "topology"], "gateway.grants_loaded" => &["operations", "source"],
+        "gateway.reconstructed" => &["projections", "stale_descriptors_dropped"], "gateway.projected" => &["socket_type", "topology"], "gateway.grants_loaded" => &["operations", "source"],
         "gateway.admission_denied" => &["reason"], "gateway.released" => &["connections_closed"],
         "gateway.connection_established" => &["cgroup", "establishing_pid", "pidfd", "pidfs_inode", "pidns", "start_time", "uid"],
         "gateway.connection_refused" => &["detail", "peer_pid", "peer_uid", "rule"], "gateway.connection_closed" => &["establishing_pid", "operations", "reason"],

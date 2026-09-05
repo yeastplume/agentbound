@@ -207,3 +207,42 @@ pub fn parse_request(v: &Value) -> Result<Req<'_>, &'static str> {
     let body = v.get("body").filter(|b| b.as_obj().is_some()).ok_or("body")?;
     Ok(Req { op, idem, body })
 }
+
+/// systemd fd store (sd_notify FDSTORE=1 with a name) — a daemon that is restarted receives them back via LISTEN_FDS/LISTEN_FDNAMES.
+pub fn fdstore_push(name: &str, fd: RawFd) -> io::Result<()> {
+    let Some(ns) = std::env::var_os("NOTIFY_SOCKET") else { return Err(io::Error::new(io::ErrorKind::NotFound, "NOTIFY_SOCKET")) };
+    let ns = ns.to_string_lossy().to_string();
+    let sock = os(unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) })?; let sock = unsafe { OwnedFd::from_raw_fd(sock) };
+    let (a, l) = sockaddr(&ns);
+    os(unsafe { libc::connect(sock.as_raw_fd(), &a as *const _ as *const libc::sockaddr, l) })?;
+    let text = format!("FDSTORE=1\nFDNAME={name}\n");
+    let mut iov = libc::iovec { iov_base: text.as_ptr() as *mut libc::c_void, iov_len: text.len() };
+    let space = unsafe { libc::CMSG_SPACE(4) } as usize; let mut cbuf = vec![0u8; space];
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_iov = &mut iov; msg.msg_iovlen = 1; msg.msg_control = cbuf.as_mut_ptr() as *mut libc::c_void; msg.msg_controllen = space;
+    unsafe { let h = libc::CMSG_FIRSTHDR(&msg); (*h).cmsg_level = libc::SOL_SOCKET; (*h).cmsg_type = libc::SCM_RIGHTS; (*h).cmsg_len = libc::CMSG_LEN(4) as usize; *(libc::CMSG_DATA(h) as *mut RawFd) = fd; }
+    os(unsafe { libc::sendmsg(sock.as_raw_fd(), &msg, libc::MSG_NOSIGNAL) } as i32)?; Ok(())
+}
+pub fn sd_notify(text: &str) {
+    let Some(ns) = std::env::var_os("NOTIFY_SOCKET") else { return };
+    let ns = ns.to_string_lossy().to_string();
+    let Ok(sock) = os(unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) }) else { return }; let sock = unsafe { OwnedFd::from_raw_fd(sock) };
+    let (a, l) = sockaddr(&ns); if unsafe { libc::connect(sock.as_raw_fd(), &a as *const _ as *const libc::sockaddr, l) } != 0 { return; }
+    unsafe { libc::send(sock.as_raw_fd(), text.as_ptr() as *const libc::c_void, text.len(), libc::MSG_NOSIGNAL) };
+}
+pub fn fdstore_remove(name: &str) {
+    let Some(ns) = std::env::var_os("NOTIFY_SOCKET") else { return };
+    let ns = ns.to_string_lossy().to_string();
+    let Ok(sock) = os(unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) }) else { return }; let sock = unsafe { OwnedFd::from_raw_fd(sock) };
+    let (a, l) = sockaddr(&ns); if unsafe { libc::connect(sock.as_raw_fd(), &a as *const _ as *const libc::sockaddr, l) } != 0 { return; }
+    let text = format!("FDSTOREREMOVE=1\nFDNAME={name}\n");
+    unsafe { libc::send(sock.as_raw_fd(), text.as_ptr() as *const libc::c_void, text.len(), libc::MSG_NOSIGNAL) };
+}
+/// Descriptors handed back by systemd on restart: (name, fd).
+pub fn listen_fds() -> Vec<(String, OwnedFd)> {
+    let Ok(pid) = std::env::var("LISTEN_PID") else { return vec![] };
+    if pid.parse::<i32>().ok() != Some(unsafe { libc::getpid() }) { return vec![]; }
+    let n: i32 = std::env::var("LISTEN_FDS").ok().and_then(|x| x.parse().ok()).unwrap_or(0);
+    let names: Vec<String> = std::env::var("LISTEN_FDNAMES").map(|x| x.split(':').map(str::to_string).collect()).unwrap_or_default();
+    (0..n).map(|i| (names.get(i as usize).cloned().unwrap_or_default(), unsafe { OwnedFd::from_raw_fd(3 + i) })).collect()
+}

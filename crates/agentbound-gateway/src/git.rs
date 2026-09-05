@@ -24,6 +24,8 @@ fn git(dir: &str, args: &[&str]) -> Result<String, String> {
 
 pub fn push_staging(gw: &mut Gateway, aid: &str, op: &Value, payload: &[u8], session_id: &str, trace: &str) -> R {
     let args = op.get("args").ok_or(("args_missing", String::new()))?;
+    // closed argument set: anything that could redirect the effect (url, remote, refspec…) is a schema error, never silently ignored
+    if let Some(o) = args.as_obj() { for (k, _) in o { if !matches!(k.0.as_str(), "expect_old" | "ref_tail" | "repository_id" | "tip") { return Err(("args_schema", format!("unknown member {}", k.0))); } } }
     let s = |k: &str| args.get(k).and_then(|x| x.as_str()).map(str::to_string);
     let (Some(repo), Some(tail), Some(tip)) = (s("repository_id"), s("ref_tail"), s("tip")) else { return Err(("args_schema", "repository_id, ref_tail, tip".into())) };
     // scope (D3): the operation's manifest scope names exactly one repository; the argument must equal it

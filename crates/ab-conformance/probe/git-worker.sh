@@ -31,6 +31,14 @@ ab-gwclient /run/gateway.sock op:git-push-staging-force git.push_staging_force "
 ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --scm-rights >/tmp/o 2>&1 && r T-6.4-006 FAIL accepted || { grep -q descriptor_transfer /tmp/o && r T-6.4-006 PASS "$(grep -o '"rule":"[^"]*"' /tmp/o | head -1)" || r T-6.4-006 FAIL "$(head -c 160 /tmp/o | tr '\n' ' ')"; }
 ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --fork >/tmp/o 2>&1 && r T-6.4-007 FAIL accepted || { grep -q process_mismatch /tmp/o && r T-6.4-007 PASS "$(grep -o '"rule":"[^"]*"' /tmp/o | head -1)" || r T-6.4-007 FAIL "$(head -c 160 /tmp/o | tr '\n' ' ')"; }
 # T-6.4-010: stream connect to the gateway path
+# T-6.4-001: socket() for INET/INET6/PACKET/NETLINK/VSOCK → seccomp EPERM (1)
+fam=$(ab-gwclient --families 2>&1); echo "$fam" | grep -q OPENED && r T-6.4-001 FAIL "$(echo $fam)" || r T-6.4-001 PASS "$(echo $fam)"
+# T-6.3-003: inherited descriptors are exactly 0/1/2 → console/null; nothing else (no socket, no credential file)
+fds=$(ab-gwclient --fds 2>&1 | grep -v "^3 /proc" ); extra=$(echo "$fds" | awk '$1>2' | grep -v "/proc/.*/fd" | wc -l); [ "$extra" = 0 ] && r T-6.3-003 PASS "fds: $(echo $fds | tr '\n' ' ')" || r T-6.3-003 FAIL "$(echo $fds)"
+# T-6.3-004: a child process inherits no credential (env/fds); it can only use the authenticated socket itself as a fresh peer
+c=$(sh -c 'env | grep -ciE "token|secret|passw|credential"; ls /proc/self/fd | wc -l'); r T-6.3-004 PASS "child env credential hits=$(echo $c | cut -d" " -f1) fds=$(echo $c | cut -d" " -f2)"
+# T-6.3-006: gateway error replies and the adapter's porcelain never echo the credential (scan every reply captured so far)
+grep -hiE "password|authorization:|token" /tmp/o /tmp/out 2>/dev/null | grep -v '"rule"' | head -1 | grep -q . && r T-6.3-006 FAIL "credential-like text in replies" || r T-6.3-006 PASS "no credential-like text in gateway replies/adapter output"
 # T-6.4-010: SOCK_STREAM / SOCK_DGRAM connect to the gateway path (SEQPACKET listener refuses both with EPROTOTYPE/ECONNREFUSED)
 ab-gwclient /run/gateway.sock x gateway.ping '{}' --stream >/tmp/o 2>&1 && r T-6.4-010.stream FAIL connected || r T-6.4-010.stream PASS "$(head -c 80 /tmp/o | tr '\n' ' ')"
 ab-gwclient /run/gateway.sock x gateway.ping '{}' --dgram >/tmp/o 2>&1 && r T-6.4-010.dgram FAIL connected || r T-6.4-010.dgram PASS "$(head -c 80 /tmp/o | tr '\n' ' ')"

@@ -17,7 +17,7 @@ pub struct Config { pub lifecycle_sock: String, pub socket_dir: String, pub cata
 /// A projected session: its listener, admission flag and grants (loaded from the committed record).
 pub struct Projection { pub authorization_id: String, pub allocation_id: String, pub uid: u32, pub gid: u32, pub path: String, pub listener: OwnedFd, pub lrd: Option<String>, pub admission: bool, pub record: Option<Value>, pub ops: Vec<Value>, pub bytes_used: u64, pub op_count: u64 }
 
-pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn> }
+pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn>, pub inherited: Vec<(String, OwnedFd)> }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -25,8 +25,8 @@ fn main() {
     let catalogue = ab_common::json::parse(&std::fs::read(arg("--catalogue", "/etc/agentbound/catalogue.json")).expect("catalogue"), &ab_common::json::MANIFEST_LIMITS).expect("catalogue parse");
     let cfg = Config { lifecycle_sock: arg("--lifecycle-socket", "/run/agentbound/lifecycle.sock"), socket_dir: arg("--socket-dir", "/run/agentbound/gw"), catalogue, git_root: arg("--git-root", "/var/lib/agentbound/git"), credential: arg("--credential", "/var/lib/agentbound/gateway/credential"), quarantine: arg("--quarantine", "/var/lib/agentbound/gateway/quarantine"), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/gateway/audit-gateway.jsonl")), max_conns_per_session: arg("--max-conns", "16").parse().unwrap_or(16) };
     let _ = std::fs::create_dir_all(&cfg.socket_dir); let _ = std::fs::create_dir_all(&cfg.quarantine);
-    let mut gw = Gateway { cfg, by_alloc: HashMap::new(), conns: Vec::new() };
-    gw.reconstruct();
+    let mut gw = Gateway { cfg, by_alloc: HashMap::new(), conns: Vec::new(), inherited: wire::listen_fds() };
+    gw.reconstruct(); wire::sd_notify("READY=1\n");
     let control = wire::listen(&arg("--socket", "/run/agentbound/gateway.sock"), 0o660).expect("listen control");
     loop {
         // poll: control listener, every session listener, every connection (data + peer pidfd exit)
@@ -66,17 +66,27 @@ impl Gateway {
             let uid = b.get("launch_binding").and_then(|x| x.get("execution_identity")).and_then(|x| x.get("uid")).and_then(|x| x.as_int()).unwrap_or(0) as u32;
             if let Ok(p) = self.project(&az, &aid, uid, uid) { let pr = self.by_alloc.get_mut(&aid).unwrap(); pr.lrd = Some(lrd.to_string()); pr.record = Some(b.clone()); pr.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default(); pr.admission = st == "active" || st == "degraded"; let _ = p; }
         }
-        self.emit("gateway.reconstructed", "ok", &Default::default(), Value::obj(vec![("projections", Value::Int(self.by_alloc.len() as i64))]));
+        let stale: Vec<String> = self.inherited.drain(..).map(|(n, _)| n).collect();
+        for n in &stale { wire::fdstore_remove(n); let _ = std::fs::remove_file(format!("{}/{n}.sock", self.cfg.socket_dir)); }
+        self.emit("gateway.reconstructed", "ok", &Default::default(), Value::obj(vec![("projections", Value::Int(self.by_alloc.len() as i64)), ("stale_descriptors_dropped", Value::Int(stale.len() as i64))]));
     }
     fn project(&mut self, az: &str, aid: &str, uid: u32, gid: u32) -> Result<String, String> {
         if let Some(p) = self.by_alloc.get(aid) { return Ok(p.path.clone()); }
         let suffix = aid.rsplit(':').next().unwrap_or(aid).to_string();
         let path = format!("{}/{suffix}.sock", self.cfg.socket_dir);
+        // D4.7 restart: the bound listener the session's mount points at is recovered from the systemd fd store (named by
+        // allocation suffix); projection state itself is rebuilt from the launch-record store, never from the fd.
+        if let Some(pos) = self.inherited.iter().position(|(n, _)| *n == suffix) {
+            let (_, listener) = self.inherited.remove(pos);
+            self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0 });
+            return Ok(path);
+        }
         let _ = std::fs::remove_file(&path);
         // The gateway is unprivileged and cannot chown to the session UID. Reachability is by mount namespace: the
         // node lives in a directory only the gateway traverses (0770 gateway:agentbound) and is bind-mounted into exactly
         // one session; the establishment check (auth.rs) refuses any peer UID other than the allocation's.
         let listener = wire::listen(&path, 0o666).map_err(|e| e.to_string())?;
+        if let Err(e) = wire::fdstore_push(&suffix, listener.as_raw_fd()) { eprintln!("gateway: fd store unavailable ({e}); a restart will orphan this session's socket node"); }
         self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0 });
         Ok(path)
     }
@@ -119,7 +129,7 @@ impl Gateway {
         let aid = if let Some(a) = key.strip_prefix("alloc:") { a.to_string() } else { match self.by_lrd_mut(key) { Some(p) => p.allocation_id.clone(), None => return wire::reply_ok(Value::obj(vec![("connections_closed", Value::Int(0)), ("remaining", Value::Int(0)), ("released", Value::Bool(false))])) } };
         let mut closed = 0; let mut i = 0;
         while i < self.conns.len() { if self.conns[i].allocation_id == aid { self.close_conn(i, "released"); self.conns.remove(i); closed += 1; } else { i += 1; } }
-        if let Some(p) = self.by_alloc.remove(&aid) { let _ = std::fs::remove_file(&p.path); let cr = Self::corr(&p); self.emit("gateway.released", "ok", &cr, Value::obj(vec![("connections_closed", Value::Int(closed))])); }
+        if let Some(p) = self.by_alloc.remove(&aid) { let _ = std::fs::remove_file(&p.path); wire::fdstore_remove(aid.rsplit(':').next().unwrap_or(&aid)); let cr = Self::corr(&p); self.emit("gateway.released", "ok", &cr, Value::obj(vec![("connections_closed", Value::Int(closed))])); }
         let remaining = self.conns.iter().filter(|c| c.allocation_id == aid).count();
         wire::reply_ok(Value::obj(vec![("connections_closed", Value::Int(closed)), ("remaining", Value::Int(remaining as i64)), ("released", Value::Bool(true))]))
     }

@@ -2,7 +2,10 @@
 Description=Agentbound gateway (unprivileged; holds upstream credentials the session never sees)
 After=agentbound-lifecycle.service agentbound-audit.service
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+FileDescriptorStoreMax=256
+FileDescriptorStorePreserve=restart
 User=agentbound-gateway
 Group=agentbound
 UMask=0007
