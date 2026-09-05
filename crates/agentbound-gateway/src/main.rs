@@ -54,7 +54,10 @@ impl Gateway {
     fn lc(&self, op: &str, body: Value) -> Option<Value> { wire::connect(&self.cfg.lifecycle_sock).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
     /// D4.7: on start, rebuild projections only for records lifecycle still reports live; no connection survives.
     fn reconstruct(&mut self) {
-        let Some(list) = self.lc("list", Value::obj(vec![])) else { eprintln!("gateway: lifecycle unreachable; starting with no projections"); return };
+        // boot ordering: lifecycle is Type=simple, so After= does not imply its socket is bound yet — retry for up to ~10 s
+        let mut list = None;
+        for i in 0..20 { list = self.lc("list", Value::obj(vec![])); if list.is_some() { break; } std::thread::sleep(std::time::Duration::from_millis(500)); if i == 19 { eprintln!("gateway: lifecycle unreachable after 10 s; starting with no projections"); } }
+        let Some(list) = list else { return };
         for s in list.get("sessions").and_then(|x| x.as_arr()).cloned().unwrap_or_default() {
             let (Some(lrd), Some(st)) = (s.get("launch_record_digest").and_then(|x| x.as_str()), s.get("state").and_then(|x| x.as_str())) else { continue };
             if !matches!(st, "active" | "quiescing" | "degraded") { continue; }
