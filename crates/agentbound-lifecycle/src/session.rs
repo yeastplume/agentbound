@@ -11,6 +11,13 @@ use ab_common::wire;
 use std::os::fd::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
 
+/// Gateway control call (session-lifecycle §5 steps 1 and 6). Returns None when the gateway is unreachable; callers record that.
+fn gateway_call(sock: &str, op: &str, lrd: &str, idem: &str) -> Option<Value> {
+    let c = wire::connect(sock).ok()?;
+    let r = c.call(&wire::request(op, idem, Value::obj(vec![("launch_record_digest", Value::s(lrd))]))).ok()?;
+    if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { r.get("body").cloned() } else { None }
+}
+
 pub const DEFAULT_TERM_BOUND_S: i64 = 10;
 pub const SIGTERM_GRACE_MS: u64 = 2000;
 
@@ -93,10 +100,11 @@ impl Service {
         let s = self.sessions.get_mut(lrd).ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;
         if s.state == "quiescing" { return Ok(Value::obj(vec![("state", Value::s("quiescing"))])); }
         let cg = s.cgroup_dir.as_ref().ok_or((wire::CLASS_CONFLICT, "session_not_registered", String::new()))?.as_raw_fd();
+        let gw_deny = gateway_call(&self.cfg.gateway_sock, "deny_admission", lrd, &format!("{lrd}/deny-q/{}", monotonic_ns()));
         let frozen = cg_write(cg, "cgroup.freeze", "1");
         s.deadline_mono_ns = Some(monotonic_ns() + bound_s * 1_000_000_000);
         self.sessions.set_state(lrd, "quiescing", Some(reason));
-        self.append_event(lrd, "session.quiesce_started", if frozen { "ok" } else { "freeze-failed" }, Value::obj(vec![("admission", Value::s("denied")), ("bound_s", Value::Int(bound_s)), ("freeze_requested", Value::Bool(frozen)), ("trigger", Value::s(reason))]));
+        self.append_event(lrd, "session.quiesce_started", if frozen { "ok" } else { "freeze-failed" }, Value::obj(vec![("admission", Value::s(if gw_deny.is_some() { "denied" } else { "denied-no-gateway" })), ("bound_s", Value::Int(bound_s)), ("freeze_requested", Value::Bool(frozen)), ("trigger", Value::s(reason))]));
         if !frozen { return self.terminate(lrd, &format!("{reason}:freeze-failed"), bound_s); }
         Ok(Value::obj(vec![("state", Value::s("quiescing"))]))
     }
@@ -114,7 +122,8 @@ impl Service {
         self.sessions.set_state(lrd, "quiescing", Some(reason));
         self.append_event(lrd, "session.termination_started", "ok", Value::obj(vec![("bound_s", Value::Int(bound_s)), ("ordering_deviation", Value::Null), ("reason", Value::s(reason)), ("scope_id", Value::s(&scope))]));
         let t0 = Instant::now();
-        // 1 deny admission: no gateway at 1A. 2 freeze.
+        // 1 deny admission at the gateway (mandatory on entry, distinct from releasing grant records — §5). 2 freeze.
+        let gw_deny = gateway_call(&self.cfg.gateway_sock, "deny_admission", lrd, &format!("{lrd}/deny/{}", monotonic_ns()));
         let step2 = cg_write(cg, "cgroup.freeze", "1");
         // 3 thaw and SIGTERM init via pidfd, bounded (F-4: a PID-ns init without a handler ignores it)
         cg_write(cg, "cgroup.freeze", "0");
@@ -133,7 +142,7 @@ impl Service {
         let dstate: Vec<i32> = procs.iter().copied().filter(|p| proc_state(*p) == "D").collect();
         let complete = procs.is_empty() && init_exited && inside.is_empty() && outside.is_empty();
         let evidence = Value::obj(vec![("cgroup_kill_written", Value::Bool(step4)), ("cgroup_procs_remaining", pids(&procs)), ("credential_scan_inside_scope", pids(&inside)), ("credential_scan_outside_scope", pids(&outside)), ("d_state", pids(&dstate)),
-            ("elapsed_ms", Value::Int(t0.elapsed().as_millis() as i64)), ("freeze_written", Value::Bool(step2)), ("frozen_observed", Value::Bool(cg_frozen(cg))), ("init_pid", Value::Int(init_pid as i64)), ("init_pidfd_exited", Value::Bool(init_exited)), ("sigterm_sent", Value::Bool(step3))]);
+            ("elapsed_ms", Value::Int(t0.elapsed().as_millis() as i64)), ("freeze_written", Value::Bool(step2)), ("gateway_admission_denied", Value::Bool(gw_deny.is_some())), ("frozen_observed", Value::Bool(cg_frozen(cg))), ("init_pid", Value::Int(init_pid as i64)), ("init_pidfd_exited", Value::Bool(init_exited)), ("sigterm_sent", Value::Bool(step3))]);
         if !outside.is_empty() { self.append_event(lrd, "identity.scope_escape_suspected", "hold", Value::obj(vec![("pids", pids(&outside)), ("uid", Value::Int(uid as i64))])); }
         if !complete {
             self.sessions.set_state(lrd, "termination-incomplete", Some(reason));
@@ -175,8 +184,14 @@ impl Service {
             Value::obj(vec![("path_class", Value::s(if is_ws { "workspace-root-group-reset" } else if session_dir.as_deref().map(|d| r.starts_with(d)).unwrap_or(false) { "session-dir" } else { "registered-path" })), ("removed", Value::Bool(ok))]) }).collect();
         if let Some(d) = &session_dir { let _ = std::fs::remove_dir_all(d); }
         let (inside, outside) = credential_scan(uid, gid, &scope);
-        let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_bool()) == Some(true));
-        self.append_event(lrd, "session.cleanup_completed", if cond { "ok" } else { "hold" }, Value::obj(vec![("acl_entries_removed", Value::Int(0)), ("grants", Value::s("none (topology none)")), ("ipc_namespace", Value::s("destroyed with last process")), ("residue", Value::Arr(removed)), ("unmounts", Value::Arr(unmounts))]));
+        // §5 step 6: release gateway grant records and indexed connections; the gateway MUST acknowledge zero connections
+        // before identity release. A projection that was never made (topology none) releases as `released:false, remaining:0`.
+        let gw = gateway_call(&self.cfg.gateway_sock, "release", lrd, &format!("{lrd}/release/{}", monotonic_ns()));
+        let gw_remaining = gw.as_ref().and_then(|b| b.get("remaining")).and_then(|x| x.as_int());
+        let gw_ok = gw_remaining == Some(0) || (gw.is_none() && self.sessions.get(lrd).map(|s| s.topology != "local-socket").unwrap_or(true));
+        let grants = match &gw { Some(b) => Value::obj(vec![("connections_closed", b.get("connections_closed").cloned().unwrap_or(Value::Int(0))), ("released", b.get("released").cloned().unwrap_or(Value::Bool(false))), ("remaining", b.get("remaining").cloned().unwrap_or(Value::Null))]), None => Value::s("gateway unreachable") };
+        let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_bool()) == Some(true)) && gw_ok;
+        self.append_event(lrd, "session.cleanup_completed", if cond { "ok" } else { "hold" }, Value::obj(vec![("acl_entries_removed", Value::Int(0)), ("grants", grants), ("ipc_namespace", Value::s("destroyed with last process")), ("residue", Value::Arr(removed)), ("unmounts", Value::Arr(unmounts))]));
         if let Ok(Some(a)) = self.store.latest(&aid) {
             let a = if a.state == "in-use" || a.state == "allocated" { self.store.transition(&aid, a.state_seq, "reclaiming", "termination complete", None, None, "agentbound-lifecycle").ok() } else { Some(a) };
             if let Some(a) = a { if a.state == "reclaiming" && cond {
@@ -223,7 +238,8 @@ impl Service {
             let Ok(Some(a)) = self.store.latest(&aid) else { continue };
             let g = |p: &Value, path: &[&str]| -> String { let mut v = Some(p); for k in path { v = v.and_then(|x| x.get(k)); } v.and_then(|x| x.as_str()).unwrap_or("").to_string() };
             let (scope, sid, tid, domain) = recs.iter().find(|(k, _)| k == "binding").map(|(_, p)| (g(p, &["launch_binding", "host_binding", "scope_id"]), g(p, &["authorization_manifest", "session_trace", "session_id"]), g(p, &["authorization_manifest", "session_trace", "trace_id"]), g(p, &["authorization_manifest", "termination_retention", "reclamation_domain_id"]))).unwrap_or_default();
-            self.sessions.bind(&aid, &lrd, &az, &scope, &sid, &tid, a.uid, a.gid, &domain);
+            let topo = recs.iter().find(|(k, _)| k == "binding").map(|(_, p)| g(p, &["authorization_manifest", "gateway", "channel_topology"])).unwrap_or_default();
+            self.sessions.bind(&aid, &lrd, &az, &scope, &sid, &tid, a.uid, a.gid, &domain, &topo);
             let (inside, outside) = credential_scan(a.uid, a.gid, &scope);
             let cgpath = format!("/sys/fs/cgroup/system.slice/{scope}");
             let live_cg = std::fs::read_to_string(format!("{cgpath}/cgroup.procs")).map(|s| !s.trim().is_empty()).unwrap_or(false);

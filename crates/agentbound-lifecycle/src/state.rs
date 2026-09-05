@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::os::fd::OwnedFd;
 
 pub struct Session {
-    pub lrd: String, pub allocation_id: String, pub authorization_id: String, pub scope_id: String, pub pidns_id: String, pub session_id: String, pub trace_id: String,
+    pub lrd: String, pub allocation_id: String, pub authorization_id: String, pub scope_id: String, pub pidns_id: String, pub session_id: String, pub trace_id: String, pub topology: String,
     pub uid: u32, pub gid: u32, pub domain_id: String, pub state: String, pub reason: Option<String>, pub observation_seq: i64,
     pub init_pid: i32, pub init_pidfd: Option<OwnedFd>, pub cgroup_dir: Option<OwnedFd>, pub deadline_mono_ns: Option<i64>, pub session_dir: Option<String>,
 }
@@ -16,8 +16,8 @@ pub struct Session {
 pub struct Sessions { pub by_lrd: BTreeMap<String, Session>, pub pending_reclaim: Vec<(String, Option<String>)> }
 
 impl Sessions {
-    pub fn bind(&mut self, aid: &str, lrd: &str, az: &str, scope_id: &str, session_id: &str, trace_id: &str, uid: u32, gid: u32, domain_id: &str) {
-        self.by_lrd.insert(lrd.into(), Session { lrd: lrd.into(), allocation_id: aid.into(), authorization_id: az.into(), scope_id: scope_id.into(), pidns_id: String::new(), session_id: session_id.into(), trace_id: trace_id.into(),
+    pub fn bind(&mut self, aid: &str, lrd: &str, az: &str, scope_id: &str, session_id: &str, trace_id: &str, uid: u32, gid: u32, domain_id: &str, topology: &str) {
+        self.by_lrd.insert(lrd.into(), Session { lrd: lrd.into(), allocation_id: aid.into(), authorization_id: az.into(), scope_id: scope_id.into(), pidns_id: String::new(), session_id: session_id.into(), trace_id: trace_id.into(), topology: topology.into(),
             uid, gid, domain_id: domain_id.into(), state: "constructing".into(), reason: None, observation_seq: 1, init_pid: 0, init_pidfd: None, cgroup_dir: None, deadline_mono_ns: None, session_dir: None });
     }
     pub fn register(&mut self, lrd: &str, pidfd: OwnedFd, cgroup: OwnedFd, init_pid: i32, scope_id: &str, pidns_id: &str) -> Result<(), &'static str> {

@@ -21,7 +21,7 @@ fn main() {
     let cli_uids: Vec<u32> = arg("--cli-uids", "").split(',').filter_map(|s| s.parse().ok()).collect();
     let host_id = ab_common::audit::host_id(); let boot_id = ab_common::audit::boot_id();
     let store = store::Store::open(&db, store::Range::default(), &host_id, &boot_id).expect("store open (fail closed on chain/range error)");
-    let mut svc = service::Service { store, cfg: service::Config { cli_uids, keyring, host_id, boot_id, launch_version_digest: String::new(), managed_paths: arg("--managed-paths", "/var/lib/agentbound/sessions,/var/lib/agentbound").split(',').map(str::to_string).collect(), workspace_roots: workspace_roots(&arg("--catalogue", "/etc/agentbound/catalogue.json")), gateway_uid: arg("--gateway-uid", "").parse().ok() }, sessions: state::Sessions::default(), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/audit-lifecycle.jsonl")) };
+    let mut svc = service::Service { store, cfg: service::Config { cli_uids, keyring, host_id, boot_id, launch_version_digest: String::new(), managed_paths: arg("--managed-paths", "/var/lib/agentbound/sessions,/var/lib/agentbound").split(',').map(str::to_string).collect(), workspace_roots: workspace_roots(&arg("--catalogue", "/etc/agentbound/catalogue.json")), gateway_uid: arg("--gateway-uid", "").parse().ok(), gateway_sock: arg("--gateway-socket", "/run/agentbound/gateway.sock") }, sessions: state::Sessions::default(), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/audit-lifecycle.jsonl")) };
     svc.reconcile_on_start();
     let listener = ab_common::wire::listen(&socket, 0o660).expect("listen");
     // accept with a bounded wait so the pidfd/deadline poll runs on its own cadence, not only when a client connects

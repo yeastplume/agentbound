@@ -72,7 +72,7 @@ fn execute(gw: &mut Gateway, i: usize, op: Value, op_seq: i64, payload: Option<V
     let res = adapters::run(gw, &aid, &name, &op, payload.as_deref(), &session_id, &trace);
     match res {
         Ok(body) => { gw.emit("gateway.operation_completed", "ok", &cr, Value::obj(vec![("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("result", body.clone())])); reply(gw, i, wire::reply_ok(Value::obj(vec![("operation_seq", Value::Int(op_seq)), ("result", body), ("trace_id", Value::s(&trace))]))) }
-        Err((rule, detail)) => { let kind = if rule == "upstream_rejected" { "gateway.upstream_rejected" } else { "gateway.operation_denied" }; gw.emit(kind, "deny", &cr, Value::obj(vec![("detail", Value::s(&detail)), ("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("rule", Value::s(rule))])); reply(gw, i, wire::reply_err(wire::CLASS_UNAUTHORIZED, rule, &detail)) }
+        Err((rule, detail)) => { let kind = if rule == "upstream_rejected" { "gateway.upstream_rejected" } else { "gateway.operation_denied" }; gw.emit(kind, "deny", &cr, if kind == "gateway.upstream_rejected" { Value::obj(vec![("detail", Value::s(&detail)), ("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("rule", Value::s(rule))]) } else { Value::obj(vec![("class", Value::s(wire::CLASS_UNAUTHORIZED)), ("credential_pid", Value::Int(inst.pid as i64)), ("detail", Value::s(&detail)), ("establishing_pid", Value::Int(inst.pid as i64)), ("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("rule", Value::s(rule))]) }); reply(gw, i, wire::reply_err(wire::CLASS_UNAUTHORIZED, rule, &detail)) }
     }
 }
 
