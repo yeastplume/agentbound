@@ -6,6 +6,7 @@ members = [
   "crates/agentbound-launch",
   "crates/agentbound-lifecycle",
   "crates/agentbound-audit",
+  "crates/agentbound-gateway",
   "crates/agentbound",
   "crates/ab-conformance",
 ]

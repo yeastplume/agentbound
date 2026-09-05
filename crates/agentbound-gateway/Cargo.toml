@@ -1,0 +1,9 @@
+[package]
+name = "agentbound-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ab-common = { path = "../ab-common" }
+libc.workspace = true

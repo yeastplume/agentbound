@@ -41,6 +41,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentbound-gateway"
+version = "0.1.0"
+dependencies = [
+ "ab-common",
+ "libc",
+]
+
+[[package]]
 name = "agentbound-launch"
 version = "0.1.0"
 dependencies = [

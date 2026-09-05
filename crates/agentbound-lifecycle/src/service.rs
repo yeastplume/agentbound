@@ -11,7 +11,7 @@ use ab_common::sig::{launch_record_digest, now_unix, object_digest, Keyring};
 use ab_common::wire::{self, Conn, Req};
 use std::os::fd::OwnedFd;
 
-pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String, pub managed_paths: Vec<String>, pub workspace_roots: Vec<String> }
+pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String, pub managed_paths: Vec<String>, pub workspace_roots: Vec<String>, pub gateway_uid: Option<u32> }
 
 pub struct Service { pub store: Store, pub cfg: Config, pub sessions: Sessions, pub audit: audit::Sink }
 
@@ -31,6 +31,8 @@ fn closed(b: &Value, want: &[&str]) -> Result<(), (&'static str, &'static str, S
 
 const CONSTRUCTOR_OPS: [&str; 5] = ["reserve_identity", "commit_binding", "register_session", "report_activation", "report_construction_failed"];
 const OBSERVER_OPS: [&str; 5] = ["status", "list", "terminate", "quiesce", "revocation_signal"];
+/// Gateway (ADR-0002 D4.7): reads only; reconstructs grants from the signed launch-record store.
+const GATEWAY_OPS: [&str; 3] = ["status", "list", "record"];
 
 impl Service {
     /// Handle one connection: one request, one reply (descriptors only on `register_session`).
@@ -43,7 +45,7 @@ impl Service {
     fn dispatch(&mut self, conn: &Conn, msg: &Value, fds: Vec<OwnedFd>) -> Reply {
         let Req { op, idem, body } = wire::parse_request(msg).map_err(|e| (wire::CLASS_INVALID, "envelope", e.to_string()))?;
         let uid = conn.peer.uid;
-        let allowed = (uid == 0 && (CONSTRUCTOR_OPS.contains(&op) || OBSERVER_OPS.contains(&op))) || (self.cfg.cli_uids.contains(&uid) && OBSERVER_OPS.contains(&op));
+        let allowed = (uid == 0 && (CONSTRUCTOR_OPS.contains(&op) || OBSERVER_OPS.contains(&op) || op == "record")) || (self.cfg.cli_uids.contains(&uid) && OBSERVER_OPS.contains(&op)) || (self.cfg.gateway_uid == Some(uid) && GATEWAY_OPS.contains(&op));
         if !allowed { return err(wire::CLASS_UNAUTHENTICATED, "peer_not_permitted", format!("uid {uid} may not call {op}")); }
         if op != "register_session" && !fds.is_empty() { return err(wire::CLASS_INVALID, "unexpected_descriptors", ""); }
         let scope = format!("uid{uid}:{op}"); let bd = object_digest(body);
@@ -55,6 +57,7 @@ impl Service {
             "report_activation" => self.report_activation(body),
             "report_construction_failed" => self.report_failed(body),
             "status" => self.status(body),
+            "record" => self.record(body),
             "list" => self.list(),
             "terminate" | "quiesce" | "revocation_signal" => self.lifecycle_action(op, body, uid),
             _ => err(wire::CLASS_INVALID, "unknown_op", op),
@@ -158,6 +161,15 @@ impl Service {
         let s = self.sessions.get(&lrd).ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;
         let ident = self.store.latest(&s.allocation_id).map_err(store_err)?.map(|a| a.state).unwrap_or_default();
         Ok(Value::obj(vec![("identity_state", Value::s(&ident)), ("observation_seq", Value::Int(s.observation_seq)), ("reason", s.reason.as_deref().map(Value::s).unwrap_or(Value::Null)), ("record_ref", Value::s(&lrd)), ("state", Value::s(&s.state))]))
+    }
+    /// Committed binding record (manifest + binding + envelopes) for one digest, with the live session state.
+    fn record(&mut self, b: &Value) -> Reply {
+        let lrd = b.get("launch_record_digest").and_then(|x| x.as_str()).ok_or((wire::CLASS_INVALID, "body", "launch_record_digest".to_string()))?;
+        let recs = self.store.records(lrd).map_err(store_err)?;
+        let binding = recs.iter().find(|(k, _)| k == "binding").map(|(_, v)| v.clone()).ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;
+        let sealed = recs.iter().any(|(k, _)| k == "seal");
+        let (state, ident) = match self.sessions.get(lrd) { Some(s) => (s.state.clone(), self.store.latest(&s.allocation_id).map_err(store_err)?.map(|a| a.state).unwrap_or_default()), None => ("unknown".into(), String::new()) };
+        Ok(Value::obj(vec![("binding", binding), ("identity_state", Value::s(&ident)), ("sealed", Value::Bool(sealed)), ("state", Value::s(&state))]))
     }
     fn status_prebinding(&mut self, az: &str) -> Reply {
         let a = self.store.by_authorization(az).map_err(store_err)?.ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;

@@ -11,6 +11,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 pub const MAX_MSG: usize = 64 * 1024;
 pub const PROTOCOL_VERSION: &str = "agentbound.wire.v0.1";
 
+#[derive(Clone, Debug)]
 pub struct Peer { pub pid: i32, pub uid: u32, pub gid: u32 }
 
 pub struct Conn { pub fd: OwnedFd, pub peer: Peer }
