@@ -1,6 +1,6 @@
 # ADR-0002: Gateway channel topology and session authentication
 
-**Status:** Accepted for Phase 1 (topology and mechanism selected). Reopened narrowly in WP1 when Decision 7 item 2's start-time-only reuse check failed; amended (0.7) and re-accepted. Decision 7 mechanism items 1–5 verified in WP1; component items 6–9 verified against `agentbound-gateway` in WP3 (0.9)  
+**Status:** Accepted for Phase 1 (topology and mechanism selected). Reopened narrowly in WP1 when Decision 7 item 2's start-time-only reuse check failed; amended (0.7) and re-accepted. Decision 7 mechanism items 1–5 verified in WP1; component items 6–9 exercised against `agentbound-gateway` in WP3 (0.9); the independent review of the WP3 register found the supporting rows incomplete, so items 6–9 are **not yet verified** — re-verification is WP3.1  
 **Version:** 0.9  
 **Date:** 28 August 2026  
 **Applies to:** Unix-governed profile, milestones 1B–1C; microVM projection per ADR-0003  
@@ -15,7 +15,7 @@
 - **0.5** — Post-freeze editorial maintenance (no normative change): Decision 1 heading; per-packet and one-connection rules merged into one check; "session scope" used consistently.
 - **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Decisions split into one rule per sentence; network-topology rationale reduced to one sentence.
 - **0.7** — WP1 finding F-1 ([evidence](../evidence/wp1/seqpacket-creds.md)): process-instance comparison key is the pidfs inode; start time made corroborating because `/proc` start time has 10 ms granularity. Binding tuple and diagnostics fields extended accordingly; no other obligation changed.
-- **0.9** — WP3 result for Decision 7 component items 6–9 recorded (all pass on VM 110, `ab-conformance` 139/139); no mechanism, binding element, or required result changed. Records one implementation finding: the socket is projected as a mount intent (`mount:gateway-socket`), not as a descriptor, because the constructor's descriptor allowlist is stdin/stdout/stderr only (manifest-schema 0.x revision entry).
+- **0.9** — WP3 result for Decision 7 component items 6–9 recorded as run on VM 110; **amended the same day after independent review**: the WP3 register's completeness claim did not hold (missing catalogue rows, false-positive rows incl. T-6.4-008/009/013), so items 6–9 are recorded as *exercised, not verified*, pending WP3.1; no mechanism, binding element, or required result changed. Records one implementation finding: the socket is projected as a mount intent (`mount:gateway-socket`), not as a descriptor, because the constructor's descriptor allowlist is stdin/stdout/stderr only (manifest-schema 0.x revision entry).
 - **0.8** — Reviewer-driven accounting: status records the WP1 reopen-amend-reaccept for item 2; Decision 6 aligned with ADR-0003 0.9's Unix-socket-bridge model (VMM `SO_PEERCRED` + pidfd/pidfs, VMM-configured CID, daemon-owned per-instance bridge path); Decision 7 split into mechanism items (1–5, WP1) and component items (6–9, WP2–WP3) with the WP1 result recorded. No mechanism, binding element, or required result changed.
 
 
@@ -134,7 +134,7 @@ If any item fails on the pinned baseline, this ADR is reopened; the constructor 
 
 **WP1 result** ([evidence](../evidence/wp1/README.md)): items 1, 3, 4 pass; item 5's mechanism half passes; item 2 passes on the pidfd path but its start-time-only reuse check **failed** (D7-2d: a PID recycled within one 10 ms tick presents an identical start time), so the ADR was reopened, Decision 2 amended to key on the pidfs inode (0.7), and re-accepted. Items 6–9 carried to WP2–WP3.
 
-**WP3 result** ([evidence](../evidence/wp3/README.md)), verified against `agentbound-gateway` on VM 110:
+**WP3 result** ([evidence](../evidence/wp3/README.md)), as run against `agentbound-gateway` on VM 110 — **status after independent review: not verified; see the register's status correction.** The table records what the rows asserted, not a verified pass:
 
 | Item | Result | Evidence |
 |---|---|---|
