@@ -4,7 +4,7 @@
 
 Agentbound treats an organizational AI agent as a durable security principal. Each task runs in a separately governed Unix session and process tree. The foundational papers retain the title *Agents as Unix Principals*.
 
-WP0 is frozen; WP1 mechanism verification is next.
+WP0 is frozen; WP1 mechanism verification and WP2 (milestone 1A: constructor, identity allocator, lifecycle daemon, policy stub, audit receiver, conformance suite) are complete; WP3 (gateway, milestone 1B) is next.
 
 ## Documents and their authority
 
@@ -33,15 +33,15 @@ tests/            Test implementations, fixtures, and conformance suites (placeh
 |---|---|---|
 | Position paper | 0.10 | working draft for external review |
 | Technical report | 0.5-TR11 | working draft for external review |
-| Phase 1 plan | 0.12 | active; WP0 complete |
+| Phase 1 plan | 0.14 | active; WP0–WP2 complete, milestone 1A recorded |
 | WP0 architecture set | see [index](docs/architecture/README.md) | **frozen (WP0)** after three independent review rounds |
-| `implementation/`, `tests/` | — | empty until WP1 mechanism spikes pass |
+| `crates/`, `deploy/` | commit-pinned | 1A reference implementation; [WP2 evidence register](docs/evidence/wp2/README.md) 84/84 rows |
 
-A failed WP1 spike reopens the ADR or specification that depends on its result.
+A failed spike or conformance row reopens the ADR or specification that depends on its result; WP1 exercised this twice (ADR-0002, ADR-0003 amendments).
 
 The claim is narrow. The Unix-governed baseline provides isolation, bounded authority, credential confinement, descendant control, and attribution; it does not claim general information-flow control. Integrity provenance is the first intended application; confidentiality compartments and multilevel release are later profiles.
 
-No security property has been demonstrated yet. Evidence comes from the WP1 spikes and the conformance tests that follow.
+Demonstrated so far, on one pinned Debian 13 host at topology `none`: the 1A session boundary (Gates 1 and 2 of the plan) — see the [WP2 evidence register](docs/evidence/wp2/README.md) for what each row observed and what remains partial. Mediated remote effect (Gate 3) is not yet demonstrated.
 
 ## Reviewing the design
 

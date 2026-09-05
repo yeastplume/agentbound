@@ -1,8 +1,8 @@
 # Phase 1 Reference Implementation Plan
 
-**Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record); WP1 complete ([evidence register](../evidence/wp1/README.md)); WP2 next  
-**Plan version:** 0.13  
-**Date:** 28 August 2026  
+**Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record); WP1 complete ([evidence register](../evidence/wp1/README.md)); WP2 complete, milestone 1A recorded ([evidence register](../evidence/wp2/README.md)); WP3 next  
+**Plan version:** 0.14  
+**Date:** 4 September 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
 **Architecture specifications:** [`../architecture/README.md`](../architecture/README.md)  
@@ -23,6 +23,7 @@
 - **0.10** — §6.8 1A case list uses the split outage-trigger vocabulary and the `continue-degraded` restriction.
 - **0.11** — Post-freeze maintenance: status reflects the WP0 freeze; WP0 section marked complete and in past tense; fault-point list uses the empty-network-namespace/gateway-socket wording.
 - **0.12** — Editorial pass under docs/STYLE.md: demonstration 16 split by milestone; control-arm rationale consolidated in §8; review narrative removed; Oxford spelling. No milestone, gate, deliverable, or criterion changed.
+- **0.14** — WP2 closed: milestone 1A outcome recorded (84/84 conformance rows, Gate 1 direct SLOC 2 166, Gate 2 pass); wire-format document 0.1 added to the WP0 set as the component-interfaces §10 fill; carry-ins re-dispositioned (durable-ownership projection: group-grant model at 1A, storage-principal projection to WP3; allocator power-loss: recorded residual for WP3; D-Bus subscription: recorded deviation, `busctl` scope creation and cgroup/pidfd observation at 1A). WP3 next.
 - **0.13** — WP1 closed: spike list distinguishes the Decision 7 mechanism subset (1–5) from the component-dependent items (6–9, WP2–WP3); durable-ownership projection carried to WP2; exit condition restated to allow reopen-amend-reaccept; outcome paragraph records the D7-2d failure and the VM-1 fallback with the resulting ADR versions.
 
 
@@ -621,6 +622,8 @@ Exit condition: every ADR-0002 Decision 7 mechanism item (1–5) and every WP1 s
 Implement the minimum request, policy-stub, construction, identity allocator, systemd-scope lifecycle, active-revocation handling, delegation narrowing, and cleanup path. Keep policy resolution unprivileged, the privileged constructor narrow and short-lived, and the `agentbound-lifecycle` daemon separate and enumerated. Run the §6.1, §6.2, §6.5–6.8 suites and §7.3 fault injection.
 
 Exit condition: Gates 1 and 2 pass with `/bin/sh` and the scripted loop; the milestone 1A stop condition is not met.
+
+**Outcome (met):** six crates (`ab-common`, `agentbound-policy`, `agentbound-launch`, `agentbound-lifecycle`, `agentbound-audit`, `agentbound`) plus the `ab-conformance` driver and in-session probe; the wire formats deferred by component-interfaces §10 are defined in `component-wire-formats.md` 0.1. The final run on the pinned baseline records **84 rows PASS, 0 FAIL** ([WP2 evidence register](../evidence/wp2/README.md)): three rows PASS (partial) and two N/A at topology `none`, each with its justification and a 1B re-run. Gate 1: request authenticated by peer UID and bounded by closed member sets and limits; manifest derived server-side and signed; every boundary established and verified (in-child and host-side `/proc/<pid>/status`) before the launch binding is signed; launch-only privilege disposed (five capability sets zero, `no_new_privs`, seccomp); nine-step rollback ledger exercised by three fault points; direct privileged SLOC **2 166** against the 6 000 bound, all five figures published with a line-density caveat. Gate 2: same-principal sessions under distinct identities cannot reach each other through any enumerated interface; fork, double-fork and orphaning stay in the scope (64-process fan-out contained at `TasksMax`); termination kills and reaps every descendant before identity release, with the evidence object of session-lifecycle §5. The 1A stop condition is not met. Eleven implementation defects were found by the suite and fixed before the final run (register §5) — including a silent audit-loss path in which every constructor-failure event was rejected by the receiver's closed schema. Delegation narrowing (D-15) has no path to exercise at topology `none` and is re-run at 1B. Carry-ins to WP3: storage-principal ownership projection at seal; allocator power-loss round; libsystemd/zbus D-Bus observation; D7 items 6–9.
 
 ### WP3 — Gateway and end-to-end audit (milestone 1B)
 
