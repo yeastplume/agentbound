@@ -18,7 +18,7 @@ fn main() {
     let self_digest = std::fs::read("/proc/self/exe").map(|b| ab_common::sig::sha256_hex(&b)).unwrap_or_default();
     let policy_uid = arg("--policy-uid", "").parse().unwrap_or_else(|_| uid_of("agentbound-policy").unwrap_or(0));
     let mut cfg = construct::Config { spool: arg("--spool", "/var/lib/agentbound/spool"), lease_dir: arg("--lease-dir", "/run/agentbound/leases"), session_root: arg("--session-root", "/var/lib/agentbound/sessions"),
-        lifecycle_sock: arg("--lifecycle-socket", "/run/agentbound/lifecycle.sock"), keyring, signer, catalogue, image_base: arg("--image-base", "/var/lib/agentbound/images"), host_id: ab_common::audit::host_id(), boot_id: ab_common::audit::boot_id(),
+        lifecycle_sock: arg("--lifecycle-socket", "/run/agentbound/lifecycle.sock"), gateway_sock: arg("--gateway-socket", "/run/agentbound/gateway.sock"), keyring, signer, catalogue, image_base: arg("--image-base", "/var/lib/agentbound/images"), host_id: ab_common::audit::host_id(), boot_id: ab_common::audit::boot_id(),
         self_digest, audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/audit-launch.jsonl")), policy_uid, fault: args.iter().position(|a| a == "--fault").and_then(|i| args.get(i + 1)).cloned() };
     let _ = std::fs::create_dir_all(&cfg.lease_dir);
     let mut led = construct::Ledger::default();

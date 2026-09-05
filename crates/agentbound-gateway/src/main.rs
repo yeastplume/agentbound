@@ -23,7 +23,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |k: &str, d: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| d.to_string());
     let catalogue = ab_common::json::parse(&std::fs::read(arg("--catalogue", "/etc/agentbound/catalogue.json")).expect("catalogue"), &ab_common::json::MANIFEST_LIMITS).expect("catalogue parse");
-    let cfg = Config { lifecycle_sock: arg("--lifecycle-socket", "/run/agentbound/lifecycle.sock"), socket_dir: arg("--socket-dir", "/run/agentbound/gw"), catalogue, git_root: arg("--git-root", "/var/lib/agentbound/git"), quarantine: arg("--quarantine", "/var/lib/agentbound/gateway/quarantine"), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/audit-gateway.jsonl")), max_conns_per_session: arg("--max-conns", "16").parse().unwrap_or(16) };
+    let cfg = Config { lifecycle_sock: arg("--lifecycle-socket", "/run/agentbound/lifecycle.sock"), socket_dir: arg("--socket-dir", "/run/agentbound/gw"), catalogue, git_root: arg("--git-root", "/var/lib/agentbound/git"), quarantine: arg("--quarantine", "/var/lib/agentbound/gateway/quarantine"), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/gateway/audit-gateway.jsonl")), max_conns_per_session: arg("--max-conns", "16").parse().unwrap_or(16) };
     let _ = std::fs::create_dir_all(&cfg.socket_dir); let _ = std::fs::create_dir_all(&cfg.quarantine);
     let mut gw = Gateway { cfg, by_alloc: HashMap::new(), conns: Vec::new() };
     gw.reconstruct();

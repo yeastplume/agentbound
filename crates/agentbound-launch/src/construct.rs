@@ -6,17 +6,17 @@ use crate::child::ChildPlan;
 use crate::sys::*;
 use ab_common::json::{self, Value, MANIFEST_LIMITS};
 use ab_common::schema::{self, Manifest};
-use ab_common::sig::{now_unix, object_digest, Keyring, Signer_};
+use ab_common::sig::{now_unix, object_digest, sha256_hex, Keyring, Signer_};
 use ab_common::{audit, envelope, wire};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 pub struct Config {
-    pub spool: String, pub lease_dir: String, pub session_root: String, pub lifecycle_sock: String, pub keyring: Keyring, pub signer: Signer_,
+    pub spool: String, pub lease_dir: String, pub session_root: String, pub lifecycle_sock: String, pub gateway_sock: String, pub keyring: Keyring, pub signer: Signer_,
     pub catalogue: Value, pub image_base: String, pub host_id: String, pub boot_id: String, pub self_digest: String, pub audit: audit::Sink, pub policy_uid: u32, pub fault: Option<String>,
 }
 
 #[derive(Default)]
-pub struct Ledger { pub entries: Vec<Value>, pub allocation_id: Option<String>, pub state_seq: i64, pub scope: Option<String>, pub child_pidfd: Option<OwnedFd>, pub child_pid: i32, pub cgroup_dir: Option<OwnedFd>, pub lease: Option<String>, pub lrd: Option<String>, pub fds: Vec<RawFd>, pub session_dir: Option<String> }
+pub struct Ledger { pub gateway_alloc: Option<String>, pub entries: Vec<Value>, pub allocation_id: Option<String>, pub state_seq: i64, pub scope: Option<String>, pub child_pidfd: Option<OwnedFd>, pub child_pid: i32, pub cgroup_dir: Option<OwnedFd>, pub lease: Option<String>, pub lrd: Option<String>, pub fds: Vec<RawFd>, pub session_dir: Option<String> }
 impl Ledger { fn note(&mut self, step: u32, what: &str, detail: &str) { self.entries.push(Value::obj(vec![("detail", Value::s(detail)), ("step", Value::Int(step as i64)), ("what", Value::s(what))])); } }
 
 pub struct Fail { pub step: u32, pub rule: &'static str, pub detail: String }
@@ -66,7 +66,7 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     if m.authorization_id != authorization_id { return fail(0, "authorization_id_mismatch", ""); }
     let ver = envelope::verify_policy(&cfg.keyring, &mv, &env, authorization_id, now()).map_err(|e| Fail { step: 0, rule: "manifest_envelope", detail: e.to_string() })?;
     let mdigest = ver.digest.clone();
-    if m.topology != "none" { return fail(0, "topology_unsupported_1a", m.topology); }
+    if m.topology != "none" && m.topology != "local-socket" { return fail(0, "topology_unsupported", m.topology); }
     let corr = audit::Correlation { authorization_id: Some(authorization_id.into()), session_id: Some(m.session_id.into()), trace_id: Some(m.trace_id.into()), ..Default::default() };
     cfg.audit.emit(&audit::event("session.manifest_verified", "agentbound-launch", "ok", &corr, Value::obj(vec![("key_id", Value::s(&ver.key_id)), ("manifest_digest", Value::s(&mdigest))])));
     // ownership lease: O_EXCL file named by authorization id (one constructor per authorization)
@@ -122,6 +122,21 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
         led.fds.push(t); mounts.push((t, target.clone(), ro));
         projections.push(Value::obj(vec![("access", Value::s(mi.access)), ("catalogue_version", Value::s(cfg.catalogue.get("catalogue_version").and_then(|x| x.as_str()).unwrap_or(""))), ("mount_id", Value::s(mi.mount_id)), ("target_template_projection", Value::s(mi.target_template_id))]));
     }
+    // gateway projection (ADR-0002 D1.2, manifest-schema §3.4): exactly one SEQPACKET socket, created by the gateway for this
+    // allocation, bind-mounted read-only at the catalogue's gateway_socket target. `none` projects nothing.
+    let mut gateway_projection = Value::Null;
+    if m.topology == "local-socket" {
+        let target = cfg.catalogue.get("mount_targets").and_then(|t| t.get("target:gateway-socket")).and_then(|x| x.as_str()).ok_or(Fail { step: 3, rule: "gateway_target_unresolvable", detail: "target:gateway-socket".into() })?.to_string();
+        let pr = call(&cfg.gateway_sock, "project", &format!("{authorization_id}/project"), Value::obj(vec![("allocation_id", Value::s(&aid)), ("authorization_id", Value::s(authorization_id)), ("gid", Value::Int(gids[0] as i64)), ("uid", Value::Int(uid as i64))]), &[], 3)?;
+        let spath = pr.get("socket_path").and_then(|x| x.as_str()).ok_or(Fail { step: 3, rule: "gateway_project", detail: "no socket_path".into() })?.to_string();
+        led.gateway_alloc = Some(aid.clone());
+        let sfd = unsafe { libc::open(c(&spath).as_ptr(), libc::O_PATH | libc::O_CLOEXEC) }; if sfd < 0 { return fail(3, "gateway_socket_open", format!("{spath} errno={}", errno())); }
+        let t = open_tree_clone(sfd).map_err(|e| Fail { step: 3, rule: "gateway_open_tree", detail: format!("errno={e}") })?; unsafe { libc::close(sfd) };
+        mount_setattr(t, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC | MOUNT_ATTR_RDONLY).map_err(|e| Fail { step: 3, rule: "gateway_setattr", detail: format!("errno={e}") })?;
+        led.fds.push(t); mounts.push((t, target.clone(), true));
+        gateway_projection = Value::obj(vec![("channel_topology", Value::s("local-socket")), ("socket_path_digest", Value::s(&sha256_hex(spath.as_bytes()))), ("socket_type", Value::s("AF_UNIX/SOCK_SEQPACKET")), ("target", Value::s(&target))]);
+        led.note(3, "gateway_projected", &target);
+    }
     led.note(3, "mounts", &format!("{} intents resolved", mounts.len()));
     let session_dir = format!("{}/{}", cfg.session_root, aid.trim_start_matches("allocation:")); std::fs::create_dir_all(&session_dir).map_err(|e| Fail { step: 3, rule: "session_dir", detail: e.to_string() })?; led.session_dir = Some(session_dir.clone());
     // the descriptor allowlist is stdin/stdout/stderr; at 1A they are /dev/null and a per-session console log owned by the identity
@@ -171,9 +186,12 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
         ("authorization_id", Value::s(authorization_id)), ("authorization_manifest_digest", Value::s(&mdigest)),
         ("constructor", Value::obj(vec![("agentbound_launch_version_digest", Value::s(&cfg.self_digest)), ("invocation_profile_digest", Value::s(&profile_digest)), ("key_id", Value::s(&cfg.signer.key_id))])),
         ("credential_grants", Value::Arr(vec![])),
-        ("descriptor_allowlist", Value::Arr(["stdin", "stdout", "stderr"].iter().map(|k| Value::obj(vec![("descriptor_id", Value::s(&format!("fd:{k}"))), ("kind", Value::s(k)), ("purpose", Value::s("harness"))])).collect())),
+        // `gateway_socket` is listed as the schema requires but is realised as the bind-mounted socket node, not an inherited
+        // connected descriptor: ADR-0002 D2 requires every process to open its own connection (FINDING for manifest-schema, see DESIGN-1B).
+        ("descriptor_allowlist", Value::Arr(["stdin", "stdout", "stderr"].iter().map(|k| Value::obj(vec![("descriptor_id", Value::s(&format!("fd:{k}"))), ("kind", Value::s(k)), ("purpose", Value::s("harness"))]))
+            .chain(if m.topology == "local-socket" { Some(Value::obj(vec![("descriptor_id", Value::s("mount:gateway_socket")), ("kind", Value::s("gateway_socket")), ("purpose", Value::s("gateway"))])) } else { None }).collect())),
         ("execution_identity", Value::obj(vec![("allocation_id", Value::s(&aid)), ("gids", Value::Arr(gids.iter().map(|g| Value::Int(*g as i64)).collect())), ("mac_context", Value::Null), ("uid", Value::Int(uid as i64))])),
-        ("gateway_projection", Value::Null),
+        ("gateway_projection", gateway_projection),
         ("host_binding", Value::obj(vec![("boot_id", Value::s(&cfg.boot_id)), ("host_id", Value::s(&cfg.host_id)), ("pid_namespace_id", Value::s(&format!("pidns:{pidns}"))), ("scope_id", Value::s(&format!("{scope_name}.scope")))])),
         ("launch_binding_version", Value::s(schema::BINDING_VERSION)), ("mount_projections", Value::Arr(projections)),
         ("namespaces", Value::obj(vec![("ipc", Value::s("private")), ("mount", Value::s("private")), ("pid", Value::s("private")), ("user", Value::s("inherited")), ("uts", Value::s("private"))])),
@@ -184,6 +202,8 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     let committed = call(&cfg.lifecycle_sock, "commit_binding", &format!("{authorization_id}/commit"), cb, &[], 8)?;
     let lrd = committed.get("launch_record_digest").and_then(|x| x.as_str()).unwrap_or("").to_string(); led.lrd = Some(lrd.clone()); led.note(8, "commit_binding", &lrd);
     if fault("post-commit-crash") { return fail(8, "fault_injected", "post-commit-crash"); }
+    // step 8 (session-lifecycle §3): gateway authority becomes usable only now, from the committed record, never from this process's arguments
+    if m.topology == "local-socket" { call(&cfg.gateway_sock, "activate", &format!("{authorization_id}/gw-activate"), Value::obj(vec![("launch_record_digest", Value::s(&lrd))]), &[], 8)?; led.note(8, "gateway_activated", "grants loaded from launch-record store"); }
     // ---- step 9: hand the live evidence to lifecycle, release the barrier, report activation ----
     let ds = Value::Arr(vec![Value::obj(vec![("index", Value::Int(0)), ("kind", Value::s("init_pidfd"))]), Value::obj(vec![("index", Value::Int(1)), ("kind", Value::s("cgroup_dir"))])]);
     let reg = Value::obj(vec![("allocation_id", Value::s(&aid)), ("descriptors", ds), ("init_pid", Value::Int(pid as i64)), ("launch_record_digest", Value::s(&lrd)), ("pid_namespace_id", Value::s(&format!("pidns:{pidns}"))), ("scope_id", Value::s(&format!("{scope_name}.scope"))), ("session_dir", Value::s(&session_dir))]);
@@ -208,6 +228,7 @@ pub fn rollback(cfg: &mut Config, authorization_id: &str, led: &mut Ledger, f: &
     for fd in led.fds.drain(..) { unsafe { libc::close(fd) }; }
     if let Some(s) = &led.scope { let _ = std::process::Command::new("busctl").args(["call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "StopUnit", "ss", s, "replace"]).output(); steps.push(Value::s("scope stopped")); }
     if let Some(d) = &led.session_dir { let _ = std::fs::remove_dir_all(d); }
+    if let Some(a) = &led.gateway_alloc { match call(&cfg.gateway_sock, "release", &format!("{authorization_id}/gw-release/{}", f.step), Value::obj(vec![("allocation_id", Value::s(a))]), &[], f.step) { Ok(_) => steps.push(Value::s("gateway projection released")), Err(_) => steps.push(Value::s("gateway release failed")) } }
     if let Some(aid) = &led.allocation_id {
         let body = Value::obj(vec![("allocation_id", Value::s(aid)), ("failed_step", Value::Int(f.step as i64)), ("launch_record_digest", led.lrd.as_deref().map(Value::s).unwrap_or(Value::Null)), ("ledger", Value::Arr(led.entries.clone())), ("rule", Value::s(f.rule))]);
         match call(&cfg.lifecycle_sock, "report_construction_failed", &format!("{authorization_id}/failed/{}", f.step), body, &[], f.step) { Ok(_) => steps.push(Value::s("identity → reclaiming")), Err(e) => steps.push(Value::s(&format!("report failed: {}", e.detail))) }

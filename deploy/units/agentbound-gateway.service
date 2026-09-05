@@ -1,0 +1,12 @@
+[Unit]
+Description=Agentbound gateway (unprivileged; holds upstream credentials the session never sees)
+After=agentbound-lifecycle.service agentbound-audit.service
+[Service]
+Type=simple
+User=agentbound-gateway
+Group=agentbound
+UMask=0007
+ExecStart=/usr/local/bin/agentbound-gateway
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target

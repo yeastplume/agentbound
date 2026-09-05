@@ -5,7 +5,7 @@ After=agentbound-audit.service
 Type=simple
 Group=agentbound
 UMask=0007
-ExecStart=/usr/local/bin/agentbound-lifecycle --cli-uids 1001,1002,1003,1004
+ExecStart=/usr/local/bin/agentbound-lifecycle --cli-uids 1001,1002,1003,1004 --gateway-uid GATEWAY_UID
 Restart=on-failure
 [Install]
 WantedBy=multi-user.target

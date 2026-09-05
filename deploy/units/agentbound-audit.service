@@ -5,7 +5,7 @@ Type=simple
 User=agentbound-audit
 Group=agentbound
 UMask=0007
-ExecStart=/usr/local/bin/agentbound-audit --writer-uids 0,POLICY_UID
+ExecStart=/usr/local/bin/agentbound-audit --writer-uids 0,POLICY_UID,GATEWAY_UID
 Restart=on-failure
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Host-side protected-branch rule (composes with the gateway; WP1 GS-6): refuse any update to refs/heads/main and any non-staging ref.
+rc=0
+while read -r old new ref; do
+  case "$ref" in
+    refs/agentbound/*) ;;
+    *) echo "protected: $ref" >&2; rc=1 ;;
+  esac
+done
+exit $rc

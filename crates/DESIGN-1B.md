@@ -38,6 +38,8 @@ Args: `repository_id` (catalogue), `ref_tail` (validated: no `..`, no `:`, `+`, 
 
 ## Constructor changes
 
+**FINDING (manifest-schema, to record as a revision entry):** `descriptor_allowlist` models `gateway_socket` as an inherited descriptor ("every descriptor not listed MUST be closed before exec"), while ADR-0002 D2 requires each session process to establish its own authenticated connection, which a single inherited connected descriptor cannot provide. Implementation: the binding lists `gateway_socket` with `descriptor_id: mount:gateway_socket` and realises it as the read-only bind mount of the socket node; the session's fd set at exec stays `0,1,2`. Proposed amendment: `gateway_socket` kind denotes the projected socket node; the binding schema check `gateway_projection ⇔ gateway_socket entry` is unchanged.
+
 - topology `local-socket` accepted when the manifest's `gateway.operations` non-empty and `credential_grant_intents` non-empty; `none` path unchanged.
 - step 3: call gateway `project`; `open_tree` the socket path; mount at `gateway_socket` target inside the new root (bind, ro, nosuid, nodev, noexec); record `gateway_projection {socket_path_digest, target, type:"AF_UNIX/SOCK_SEQPACKET"}` in the binding; `descriptor_allowlist` unchanged (the socket is a mount, not an inherited fd — the session `connect()`s).
 - step 8 (after commit): `activate`. Rollback: `release` + unlink on any failure.
