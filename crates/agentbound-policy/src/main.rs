@@ -80,6 +80,18 @@ impl Policy {
         let revocation = tk.get("revocation").cloned().unwrap_or_else(|| Value::obj(REVOCATION_TRIGGERS.iter().map(|t| (*t, Value::s("terminate"))).collect()));
         let mounts: Vec<Value> = rq.requested_resources.iter().filter_map(|r| self.cat.get("resources").and_then(|x| x.get(r))).filter(|r| r.get("mount_id").is_some())
             .map(|r| Value::obj(vec![("access", r.get("access").cloned().unwrap_or(Value::s("read-only"))), ("catalogue_id", r.get("catalogue_id").cloned().unwrap_or(Value::Null)), ("mount_id", r.get("mount_id").cloned().unwrap_or(Value::Null)), ("required", Value::Bool(true)), ("target_template_id", r.get("target_template_id").cloned().unwrap_or(Value::Null))])).collect();
+        // gateway (1B): operations are the intersection of the task's and the agent's operation ids; each names a catalogue operation.
+        // Topology is `local-socket` iff at least one operation results; grants follow the operation set (manifest-schema §3.4).
+        let (ag_ops, tk_ops) = (strs(pr.get("operations")), strs(tk.get("operations")));
+        let mut gw_ops = Vec::new();
+        for oid in tk_ops.iter().filter(|o| ag_ops.contains(o)) {
+            let o = self.cat.get("operations").and_then(|x| x.get(oid)).ok_or(("catalogue_invalid", format!("operation {oid}")))?;
+            gw_ops.push(Value::obj(vec![("adapter_catalogue_id", o.get("adapter_catalogue_id").cloned().unwrap_or(Value::Null)), ("budgets", o.get("budgets").cloned().unwrap_or(Value::obj(vec![]))), ("operation", o.get("operation").cloned().unwrap_or(Value::Null)), ("operation_id", Value::s(oid)), ("scope", o.get("scope").cloned().unwrap_or(Value::obj(vec![])))]));
+        }
+        let topology = if gw_ops.is_empty() { "none" } else { "local-socket" };
+        let grants: Vec<Value> = if gw_ops.is_empty() { vec![] } else { strs(tk.get("grants")).iter().filter_map(|g| self.cat.get("grants").and_then(|x| x.get(g)).map(|gr| (g.to_string(), gr.clone()))).map(|(gid, gr)| Value::obj(vec![("expiry_policy", gr.get("expiry_policy").cloned().unwrap_or(Value::s("session"))), ("grant_id", Value::s(&gid)), ("kind", gr.get("kind").cloned().unwrap_or(Value::s("git-credential"))), ("operation_subset", Value::Arr(strs(gr.get("operation_subset")).iter().filter(|o| gw_ops.iter().any(|x| x.get("operation_id").and_then(|y| y.as_str()) == Some(*o))).map(|o| Value::s(o)).collect()))])).collect() };
+        if topology == "local-socket" && grants.is_empty() { return rej("catalogue_invalid", "local-socket without a grant"); }
+        let gw_budgets = if gw_ops.is_empty() { Value::obj(vec![]) } else { self.cat.get("gateway_budgets").cloned().unwrap_or(Value::obj(vec![("connection_count", Value::Int(16))])) };
         let n = self.store_scan("authorization").len() + 1;
         let authz = format!("launchrec:{}-{:06}", rq.task_purpose_id.split(':').nth(1).unwrap_or("t").replace('/', "-"), n);
         let session_id = format!("session:{}", &sha256_hex(authz.as_bytes())[7..23]); let trace_id = format!("trace:{}", &sha256_hex(session_id.as_bytes())[7..39]);
@@ -92,11 +104,11 @@ impl Policy {
                 ("owner", init.get("owner").cloned().unwrap_or(Value::Null)), ("scheduler", if relationship == "scheduled" { Value::s(&init_id) } else { Value::Null })])),
             ("agent", Value::obj(vec![("durable_ownership_projection", pr.get("durable_ownership_projection").cloned().unwrap_or(Value::Null)), ("global_id", Value::s(rq.agent_principal_id))])),
             ("audit", Value::obj(vec![("correlation_keys", Value::arr_of_str(&["authorization_id", "trace_id", "agent_global_id", "execution_allocation_id", "execution_uid_boot"])), ("loss_behaviour", tk.get("audit_loss_behaviour").cloned().unwrap_or(Value::s("quarantine"))), ("required_events", Value::arr_of_str(&["launch", "revocation", "termination"]))])),
-            ("authorization_id", Value::s(&authz)), ("credential_grant_intents", Value::Arr(vec![])),
+            ("authorization_id", Value::s(&authz)), ("credential_grant_intents", Value::Arr(grants)),
             ("derivation", Value::obj(vec![("agent_authority_version", Value::s(self.cat_str("agent_authority_version"))), ("catalogue_version", Value::s(self.cat_str("catalogue_version"))), ("derivation_input_digest", Value::s(&object_digest(&inputs))), ("derivation_relation_version", Value::s("derive:v0.1")), ("inputs", inputs),
                 ("policy_version", Value::s(self.cat_str("policy_version"))), ("requested_budget_digest", Value::s(&object_digest(rq.budget.unwrap_or(&Value::obj(vec![]))))), ("resolved_resource_ids", Value::Arr(rq.requested_resources.iter().map(|r| Value::s(r)).collect()))])),
             ("execution_binding", Value::obj(vec![("adapters", Value::Arr(vec![])), ("endpoint", Value::Null), ("inference_pool", Value::Null), ("model", Value::Null), ("retention_mode", Value::s("retention:ephemeral")), ("tenant", Value::Null)])),
-            ("gateway", Value::obj(vec![("budgets", Value::obj(vec![])), ("channel_topology", Value::s("none")), ("operations", Value::Arr(vec![]))])),
+            ("gateway", Value::obj(vec![("budgets", gw_budgets), ("channel_topology", Value::s(topology)), ("operations", Value::Arr(gw_ops))])),
             ("manifest_version", Value::s(schema::MANIFEST_VERSION)), ("mount_intents", Value::Arr(mounts)), ("resource_limits", limits), ("revocation", revocation),
             ("runtime", Value::obj(vec![("artifact_digest", rt.get("artifact_digest").cloned().unwrap_or(Value::Null)), ("catalogue_id", Value::s(rq.requested_runtime)), ("invocation_profile", rt.get("invocation_profile").cloned().unwrap_or(Value::Null))])),
             ("session_trace", Value::obj(vec![("session_id", Value::s(&session_id)), ("trace_id", Value::s(&trace_id))])),
