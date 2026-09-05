@@ -12,6 +12,13 @@ fn workspace_roots(cat: &str) -> Vec<String> {
     v.get("mount_sources").and_then(|m| m.as_obj()).map(|m| m.values().filter_map(|s| Some(format!("{}/{}", s.get("base")?.as_str()?, s.get("relative")?.as_str()?))).collect()).unwrap_or_default()
 }
 
+/// catalogue `storage_principals` → (reference, uid, gid) via the host passwd database
+fn storage_principals(cat: &str) -> Vec<(String, u32, u32)> {
+    let Ok(b) = std::fs::read(cat) else { return vec![] }; let Ok(v) = ab_common::json::parse(&b, &ab_common::json::MANIFEST_LIMITS) else { return vec![] };
+    let Some(m) = v.get("storage_principals").and_then(|m| m.as_obj()) else { return vec![] };
+    m.iter().filter_map(|(k, s)| { let user = s.get("host_user")?.as_str()?; let c = std::ffi::CString::new(user).ok()?; let pw = unsafe { libc::getpwnam(c.as_ptr()) }; if pw.is_null() { eprintln!("lifecycle: storage principal {} maps to unknown host user {user}", k.0); return None; } let pw = unsafe { &*pw }; Some((k.0.clone(), pw.pw_uid, pw.pw_gid)) }).collect()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |k: &str, d: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| d.to_string());
@@ -21,7 +28,7 @@ fn main() {
     let cli_uids: Vec<u32> = arg("--cli-uids", "").split(',').filter_map(|s| s.parse().ok()).collect();
     let host_id = ab_common::audit::host_id(); let boot_id = ab_common::audit::boot_id();
     let store = store::Store::open(&db, store::Range::default(), &host_id, &boot_id).expect("store open (fail closed on chain/range error)");
-    let mut svc = service::Service { store, cfg: service::Config { cli_uids, keyring, host_id, boot_id, launch_version_digest: String::new(), managed_paths: arg("--managed-paths", "/var/lib/agentbound/sessions,/var/lib/agentbound").split(',').map(str::to_string).collect(), workspace_roots: workspace_roots(&arg("--catalogue", "/etc/agentbound/catalogue.json")), gateway_uid: arg("--gateway-uid", "").parse().ok(), gateway_sock: arg("--gateway-socket", "/run/agentbound/gateway.sock") }, sessions: state::Sessions::default(), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/audit-lifecycle.jsonl")) };
+    let mut svc = service::Service { store, cfg: service::Config { cli_uids, keyring, host_id, boot_id, launch_version_digest: String::new(), managed_paths: arg("--managed-paths", "/var/lib/agentbound/sessions,/var/lib/agentbound").split(',').map(str::to_string).collect(), workspace_roots: workspace_roots(&arg("--catalogue", "/etc/agentbound/catalogue.json")), gateway_uid: arg("--gateway-uid", "").parse().ok(), gateway_sock: arg("--gateway-socket", "/run/agentbound/gateway.sock"), storage_principals: storage_principals(&arg("--catalogue", "/etc/agentbound/catalogue.json")) }, sessions: state::Sessions::default(), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/audit-lifecycle.jsonl")) };
     svc.reconcile_on_start();
     let listener = ab_common::wire::listen(&socket, 0o660).expect("listen");
     // accept with a bounded wait so the pidfd/deadline poll runs on its own cadence, not only when a client connects

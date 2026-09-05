@@ -169,6 +169,17 @@ impl Service {
                 unmounts.push(Value::obj(vec![("errno", Value::Int(e as i64)), ("path_class", Value::s(if sub.is_empty() { "session-dir" } else { sub })), ("result", Value::s(match e { 0 => "unmounted", libc::ENOENT | libc::EINVAL => "not-a-host-mount", _ => "failed" }))]));
             }
         }
+        // §4 durable ownership projection: what the ephemeral identity created under a workspace root is chowned to the manifest's
+        // storage principal (catalogue `storage_principals` → host user) before the identity is released, so nothing durable is
+        // left owned by a UID that will be reused. Unmapped principal → hold (not removed, not released).
+        let storage_ref = self.sessions.get(lrd).map(|s| s.storage_ref.clone()).unwrap_or_default();
+        let sp = self.cfg.storage_principals.iter().find(|(r, _, _)| *r == storage_ref).map(|(_, u, g)| (*u, *g));
+        let mut ws_files = Vec::new(); for w in &self.cfg.workspace_roots { scan_owned_deep(w, uid, gid, &mut ws_files); }
+        let ws_files: Vec<String> = ws_files.into_iter().filter(|p| !self.cfg.workspace_roots.contains(p)).collect();
+        let (mut projected, mut bytes, mut failed) = (0i64, 0i64, 0i64);
+        if let Some((su, sg)) = sp { for f in &ws_files { match std::fs::symlink_metadata(f) { Ok(m) => { if std::os::unix::fs::lchown(f, Some(su), Some(sg)).is_ok() { projected += 1; if m.is_file() { bytes += m.len() as i64; } } else { failed += 1; } } Err(_) => {} } } }
+        let projection_ok = ws_files.is_empty() || (sp.is_some() && failed == 0);
+        self.append_event(lrd, "session.ownership_projected", if projection_ok { "ok" } else if sp.is_none() { "unmapped-principal" } else { "partial" }, Value::obj(vec![("bytes", Value::Int(bytes)), ("failed", Value::Int(failed)), ("files", Value::Int(projected)), ("storage_principal", Value::s(&storage_ref))]));
         let mut paths: Vec<String> = self.cfg.managed_paths.clone(); if let Some(d) = &session_dir { paths.push(d.clone()); }
         let mut residue = Vec::new();
         for p in &paths { scan_owned(p, uid, gid, &mut residue); }
@@ -190,7 +201,7 @@ impl Service {
         let gw_remaining = gw.as_ref().and_then(|b| b.get("remaining")).and_then(|x| x.as_int());
         let gw_ok = gw_remaining == Some(0) || (gw.is_none() && self.sessions.get(lrd).map(|s| s.topology != "local-socket").unwrap_or(true));
         let grants = match &gw { Some(b) => Value::obj(vec![("connections_closed", b.get("connections_closed").cloned().unwrap_or(Value::Int(0))), ("released", b.get("released").cloned().unwrap_or(Value::Bool(false))), ("remaining", b.get("remaining").cloned().unwrap_or(Value::Null))]), None => Value::s("gateway unreachable") };
-        let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_bool()) == Some(true)) && gw_ok;
+        let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_str()).is_none() && r.get("removed").and_then(|x| x.as_bool()) == Some(true)) && gw_ok && projection_ok;
         self.append_event(lrd, "session.cleanup_completed", if cond { "ok" } else { "hold" }, Value::obj(vec![("acl_entries_removed", Value::Int(0)), ("grants", grants), ("ipc_namespace", Value::s("destroyed with last process")), ("residue", Value::Arr(removed)), ("unmounts", Value::Arr(unmounts))]));
         if let Ok(Some(a)) = self.store.latest(&aid) {
             let a = if a.state == "in-use" || a.state == "allocated" { self.store.transition(&aid, a.state_seq, "reclaiming", "termination complete", None, None, "agentbound-lifecycle").ok() } else { Some(a) };
@@ -244,7 +255,8 @@ impl Service {
             let g = |p: &Value, path: &[&str]| -> String { let mut v = Some(p); for k in path { v = v.and_then(|x| x.get(k)); } v.and_then(|x| x.as_str()).unwrap_or("").to_string() };
             let (scope, sid, tid, domain) = recs.iter().find(|(k, _)| k == "binding").map(|(_, p)| (g(p, &["launch_binding", "host_binding", "scope_id"]), g(p, &["authorization_manifest", "session_trace", "session_id"]), g(p, &["authorization_manifest", "session_trace", "trace_id"]), g(p, &["authorization_manifest", "termination_retention", "reclamation_domain_id"]))).unwrap_or_default();
             let topo = recs.iter().find(|(k, _)| k == "binding").map(|(_, p)| g(p, &["authorization_manifest", "gateway", "channel_topology"])).unwrap_or_default();
-            self.sessions.bind(&aid, &lrd, &az, &scope, &sid, &tid, a.uid, a.gid, &domain, &topo);
+            let sref = recs.iter().find(|(k, _)| k == "binding").map(|(_, p)| g(p, &["authorization_manifest", "agent", "durable_ownership_projection", "reference"])).unwrap_or_default();
+            self.sessions.bind(&aid, &lrd, &az, &scope, &sid, &tid, a.uid, a.gid, &domain, &topo, &sref);
             let (inside, outside) = credential_scan(a.uid, a.gid, &scope);
             let cgpath = format!("/sys/fs/cgroup/system.slice/{scope}");
             let live_cg = std::fs::read_to_string(format!("{cgpath}/cgroup.procs")).map(|s| !s.trim().is_empty()).unwrap_or(false);
@@ -274,6 +286,17 @@ impl Service {
         self.sessions.set_state(lrd, "terminated", Some("recovery retry: no live evidence"));
         self.append_event(lrd, "session.recovery_reconciled", "cleanup-and-seal", Value::obj(vec![("cgroup_live", Value::Bool(false)), ("credential_scan_inside", Value::Int(0)), ("credential_scan_outside", Value::Int(0)), ("identity_state", Value::s("in-use")), ("scope_id", Value::s(&scope))]));
         self.cleanup_and_seal(lrd);
+    }
+}
+
+/// Like `scan_owned` but descends into owned directories too: ownership projection must reach every file, not just the top of each tree.
+fn scan_owned_deep(root: &str, uid: u32, gid: u32, out: &mut Vec<String>) {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(rd) = std::fs::read_dir(root) else { return };
+    for e in rd.flatten() {
+        let p = e.path(); let Ok(m) = std::fs::symlink_metadata(&p) else { continue };
+        if m.uid() == uid || m.gid() == gid { out.push(p.to_string_lossy().into_owned()); }
+        if m.is_dir() && !m.file_type().is_symlink() { scan_owned_deep(&p.to_string_lossy(), uid, gid, out); }
     }
 }
 

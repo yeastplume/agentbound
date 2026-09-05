@@ -15,6 +15,7 @@ fn detail_members(kind: &str) -> Option<&'static [&'static str]> {
         "identity.scope_escape_suspected" => &["pids", "uid"], "session.cleanup_completed" => &["acl_entries_removed", "grants", "ipc_namespace", "residue", "unmounts"],
         "session.identity_released" => &["allocation_id", "quarantine_state_seq", "reclamation_proof"], "session.sealed" => &["seal_seq", "termination_reason"],
         "session.recovery_reconciled" => &["cgroup_live", "credential_scan_inside", "credential_scan_outside", "identity_state", "scope_id"],
+        "session.ownership_projected" => &["bytes", "failed", "files", "storage_principal"],
         "audit.self_test" => &["note"],
         // gateway (ADR-0002 Decision 5): connection, operation, denial, revocation and close records
         "gateway.reconstructed" => &["projections", "stale_descriptors_dropped"], "gateway.projected" => &["socket_type", "topology"], "gateway.grants_loaded" => &["operations", "source"],

@@ -361,6 +361,14 @@
       "invocation_profile": "profile:sh-interactive"
     }
   },
+  "storage_principals": {
+    "storage:engineering-agent": {
+      "host_user": "storage-engineering"
+    },
+    "storage:finance-agent": {
+      "host_user": "storage-finance"
+    }
+  },
   "tasks": {
     "task:degraded-bad": {
       "approvals_required": 0,

@@ -11,7 +11,7 @@ use ab_common::sig::{launch_record_digest, now_unix, object_digest, Keyring};
 use ab_common::wire::{self, Conn, Req};
 use std::os::fd::OwnedFd;
 
-pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String, pub managed_paths: Vec<String>, pub workspace_roots: Vec<String>, pub gateway_uid: Option<u32>, pub gateway_sock: String }
+pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String, pub managed_paths: Vec<String>, pub workspace_roots: Vec<String>, pub gateway_uid: Option<u32>, pub gateway_sock: String, pub storage_principals: Vec<(String, u32, u32)> }
 
 pub struct Service { pub store: Store, pub cfg: Config, pub sessions: Sessions, pub audit: audit::Sink }
 
@@ -97,7 +97,7 @@ impl Service {
         let lrd = launch_record_digest(&pm.digest, &cb.digest).map_err(|e| (wire::CLASS_INTERNAL, "digest", e.to_string()))?;
         let payload = Value::obj(vec![("authorization_manifest", m.clone()), ("envelope", le.clone()), ("launch_binding", lb.clone()), ("manifest_envelope", me.clone())]);
         let seq = self.store.append_record("binding", aid, &lrd, mv.authorization_id, &payload).map_err(store_err)?;
-        self.sessions.bind(aid, &lrd, mv.authorization_id, bv.scope_id, mv.session_id, mv.trace_id, a.uid, a.gid, mv.reclamation_domain_id, mv.topology);
+        self.sessions.bind(aid, &lrd, mv.authorization_id, bv.scope_id, mv.session_id, mv.trace_id, a.uid, a.gid, mv.reclamation_domain_id, mv.topology, mv.storage_ref);
         let c = Correlation { authorization_id: Some(mv.authorization_id.into()), launch_record_digest: Some(lrd.clone()), allocation_id: Some(aid.into()), session_id: Some(mv.session_id.into()), trace_id: Some(mv.trace_id.into()), execution_uid: Some(a.uid) };
         self.emit("session.launch_record_committed", "ok", &c, Value::obj(vec![("commit_seq", Value::Int(seq)), ("manifest_digest", Value::s(&pm.digest)), ("trust_anchor", Value::s(&format!("{}+{}", pm.key_id, cb.key_id)))]));
         Ok(Value::obj(vec![("launch_record_digest", Value::s(&lrd)), ("store_seq", Value::Int(seq))]))

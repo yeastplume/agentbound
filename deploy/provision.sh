@@ -5,6 +5,8 @@ getent group agentbound >/dev/null || groupadd agentbound
 for u in agentbound-policy agentbound-audit agentbound-gateway; do id "$u" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin -g agentbound "$u"; done
 usermod -aG agentbound agentbound-policy 2>/dev/null || true
 # operator/initiator accounts named in the reference catalogue
+# durable storage principals: the host users that own what a session leaves in a workspace (manifest durable_ownership_projection)
+for n in storage-engineering storage-finance; do id $n >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin -g agentbound $n; done
 i=1001; for n in alice bob carol cron; do id $n >/dev/null 2>&1 || useradd -u $i -m -G agentbound $n; i=$((i+1)); done
 install -d -m 0755 /etc/agentbound
 install -d -m 1770 -o root -g agentbound /run/agentbound
@@ -42,6 +44,7 @@ if [ ! -x $img/bin/sh ]; then
   for a in sh ls cat echo sleep id ps mount touch cp rm mkdir ln env true false kill sync dd head tail grep readlink stat uname hostname; do ln -sf busybox $img/bin/$a; done
   printf "#!/bin/sh\nwhile :; do sleep 1; done\n" > $img/loop.sh; chmod 0755 $img/loop.sh
 fi
+install -m 0755 target/release/ab-conformance /usr/local/bin/ab-conformance
 install -m 0755 crates/ab-conformance/probe/probe.sh $img/probe.sh
 # 1B: session-side gateway client (static) and git with its shared libraries copied into the image (no network tooling)
 install -m 0755 target/release/ab-gwclient $img/bin/ab-gwclient

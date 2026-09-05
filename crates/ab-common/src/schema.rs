@@ -107,7 +107,7 @@ pub struct Manifest<'a> {
     pub v: &'a Value, pub authorization_id: &'a str, pub session_id: &'a str, pub trace_id: &'a str, pub agent_global_id: &'a str,
     pub runtime_catalogue_id: &'a str, pub runtime_artifact_digest: &'a str, pub invocation_profile: &'a str,
     pub topology: &'a str, pub mount_intents: Vec<MountIntent<'a>>, pub grant_intent_ids: Vec<&'a str>, pub operation_ids: Vec<&'a str>,
-    pub loss_behaviour: &'a str, pub reclamation_domain_id: &'a str,
+    pub loss_behaviour: &'a str, pub reclamation_domain_id: &'a str, pub storage_ref: &'a str,
 }
 
 pub fn validate_manifest(v: &Value) -> R<Manifest<'_>> {
@@ -206,7 +206,7 @@ pub fn validate_manifest(v: &Value) -> R<Manifest<'_>> {
     str_set(tr, "termination_triggers", "manifest.termination_retention", 16, |s| REVOCATION_TRIGGERS.contains(&s))?;
 
     Ok(Manifest { v, authorization_id, session_id, trace_id, agent_global_id, runtime_catalogue_id, runtime_artifact_digest, invocation_profile,
-        topology: gw.get("channel_topology").unwrap().as_str().unwrap(), mount_intents, grant_intent_ids, operation_ids, loss_behaviour: au.get("loss_behaviour").unwrap().as_str().unwrap(), reclamation_domain_id })
+        topology: gw.get("channel_topology").unwrap().as_str().unwrap(), mount_intents, grant_intent_ids, operation_ids, loss_behaviour: au.get("loss_behaviour").unwrap().as_str().unwrap(), reclamation_domain_id, storage_ref: dop.get("reference").and_then(|x| x.as_str()).unwrap_or("") })
 }
 
 fn validate_limit(l: &Value, path: &str) -> R<()> {
