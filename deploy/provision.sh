@@ -42,6 +42,18 @@ if [ ! -x $img/bin/sh ]; then
   printf "#!/bin/sh\nwhile :; do sleep 1; done\n" > $img/loop.sh; chmod 0755 $img/loop.sh
 fi
 install -m 0755 crates/ab-conformance/probe/probe.sh $img/probe.sh
+# 1B: session-side gateway client (static) and git with its shared libraries copied into the image (no network tooling)
+install -m 0755 target/release/ab-gwclient $img/bin/ab-gwclient
+for a in awk sed wc tr basename dirname date sort uniq find xargs test printf sha256sum; do ln -sf busybox $img/bin/$a; done
+if [ ! -x $img/usr/bin/git ]; then
+  install -d $img/usr/lib/git-core $img/usr/share/git-core/templates $img/etc
+  cp /usr/bin/git $img/usr/bin/git
+  for x in git git-remote-http git-upload-pack git-receive-pack; do [ -f /usr/lib/git-core/$x ] && cp /usr/lib/git-core/$x $img/usr/lib/git-core/$x; done
+  for f in $(for b in /usr/bin/git $img/usr/lib/git-core/*; do ldd $b 2>/dev/null | awk '/=> \//{print $3} /^\s*\/lib64/{print $1}'; done | sort -u); do d=$img$(dirname $f); install -d $d; cp -L $f $d/; done
+  cp -L /lib64/ld-linux-x86-64.so.2 $img/lib64/ 2>/dev/null || true
+  printf 'root:x:0:0::/:/bin/sh\n' > $img/etc/passwd; printf 'root:x:0:\n' > $img/etc/group
+fi
+install -m 0755 crates/ab-conformance/probe/git-worker.sh $img/git-worker.sh
 # CLI users may invoke the constructor as root, nothing else
 printf '%%agentbound ALL=(root) NOPASSWD: /usr/local/bin/agentbound-launch\n' > /etc/sudoers.d/agentbound; chmod 0440 /etc/sudoers.d/agentbound
 puid=$(id -u agentbound-policy)

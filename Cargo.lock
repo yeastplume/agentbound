@@ -25,6 +25,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ab-gwclient"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "libc",
+ "sha2",
+]
+
+[[package]]
 name = "agentbound"
 version = "0.1.0"
 dependencies = [

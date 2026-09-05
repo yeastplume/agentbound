@@ -12,7 +12,7 @@ use ab_common::wire;
 use std::collections::HashMap;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 
-pub struct Config { pub lifecycle_sock: String, pub socket_dir: String, pub catalogue: Value, pub git_root: String, pub quarantine: String, pub audit: ab_common::audit::Sink, pub max_conns_per_session: usize }
+pub struct Config { pub lifecycle_sock: String, pub socket_dir: String, pub catalogue: Value, pub git_root: String, pub credential: String, pub quarantine: String, pub audit: ab_common::audit::Sink, pub max_conns_per_session: usize }
 
 /// A projected session: its listener, admission flag and grants (loaded from the committed record).
 pub struct Projection { pub authorization_id: String, pub allocation_id: String, pub uid: u32, pub gid: u32, pub path: String, pub listener: OwnedFd, pub lrd: Option<String>, pub admission: bool, pub record: Option<Value>, pub ops: Vec<Value>, pub bytes_used: u64, pub op_count: u64 }
@@ -23,7 +23,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |k: &str, d: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| d.to_string());
     let catalogue = ab_common::json::parse(&std::fs::read(arg("--catalogue", "/etc/agentbound/catalogue.json")).expect("catalogue"), &ab_common::json::MANIFEST_LIMITS).expect("catalogue parse");
-    let cfg = Config { lifecycle_sock: arg("--lifecycle-socket", "/run/agentbound/lifecycle.sock"), socket_dir: arg("--socket-dir", "/run/agentbound/gw"), catalogue, git_root: arg("--git-root", "/var/lib/agentbound/git"), quarantine: arg("--quarantine", "/var/lib/agentbound/gateway/quarantine"), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/gateway/audit-gateway.jsonl")), max_conns_per_session: arg("--max-conns", "16").parse().unwrap_or(16) };
+    let cfg = Config { lifecycle_sock: arg("--lifecycle-socket", "/run/agentbound/lifecycle.sock"), socket_dir: arg("--socket-dir", "/run/agentbound/gw"), catalogue, git_root: arg("--git-root", "/var/lib/agentbound/git"), credential: arg("--credential", "/var/lib/agentbound/gateway/credential"), quarantine: arg("--quarantine", "/var/lib/agentbound/gateway/quarantine"), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/gateway/audit-gateway.jsonl")), max_conns_per_session: arg("--max-conns", "16").parse().unwrap_or(16) };
     let _ = std::fs::create_dir_all(&cfg.socket_dir); let _ = std::fs::create_dir_all(&cfg.quarantine);
     let mut gw = Gateway { cfg, by_alloc: HashMap::new(), conns: Vec::new() };
     gw.reconstruct();

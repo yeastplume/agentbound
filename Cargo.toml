@@ -7,6 +7,7 @@ members = [
   "crates/agentbound-lifecycle",
   "crates/agentbound-audit",
   "crates/agentbound-gateway",
+  "crates/ab-gwclient",
   "crates/agentbound",
   "crates/ab-conformance",
 ]
