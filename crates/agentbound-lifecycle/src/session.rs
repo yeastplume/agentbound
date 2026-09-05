@@ -217,7 +217,12 @@ impl Service {
             if s.state == "active" && s.init_pidfd.as_ref().map(|f| pidfd_exited(f.as_raw_fd())).unwrap_or(false) { return Some((s.lrd.clone(), "init_exited")); }
             if s.state == "termination-incomplete" { return Some((s.lrd.clone(), "retry")); }
             None }).collect();
-        for (lrd, why) in due { let _ = self.terminate(&lrd, why, DEFAULT_TERM_BOUND_S); }
+        for (lrd, why) in due {
+            // a recovered session has no cgroup fd: retry means re-evaluating the containment evidence by path and sealing once it is clean
+            let recovered = self.sessions.get(&lrd).map(|s| s.cgroup_dir.is_none() && s.state == "termination-incomplete").unwrap_or(false);
+            if recovered { self.retry_recovered(&lrd); continue; }
+            let _ = self.terminate(&lrd, why, DEFAULT_TERM_BOUND_S);
+        }
         let pending = std::mem::take(&mut self.sessions.pending_reclaim);
         for (aid, lrd) in pending {
             if let Some(l) = lrd { self.cleanup_and_seal(&l); continue; }
@@ -253,6 +258,22 @@ impl Service {
         if let Ok(v) = self.store.nonfree() { for a in v { if a.state == "allocated" && !self.store.record_exists("binding", "allocation_id", &a.allocation_id).unwrap_or(true) {
             let _ = self.store.transition(&a.allocation_id, a.state_seq, "reclaiming", "recovery: no binding committed", None, None, "agentbound-lifecycle");
             self.sessions.pending_reclaim.push((a.allocation_id.clone(), None)); } } }
+    }
+}
+
+impl Service {
+    /// Recovery retry (§5 restart case): kill by path again, re-scan; when the scope is gone and no credential-holding
+    /// process remains, the session is terminated and cleanup/seal runs. Otherwise it stays termination-incomplete.
+    fn retry_recovered(&mut self, lrd: &str) {
+        let Some(s) = self.sessions.get(lrd) else { return }; let (uid, gid, scope) = (s.uid, s.gid, s.scope_id.clone());
+        let cgpath = format!("/sys/fs/cgroup/system.slice/{scope}");
+        let _ = std::fs::write(format!("{cgpath}/cgroup.kill"), "1");
+        let live_cg = std::fs::read_to_string(format!("{cgpath}/cgroup.procs")).map(|s| !s.trim().is_empty()).unwrap_or(false);
+        let (inside, outside) = credential_scan(uid, gid, &scope);
+        if live_cg || !inside.is_empty() || !outside.is_empty() { return; }
+        self.sessions.set_state(lrd, "terminated", Some("recovery retry: no live evidence"));
+        self.append_event(lrd, "session.recovery_reconciled", "cleanup-and-seal", Value::obj(vec![("cgroup_live", Value::Bool(false)), ("credential_scan_inside", Value::Int(0)), ("credential_scan_outside", Value::Int(0)), ("identity_state", Value::s("in-use")), ("scope_id", Value::s(&scope))]));
+        self.cleanup_and_seal(lrd);
     }
 }
 

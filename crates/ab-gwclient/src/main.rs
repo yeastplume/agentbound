@@ -9,10 +9,12 @@ fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 5 { eprintln!("usage"); std::process::exit(2); }
     let (fork, rights) = (a.iter().any(|x| x == "--fork"), a.iter().any(|x| x == "--scm-rights"));
+    let hold = a.iter().any(|x| x == "--hold"); // keep the connection open after the first reply, send the next packet on stdin EOF (T-6.4-014)
+    let sock_type = if a.iter().any(|x| x == "--stream") { libc::SOCK_STREAM } else if a.iter().any(|x| x == "--dgram") { libc::SOCK_DGRAM } else { libc::SOCK_SEQPACKET };
     let payload = a.get(5).filter(|p| !p.starts_with("--")).map(|p| std::fs::read(p).expect("payload")).unwrap_or_default();
     let sha = format!("sha256:{}", hex::encode(Sha256::digest(&payload)));
     let msg = format!("{{\"args\":{},\"operation\":\"{}\",\"operation_id\":\"{}\",\"payload_len\":{},\"payload_sha256\":\"{}\",\"v\":\"agentbound.gateway.v0.1\"}}", a[4], a[3], a[2], payload.len(), sha);
-    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC, 0) };
+    let fd = unsafe { libc::socket(libc::AF_UNIX, sock_type | libc::SOCK_CLOEXEC, 0) };
     if fd < 0 { eprintln!("socket errno={}", std::io::Error::last_os_error()); std::process::exit(3); }
     let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() }; addr.sun_family = libc::AF_UNIX as u16;
     for (i, b) in a[1].bytes().enumerate() { addr.sun_path[i] = b as libc::c_char; }
@@ -36,6 +38,7 @@ fn main() {
     if !send(msg.as_bytes()) { eprintln!("send errno={}", std::io::Error::last_os_error()); std::process::exit(5); }
     let Some(r) = recv() else { eprintln!("closed by gateway"); std::process::exit(6) }; let _ = writeln!(out, "{r}");
     if !r.contains("\"ok\":true") { std::process::exit(1); }
+    if hold { let mut sink = String::new(); let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut sink); if !send(msg.as_bytes()) { eprintln!("send errno={}", std::io::Error::last_os_error()); std::process::exit(5); } let Some(r) = recv() else { eprintln!("closed by gateway"); std::process::exit(6) }; let _ = writeln!(out, "{r}"); std::process::exit(if r.contains("\"ok\":true") { 0 } else { 1 }); }
     let mut off = 0; let mut last = String::new();
     while off < payload.len() { let end = (off + (128 << 10)).min(payload.len()); if !send(&payload[off..end]) { std::process::exit(5); } let Some(r) = recv() else { eprintln!("closed by gateway"); std::process::exit(6) }; last = r; off = end; }
     if !last.is_empty() { let _ = writeln!(out, "{last}"); if !last.contains("\"ok\":true") { std::process::exit(1); } }

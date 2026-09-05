@@ -147,6 +147,16 @@
     "mount-target:workspace": "/workspace"
   },
   "operations": {
+    "op:gateway-ping": {
+      "adapter_catalogue_id": "adapter:gateway",
+      "budgets": {
+        "bytes_per_operation": 0,
+        "operations": 64
+      },
+      "operation": "gateway.ping",
+      "operation_id": "op:gateway-ping",
+      "scope": {}
+    },
     "op:git-push-staging": {
       "adapter_catalogue_id": "adapter:git-staging",
       "budgets": {
@@ -187,7 +197,8 @@
         "reference": "storage:engineering-agent"
       },
       "operations": [
-        "op:git-push-staging"
+        "op:git-push-staging",
+        "op:gateway-ping"
       ],
       "resources": [
         "resource:workspace-eng"
@@ -373,21 +384,33 @@
       "version": "task:v1"
     },
     "task:fix-issue-1234": {
+      "approvals_required": 1,
+      "audit_loss_behaviour": "quarantine",
+      "resources": [
+        "resource:workspace-eng"
+      ],
+      "runtimes": [
+        "runtime:sh",
+        "runtime:scripted-loop"
+      ],
+      "version": "task:v1"
+    },
+    "task:fix-issue-1235": {
       "approvals_required": 0,
       "audit_loss_behaviour": "quarantine",
       "grants": [
         "grant:git-staging"
       ],
       "operations": [
-        "op:git-push-staging"
+        "op:git-push-staging",
+        "op:gateway-ping"
       ],
       "resources": [
         "resource:workspace-eng"
       ],
       "runtimes": [
         "runtime:git-worker",
-        "runtime:probe",
-        "runtime:sh"
+        "runtime:probe"
       ],
       "version": "task:v1"
     },

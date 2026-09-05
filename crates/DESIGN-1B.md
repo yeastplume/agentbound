@@ -54,7 +54,7 @@ Args: `repository_id` (catalogue), `ref_tail` (validated: no `..`, no `:`, `+`, 
 
 ## Policy / catalogue additions
 
-`repositories: {repo:demo → {url, protected: [refs/heads/main]}}`, `adapter_catalogue: {adapter:git-staging}`, task `task:fix-issue-1234` gets `operations: [op:git-push-staging]`, `grants: [grant:git-staging]`; `operations: {op:git-push-staging → {adapter_catalogue_id, operation:"git.push_staging", scope:{repository_id}, budgets:{bytes_per_operation, operations, objects}}}`; profile `profile:git-worker` argv `/bin/sh /image/git-worker.sh` (image now needs `git` — use the host's static-ish git via a bind of `/usr/bin/git` + libs? No: build the image with `git` and its shared libraries copied by `ldd`; record image digest).
+`repositories: {repo:demo → {url, protected: [refs/heads/main]}}`, `adapter_catalogue: {adapter:git-staging}`, task `task:fix-issue-1235` (approvals 0; `task:fix-issue-1234` stays the WP2 approval fixture) gets `operations: [op:git-push-staging]`, `grants: [grant:git-staging]`; `operations: {op:git-push-staging → {adapter_catalogue_id, operation:"git.push_staging", scope:{repository_id}, budgets:{bytes_per_operation, operations, objects}}}`; profile `profile:git-worker` argv `/bin/sh /image/git-worker.sh` (image now needs `git` — use the host's static-ish git via a bind of `/usr/bin/git` + libs? No: build the image with `git` and its shared libraries copied by `ldd`; record image digest).
 
 ## Conformance additions (1B rows)
 

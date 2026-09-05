@@ -31,6 +31,30 @@ impl Rig {
     }
 }
 
+const GW_FORGE: &str = r#"
+import socket,sys,struct,os
+path,pid=sys.argv[1],int(sys.argv[2])
+def conn():
+    s=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET); s.settimeout(2)
+    try: s.connect(path)
+    except OSError as e: print("DENY connect",e.errno); return None
+    return s
+msg=b'{"args":{},"operation":"gateway.ping","operation_id":"x","payload_len":0,"payload_sha256":"","v":"agentbound.gateway.v0.1"}'
+# root from the host: uid 0 != allocation uid -> establishment refused (connection closed before any packet)
+s=conn()
+if s:
+    try:
+        s.send(msg); r=s.recv(4096); print("ACCEPT" if b'"ok":true' in r else "DENY host-root-peer", r[:80])
+    except OSError as e: print("DENY host-root-peer closed",e.errno)
+# forged SCM_CREDENTIALS claiming the session init pid (needs CAP_SYS_ADMIN; we have it as root) -> pidfs instance/uid mismatch
+for label,creds in (("forged-pid",[struct.pack("iII",pid,0,0)]),("two-creds",[struct.pack("iII",os.getpid(),0,0),struct.pack("iII",pid,0,0)])):
+    s=conn()
+    if not s: continue
+    try:
+        s.sendmsg([msg],[(socket.SOL_SOCKET,socket.SCM_CREDENTIALS,c) for c in creds]); r=s.recv(4096); print("ACCEPT" if b'"ok":true' in r else "DENY "+label, r[:80])
+    except OSError as e: print("DENY",label,"closed",e.errno)
+"#;
+
 fn main() {
     let mut g = Rig { rows: vec![], as_user: "alice".into() };
     sh("rm -f /var/lib/agentbound/workspaces/finance/*");
@@ -126,8 +150,10 @@ fn main() {
     let acts = o1.matches("\"scope_id\"").count(); let refusals = o1.matches("lease_held").count() + o1.matches("already allocated").count() + o1.matches("handoff_missing").count();
     g.rec("T-6.5-004", acts == 1 && refusals == 1, format!("activations={acts} refusals={refusals}"));
     if let Some(l) = jget(&lc("list", Value::obj(vec![])), "body.sessions").and_then(|s| s.as_arr()).and_then(|a| a.iter().rev().find(|s| js(s, "state") == "active").map(|s| js(s, "launch_record_digest"))) { g.terminate(&l); }
+    // every `free` row must follow a `quarantined` row at least the 24 h floor earlier; no identity is in-use after the run
     let (_, q) = sh("python3 -c \"import sqlite3;c=sqlite3.connect('/var/lib/agentbound/lifecycle.db');print(c.execute(\\\"select state,count(*) from alloc a where seq=(select max(seq) from alloc b where b.allocation_id=a.allocation_id) group by state\\\").fetchall())\"");
-    g.rec("T-6.5-009", q.contains("quarantined") && !q.contains("'free'") && !q.contains("in-use"), format!("allocator latest states: {}", q.trim()));
+    let (_, early) = sh("python3 -c \"import sqlite3,datetime;c=sqlite3.connect('/var/lib/agentbound/lifecycle.db');p=lambda s:datetime.datetime.fromisoformat(s.replace('Z','+00:00'));bad=0\nfor a,fw in c.execute(\\\"select allocation_id,wall_clock from alloc where state='free'\\\").fetchall():\n q=c.execute(\\\"select max(wall_clock) from alloc where allocation_id=? and state='quarantined'\\\",(a,)).fetchone()[0]\n if q is None or (p(fw)-p(q)).total_seconds()<86400: bad+=1\nprint(bad)\"");
+    g.rec("T-6.5-009", q.contains("quarantined") && !q.contains("in-use") && early.trim() == "0", format!("allocator latest states: {}; free-before-floor violations={}", q.trim(), early.trim()));
 
     // ---- revocation behaviours (T-6.8) ----
     let (rc, v, _) = g.launch("runtime:scripted-loop", "task:quiesce-cases"); let lrd = js(&v, "launch_record_digest"); let scope = js(&v, "scope_id"); g.rec("T-6.8.setup", rc == 0, &lrd);
@@ -163,6 +189,75 @@ fn main() {
     sh("cp /tmp/cat.bak /etc/agentbound/catalogue.json");
     g.rec("T-6.5-003", rc != 0 && js(&ev, "detail.failed_step") == "3" && js(&ev, "detail.rule").starts_with("mount_source"), format!("rule={} detail={}", js(&ev, "detail.rule"), js(&ev, "detail.detail")));
 
+    // ================= 1B: mediated effect (gateway) =================
+    // ---- D-10/D-13 + in-session rows from the git-worker runtime (bob, engineering-agent, task:fix-issue-1234) ----
+    let gb = Rig { as_user: "bob".into(), rows: vec![] };
+    let greq = gb.write_req("gw", r#"{"agent_principal_id":"agent:engineering-agent","approval_references":[],"initiator_credential_ref":"authn:bob-session-0001","requested_resources":["resource:workspace-eng"],"requested_runtime":"runtime:git-worker","schema_version":"agentbound.session-request.v0.1","task_purpose_id":"task:fix-issue-1235"}"#);
+    let main_before = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git rev-parse refs/heads/main'").1.trim().to_string();
+    let (rc, v, _) = gb.request(&greq, ""); let glrd = js(&v, "launch_record_digest"); let gscope = js(&v, "scope_id"); let guid = js(&v, "uid");
+    g.rec("D-10.launch", rc == 0 && !glrd.is_empty(), format!("rc={rc} lrd={glrd} topology=local-socket"));
+    let gcon = js(&v, "console"); std::thread::sleep(std::time::Duration::from_secs(24));
+    let worker = std::fs::read_to_string(&gcon).unwrap_or_default(); let mut gend = false;
+    for l in worker.lines().filter(|l| l.starts_with("GW ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "GW-END" { gend = true; continue; } g.rec(&format!("{}", p[1]), p[2] == "PASS", p.get(3).copied().unwrap_or("")); }
+    g.rec("GW-COMPLETE", gend, format!("worker lines={}", worker.lines().count()));
+    let rec = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&glrd))]));
+    let sid = js(&rec, "body.binding.authorization_manifest.session_trace.session_id").trim_start_matches("session:").to_string(); let trace = js(&rec, "body.binding.authorization_manifest.session_trace.trace_id");
+    // D-13: staging ref present at the session's tip, main unchanged, host hook logged the trace
+    let (_, refs) = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git for-each-ref'"); let main_after = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git rev-parse refs/heads/main'").1.trim().to_string();
+    let staged = refs.lines().any(|l| l.contains(&format!("refs/agentbound/{sid}/fix-1234")));
+    g.rec("D-13", staged && main_before == main_after, format!("staging ref for session {sid}: {staged}; main {main_before}→{main_after}"));
+    let (_, hook) = sh("cat /var/lib/agentbound/git/demo.git/agentbound-receive.log 2>/dev/null | tail -20");
+    g.rec("D-13.trace", hook.lines().any(|l| l.contains(&format!("agentbound-trace={trace}")) && l.contains(&sid)), format!("host hook log carries trace {trace}"));
+    // GS-6: host protected-branch rule composes even if the gateway were bypassed
+    let (rc6, o6) = sh("su -s /bin/sh agentbound-gateway -c 'cd /tmp && rm -rf gs6 && git clone -q -b main /var/lib/agentbound/git/demo.git gs6 && cd gs6 && git -c user.name=x -c user.email=x@x commit -q --allow-empty -m bypass && git push -q origin HEAD:refs/heads/main' 2>&1");
+    g.rec("GS-6", rc6 != 0 && o6.contains("protected"), format!("direct push to main as gateway user refused by host hook: {}", o6.lines().find(|l| l.contains("protected")).unwrap_or("").trim()));
+    // ---- T-6.4-001/002/003/004/010: boundary from inside (root exec into the session's pidns/mntns/netns via nsenter) ----
+    let (_, ipid) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{gscope}/cgroup.procs")); let ipid = ipid.trim().to_string();
+    let ns = |cmd: &str| sh(&format!("nsenter -t {ipid} -m -n -p -i -u -- /bin/sh -c '{cmd}' 2>&1"));
+    let (_, ifc) = ns("ls /sys/class/net 2>&1; cat /proc/net/dev | tail -n +3 | cut -d: -f1"); g.rec("T-6.4-002", !ifc.contains("eth") && !ifc.contains("ens") && ifc.lines().filter(|l| !l.trim().is_empty()).all(|l| l.contains("lo") || l.contains("No such")), format!("session netns interfaces: {}", ifc.replace('\n', " ").trim()));
+    let (_, hs) = ns("ls /run/agentbound /var/run/agentbound 2>&1 | head -2"); g.rec("T-6.4-003", hs.contains("No such"), format!("host socket dir from session: {}", hs.trim()));
+    let (_, gwls) = ns("ls -la /run/gateway.sock; ls /run | wc -l"); g.rec("T-6.4-003.only", gwls.contains("srw") && gwls.trim().ends_with('1'), format!("exactly one socket node in /run: {}", gwls.replace('\n', " ")));
+    let (_, py) = sh(&format!("nsenter -t {ipid} -n -- python3 -c \"import socket\ns=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\ntry:\n s.connect(chr(0)+'agentbound-host-abstract'); print('connected')\nexcept OSError as e: print('err',e.errno)\n\" 2>&1"));
+    g.rec("T-6.4-004", py.contains("err"), format!("abstract socket from session netns: {}", py.trim()));
+    // ---- T-6.4-005: a process in the session's namespaces but outside its scope cgroup (host nsenter as the session uid) is refused at establishment ----
+    let (_, sm) = sh(&format!("nsenter -t {ipid} -m -n -p -S {guid} -G {guid} -- ab-gwclient /run/gateway.sock x gateway.ping '{{}}' 2>&1 | head -c 120; sleep 1; grep -c scope_mismatch /var/lib/agentbound/gateway/audit-gateway.jsonl"));
+    g.rec("T-6.4-005", sm.contains("closed by gateway") && sm.lines().last().unwrap_or("0").trim().parse::<i32>().unwrap_or(0) >= 1, format!("outside-scope peer with session uid: {}", sm.replace('\n', " ")));
+    // ---- T-6.4-008: forged/zero/multiple SCM_CREDENTIALS from the host as root against the session's socket ----
+    std::fs::write("/tmp/gw-forge.py", GW_FORGE).unwrap();
+    let (_, forge) = sh(&format!("python3 /tmp/gw-forge.py /run/agentbound/gw/{}.sock {ipid} 2>&1", js(&v, "allocation_id").rsplit(':').next().unwrap_or("")));
+    g.rec("T-6.4-008", forge.lines().filter(|l| l.starts_with("DENY")).count() >= 3 && !forge.contains("ACCEPT"), forge.replace('\n', " | "));
+    // ---- T-6.4-014 / T-6.3-007: the worker holds an established connection (GW-HELD); revoke while held; its next packet must be refused ----
+    let held_out = format!("/var/lib/agentbound/sessions/{}/rootfs/workspace/held-{guid}.out", js(&v, "allocation_id").rsplit(':').next().unwrap_or(""));
+    let _ = &held_out;
+    // the worker's held client sends its second packet 5 s after GW-HELD; revoke now so the packet lands after deny_admission
+    let ws = sh("python3 -c \"import json;c=json.load(open('/etc/agentbound/catalogue.json'));s=c['mount_sources']['mount-source:workspace-eng'];print(s['base']+'/'+s['relative'])\"").1.trim().to_string();
+    // quiesce first: §5 step 1 (deny admission) with the peer frozen, not killed. Then thaw only the held client's packet path by
+    // terminating the quiesce with a bounded expiry — the frozen client is thawed at step 3 and its queued packet meets the denial.
+    let q = lc("quiesce", Value::obj(vec![("launch_record_digest", Value::s(&glrd)), ("reason", Value::s("conformance"))])); let qst = js(&q, "body.state");
+    sh(&format!("touch {ws}/revoked-{guid}")); // marker lands while frozen; the client reads it when thawed
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let gst_q = { match wire::connect("/run/agentbound/gateway.sock") { Ok(c) => c.call(&wire::request("status", "conf-gwq", Value::obj(vec![("launch_record_digest", Value::s(&glrd))]))).unwrap_or(Value::Null), Err(_) => Value::Null } };
+    let (_, frozen_new) = sh(&format!("python3 /tmp/gw-forge.py /run/agentbound/gw/{}.sock {ipid} 2>&1 | head -1", js(&v, "allocation_id").rsplit(':').next().unwrap_or("")));
+    let r = sig(&glrd, "authority_revoked"); let beh = js(&r, "body.behaviour");
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    let (_, late) = sh(&format!("cat {ws}/held-{guid}.out 2>&1 | head -c 300; rm -f {ws}/revoked-{guid}"));
+    let gst = { match wire::connect("/run/agentbound/gateway.sock") { Ok(c) => c.call(&wire::request("status", "conf-gw", Value::obj(vec![("launch_record_digest", Value::s(&glrd))]))).unwrap_or(Value::Null), Err(_) => Value::Null } };
+    g.rec("T-6.4-014", qst == "quiescing" && js(&gst_q, "body.admission") == "false" && beh == "terminate" && late.contains("\"ok\":true") && (late.contains("admission_closed") || late.contains("closed by gateway")), format!("quiesce state={qst} gateway admission={} new-conn-while-quiesced={} behaviour={beh}; held connection's post-denial packet: {} ; status after seal: {}", js(&gst_q, "body.admission"), frozen_new.trim(), late.lines().last().unwrap_or("").chars().take(120).collect::<String>(), js(&gst, "body.rule")));
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    let (_, chain) = sh(&format!("grep '{glrd}' /var/lib/agentbound/audit/events.jsonl | grep -o '\"event\":\"[a-z._]*\"' | sort -u | tr -d '\"' | sed 's/event://' | tr '\\n' ' '"));
+    let need = ["session.launch_record_committed", "gateway.grants_loaded", "session.activated", "gateway.connection_established", "gateway.operation_admitted", "gateway.operation_completed", "gateway.operation_denied", "session.revocation_received", "session.termination_started", "gateway.admission_denied", "session.terminated", "gateway.released", "session.cleanup_completed", "session.identity_released", "session.sealed"];
+    let missing: Vec<&str> = need.iter().copied().filter(|k| !chain.contains(k)).collect();
+    g.rec("D-12", missing.is_empty(), format!("completeness: {}/{} required kinds on record; missing={:?}", need.len() - missing.len(), need.len(), missing));
+    g.rec("T-6.3-007", chain.contains("gateway.released") && chain.contains("session.sealed"), "post-termination: projection released, record sealed, socket node removed with the mount namespace");
+    let (_, sockleft) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
+    g.rec("T-6.3-007.socket", sockleft.trim() == "0", format!("host-side socket nodes left for this allocation: {}", sockleft.trim()));
+    // ---- T-6.4-013 / T-6.3-008: replay of another session's identity through a fresh session ----
+    let (rc2, v2, _) = gb.request(&greq, ""); let lrd2 = js(&v2, "launch_record_digest"); std::thread::sleep(std::time::Duration::from_secs(3));
+    let (_, ipid2) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{}/cgroup.procs", js(&v2, "scope_id"))); let ipid2 = ipid2.trim().to_string(); let uid2 = js(&v2, "uid");
+    let (_, rep) = sh(&format!("nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging '{{\"expect_old\":null,\"ref_tail\":\"steal\",\"repository_id\":\"repo:demo\",\"session_id\":\"session:{sid}\",\"trace_id\":\"{trace}\",\"tip\":\"{}\"}}' /etc/hostname 2>&1 | head -c 300", "2".repeat(40)));
+    let (_, refs2) = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git for-each-ref' | grep -c steal");
+    g.rec("T-6.4-013", rc2 == 0 && refs2.trim() == "0" && !rep.contains(&format!("refs/agentbound/{sid}/")), format!("caller-supplied session/trace ignored; no ref under the other session's namespace: {}", rep.replace('\n', " ")));
+    if !lrd2.is_empty() { g.terminate(&lrd2); }
     let pass = g.rows.iter().filter(|r| r.verdict == "PASS").count();
     let mut md = format!("# WP2 conformance run (machine output)\n\n- Host: {}\n- Kernel: {}\n- systemd: {}\n- Rows: {} PASS / {} FAIL\n\n| Row | Verdict | Evidence |\n|---|---|---|\n", sh("hostname").1.trim(), sh("uname -r").1.trim(), sh("systemctl --version | head -1").1.trim(), pass, g.rows.len() - pass);
     for r in &g.rows { md.push_str(&format!("| {} | {} | {} |\n", r.id, r.verdict, r.evidence.replace('|', "\\|"))); }
