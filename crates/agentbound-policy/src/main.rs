@@ -92,6 +92,9 @@ impl Policy {
         let grants: Vec<Value> = if gw_ops.is_empty() { vec![] } else { strs(tk.get("grants")).iter().filter_map(|g| self.cat.get("grants").and_then(|x| x.get(g)).map(|gr| (g.to_string(), gr.clone()))).map(|(gid, gr)| Value::obj(vec![("expiry_policy", gr.get("expiry_policy").cloned().unwrap_or(Value::s("session"))), ("grant_id", Value::s(&gid)), ("kind", gr.get("kind").cloned().unwrap_or(Value::s("git-credential"))), ("operation_subset", Value::Arr(strs(gr.get("operation_subset")).iter().filter(|o| gw_ops.iter().any(|x| x.get("operation_id").and_then(|y| y.as_str()) == Some(*o))).map(|o| Value::s(o)).collect()))])).collect() };
         if topology == "local-socket" && grants.is_empty() { return rej("catalogue_invalid", "local-socket without a grant"); }
         let gw_budgets = if gw_ops.is_empty() { Value::obj(vec![]) } else { self.cat.get("gateway_budgets").cloned().unwrap_or(Value::obj(vec![("connection_count", Value::Int(16))])) };
+        // manifest-schema §3.4/binding rules: the gateway socket is a projected mount (correspondence-3), so the intent is declared here
+        let mut mounts = mounts;
+        if topology == "local-socket" { mounts.push(Value::obj(vec![("access", Value::s("read-only")), ("catalogue_id", Value::s("mount-source:gateway-socket")), ("mount_id", Value::s("mount:gateway-socket")), ("required", Value::Bool(true)), ("target_template_id", Value::s("mount-target:gateway-socket"))])); }
         let n = self.store_scan("authorization").len() + 1;
         let authz = format!("launchrec:{}-{:06}", rq.task_purpose_id.split(':').nth(1).unwrap_or("t").replace('/', "-"), n);
         let session_id = format!("session:{}", &sha256_hex(authz.as_bytes())[7..23]); let trace_id = format!("trace:{}", &sha256_hex(session_id.as_bytes())[7..39]);

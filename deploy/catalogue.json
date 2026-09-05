@@ -35,6 +35,18 @@
     }
   },
   "catalogue_version": "catalogue:v2026-08-28",
+  "gateway_budgets": {
+    "connection_count": 16
+  },
+  "grants": {
+    "grant:git-staging": {
+      "expiry_policy": "session",
+      "kind": "git-credential",
+      "operation_subset": [
+        "op:git-push-staging"
+      ]
+    }
+  },
   "initiators": {
     "authn:alice-session-0001": {
       "enabled": true,
@@ -116,6 +128,11 @@
     }
   },
   "mount_sources": {
+    "mount-source:gateway-socket": {
+      "base": "/run/agentbound/gw",
+      "projected_by": "agentbound-gateway",
+      "relative": "<allocation>.sock"
+    },
     "mount-source:workspace-eng": {
       "base": "/var/lib/agentbound/workspaces",
       "relative": "eng"
@@ -128,6 +145,34 @@
   "mount_targets": {
     "mount-target:gateway-socket": "/run/gateway.sock",
     "mount-target:workspace": "/workspace"
+  },
+  "operations": {
+    "op:git-push-staging": {
+      "adapter_catalogue_id": "adapter:git-staging",
+      "budgets": {
+        "bytes_per_operation": 8388608,
+        "objects": 10000,
+        "operations": 32
+      },
+      "operation": "git.push_staging",
+      "operation_id": "op:git-push-staging",
+      "scope": {
+        "repository_id": "repo:demo"
+      }
+    },
+    "op:git-push-staging-force": {
+      "adapter_catalogue_id": "adapter:git-staging",
+      "budgets": {
+        "bytes_per_operation": 8388608,
+        "objects": 10000,
+        "operations": 4
+      },
+      "operation": "git.push_staging_force",
+      "operation_id": "op:git-push-staging-force",
+      "scope": {
+        "repository_id": "repo:demo"
+      }
+    }
   },
   "policy_version": "policy:v2026-08-28",
   "principals": {
@@ -172,6 +217,14 @@
         "runtime:scripted-loop",
         "runtime:probe"
       ]
+    }
+  },
+  "repositories": {
+    "repo:demo": {
+      "protected_refs": [
+        "refs/heads/main"
+      ],
+      "url": "/var/lib/agentbound/git/demo.git"
     }
   },
   "resource_limits": {
@@ -332,9 +385,9 @@
         "resource:workspace-eng"
       ],
       "runtimes": [
-        "runtime:sh",
+        "runtime:git-worker",
         "runtime:probe",
-        "runtime:git-worker"
+        "runtime:sh"
       ],
       "version": "task:v1"
     },

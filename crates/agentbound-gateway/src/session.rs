@@ -67,8 +67,8 @@ fn execute(gw: &mut Gateway, i: usize, op: Value, op_seq: i64, payload: Option<V
     let inst = gw.conns[i].inst.clone(); let bytes = payload.as_ref().map(|p| p.len()).unwrap_or(0);
     gw.emit("gateway.operation_admitted", "ok", &cr, Value::obj(vec![("credential_pid", Value::Int(inst.pid as i64)), ("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("payload_bytes", Value::Int(bytes as i64)), ("pidfs_inode", Value::Int(inst.pidfs_ino as i64))]));
     if let Some(p) = gw.by_alloc.get_mut(&aid) { p.bytes_used += bytes as u64; }
-    let trace = gw.by_alloc[&aid].record.as_ref().and_then(|b| b.get("launch_binding")).and_then(|b| b.get("trace_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let session_id = gw.by_alloc[&aid].record.as_ref().and_then(|b| b.get("launch_binding")).and_then(|b| b.get("session_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let trace = gw.by_alloc[&aid].record.as_ref().and_then(|b| b.get("authorization_manifest")).and_then(|b| b.get("session_trace")).and_then(|b| b.get("trace_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let session_id = gw.by_alloc[&aid].record.as_ref().and_then(|b| b.get("authorization_manifest")).and_then(|b| b.get("session_trace")).and_then(|b| b.get("session_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let res = adapters::run(gw, &aid, &name, &op, payload.as_deref(), &session_id, &trace);
     match res {
         Ok(body) => { gw.emit("gateway.operation_completed", "ok", &cr, Value::obj(vec![("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("result", body.clone())])); reply(gw, i, wire::reply_ok(Value::obj(vec![("operation_seq", Value::Int(op_seq)), ("result", body), ("trace_id", Value::s(&trace))]))) }

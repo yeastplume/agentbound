@@ -18,6 +18,7 @@ install -d -m 0770 -o agentbound-gateway -g agentbound /run/agentbound/gw
 # demo upstream: a bare repository standing in for the Git host, protected branch enforced by its own hook (WP1 GS-6 composition)
 install -d -m 0750 -o agentbound-gateway -g agentbound /var/lib/agentbound/git
 if [ ! -d /var/lib/agentbound/git/demo.git ]; then su -s /bin/sh agentbound-gateway -c 'git init -q --bare /var/lib/agentbound/git/demo.git && cd /tmp && rm -rf seed && git init -q seed && cd seed && git -c user.name=seed -c user.email=seed@example.invalid commit -q --allow-empty -m initial && git push -q /var/lib/agentbound/git/demo.git HEAD:refs/heads/main'; fi
+su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git config receive.advertisePushOptions true && git -C /var/lib/agentbound/git/demo.git config receive.denyNonFastForwards true'
 install -m 0755 deploy/hooks/pre-receive /var/lib/agentbound/git/demo.git/hooks/pre-receive; chown agentbound-gateway:agentbound /var/lib/agentbound/git/demo.git/hooks/pre-receive
 # gateway credential: readable by the gateway user only (R-GW-6 / GS-7)
 [ -f /var/lib/agentbound/gateway/credential ] || head -c 32 /dev/urandom | base64 > /var/lib/agentbound/gateway/credential; chmod 0600 /var/lib/agentbound/gateway/credential; chown agentbound-gateway:agentbound /var/lib/agentbound/gateway/credential
@@ -45,13 +46,14 @@ install -m 0755 crates/ab-conformance/probe/probe.sh $img/probe.sh
 # 1B: session-side gateway client (static) and git with its shared libraries copied into the image (no network tooling)
 install -m 0755 target/release/ab-gwclient $img/bin/ab-gwclient
 for a in awk sed wc tr basename dirname date sort uniq find xargs test printf sha256sum; do ln -sf busybox $img/bin/$a; done
-if [ ! -x $img/usr/bin/git ]; then
+rm -f $img/.libs-done; if [ ! -f $img/.libs-done ]; then
   install -d $img/usr/lib/git-core $img/usr/share/git-core/templates $img/etc
   cp /usr/bin/git $img/usr/bin/git
   for x in git git-remote-http git-upload-pack git-receive-pack; do [ -f /usr/lib/git-core/$x ] && cp /usr/lib/git-core/$x $img/usr/lib/git-core/$x; done
-  for f in $(for b in /usr/bin/git $img/usr/lib/git-core/*; do ldd $b 2>/dev/null | awk '/=> \//{print $3} /^\s*\/lib64/{print $1}'; done | sort -u); do d=$img$(dirname $f); install -d $d; cp -L $f $d/; done
+  for f in $(for b in /usr/bin/git $img/usr/lib/git-core/* target/release/ab-gwclient; do ldd $b 2>/dev/null | awk '/=> \//{print $3} /^\s*\/lib64/{print $1}'; done | sort -u); do d=$img$(dirname $f); install -d $d; cp -L $f $d/; done
   cp -L /lib64/ld-linux-x86-64.so.2 $img/lib64/ 2>/dev/null || true
   printf 'root:x:0:0::/:/bin/sh\n' > $img/etc/passwd; printf 'root:x:0:\n' > $img/etc/group
+  touch $img/.libs-done
 fi
 install -m 0755 crates/ab-conformance/probe/git-worker.sh $img/git-worker.sh
 # CLI users may invoke the constructor as root, nothing else

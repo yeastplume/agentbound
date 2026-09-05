@@ -37,7 +37,15 @@ pub fn run(p: ChildPlan) -> ! {
         let sd = unsafe { libc::open(c(stage).as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) }; if sd < 0 { return Err(errno()); }
         for d in ["image", "workspace", "proc", "dev", "tmp", "oldroot", "etc"] { if unsafe { libc::mkdirat(sd, c(d).as_ptr(), 0o755) } != 0 && errno() != libc::EEXIST { return Err(errno()); } }
         move_mount(p.rootfs_fd, sd, "image")?;
-        for (fd, target, _ro) in &p.mounts { let t = target.trim_start_matches('/'); let _ = unsafe { libc::mkdirat(sd, c(t).as_ptr(), 0o755) }; move_mount(*fd, sd, t)?; }
+        for (fd, target, _ro) in &p.mounts {
+            let t = target.trim_start_matches('/');
+            // a non-directory source (the gateway socket node) needs a file mountpoint; its parent directories are created first
+            let mut st: libc::stat = unsafe { std::mem::zeroed() };
+            let is_dir = unsafe { libc::fstat(*fd, &mut st) } == 0 && (st.st_mode & libc::S_IFMT) == libc::S_IFDIR;
+            if let Some((parent, _)) = t.rsplit_once('/') { let mut acc = String::new(); for seg in parent.split('/') { if !acc.is_empty() { acc.push('/'); } acc.push_str(seg); let _ = unsafe { libc::mkdirat(sd, c(&acc).as_ptr(), 0o755) }; } }
+            if is_dir { let _ = unsafe { libc::mkdirat(sd, c(t).as_ptr(), 0o755) }; } else { let f = unsafe { libc::openat(sd, c(t).as_ptr(), libc::O_CREAT | libc::O_WRONLY | libc::O_CLOEXEC, 0o644) }; if f < 0 { return Err(errno()); } unsafe { libc::close(f) }; }
+            move_mount(*fd, sd, t)?;
+        }
         // minimal /dev: devtmpfs is host-wide; use a tmpfs with the four unprivileged nodes bind-mounted from the host
         let dev = fsmount("tmpfs", &[("size", "64k"), ("mode", "0755")], &[], MOUNT_ATTR_NOSUID | MOUNT_ATTR_NOEXEC)?; move_mount(dev, sd, "dev")?; unsafe { libc::close(dev) };
         for n in ["null", "zero", "urandom", "random"] {

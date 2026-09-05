@@ -8,7 +8,7 @@ Companion to `DESIGN.md` (1A). Normative sources: ADR-0002 0.8 Decisions 1–5, 
 |---|---|---|
 | `agentbound-gateway` | on-host daemon; one per-session listening socket; connection + per-operation authentication (ADR-0002 D2); operation authorization (D3); revocation/lifetime (D4); Decision 5 events; R-GW-7 budgets; adapters | unprivileged user `agentbound-gateway`, group `agentbound`; holds the Git credential the session must never see |
 
-Sockets: control `/run/agentbound/gateway.sock` (0660 root:agentbound; lifecycle and launch call it), per-session `/run/agentbound/gw/<allocation suffix>.sock` (0600 owned by the session UID after `chown` by launch — created by the gateway on `project` and bind-mounted by the constructor at the manifest's `gateway_socket` target).
+Sockets: control `/run/agentbound/gateway.sock` (0660 root:agentbound; lifecycle and launch call it), per-session `/run/agentbound/gw/<allocation suffix>.sock` (mode 0666 inside a 0770 gateway-only directory; the unprivileged gateway cannot chown to the session UID — reachability is by bind mount into exactly one mount namespace, and establishment refuses any peer UID other than the allocation's; created by the gateway on `project`, bind-mounted by the constructor at the manifest's `gateway_socket` target).
 
 ## Message flow (1B additions)
 

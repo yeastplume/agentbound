@@ -62,7 +62,7 @@ impl Gateway {
             let b = rec.get("binding").cloned().unwrap_or(Value::Null);
             let g = |p: &[&str]| -> String { let mut v = Some(&b); for k in p { v = v.and_then(|x| x.get(k)); } v.and_then(|x| x.as_str()).unwrap_or("").to_string() };
             if g(&["authorization_manifest", "gateway", "channel_topology"]) != "local-socket" { continue; }
-            let (az, aid) = (g(&["authorization_manifest", "authorization_id"]), g(&["launch_binding", "allocation_id"]));
+            let (az, aid) = (g(&["authorization_manifest", "authorization_id"]), g(&["launch_binding", "execution_identity", "allocation_id"]));
             let uid = b.get("launch_binding").and_then(|x| x.get("execution_identity")).and_then(|x| x.get("uid")).and_then(|x| x.as_int()).unwrap_or(0) as u32;
             if let Ok(p) = self.project(&az, &aid, uid, uid) { let pr = self.by_alloc.get_mut(&aid).unwrap(); pr.lrd = Some(lrd.to_string()); pr.record = Some(b.clone()); pr.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default(); pr.admission = st == "active" || st == "degraded"; let _ = p; }
         }
@@ -73,8 +73,10 @@ impl Gateway {
         let suffix = aid.rsplit(':').next().unwrap_or(aid).to_string();
         let path = format!("{}/{suffix}.sock", self.cfg.socket_dir);
         let _ = std::fs::remove_file(&path);
-        let listener = wire::listen(&path, 0o600).map_err(|e| e.to_string())?;
-        std::os::unix::fs::chown(&path, Some(uid), Some(gid)).map_err(|e| e.to_string())?;
+        // The gateway is unprivileged and cannot chown to the session UID. Reachability is by mount namespace: the
+        // node lives in a directory only the gateway traverses (0770 gateway:agentbound) and is bind-mounted into exactly
+        // one session; the establishment check (auth.rs) refuses any peer UID other than the allocation's.
+        let listener = wire::listen(&path, 0o666).map_err(|e| e.to_string())?;
         self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0 });
         Ok(path)
     }
@@ -104,7 +106,7 @@ impl Gateway {
     fn activate(&mut self, lrd: &str) -> Value {
         let Some(rec) = self.lc("record", Value::obj(vec![("launch_record_digest", Value::s(lrd))])) else { return wire::reply_err(wire::CLASS_UNAVAILABLE, "lifecycle", "record unavailable") };
         let b = rec.get("binding").cloned().unwrap_or(Value::Null);
-        let aid = b.get("launch_binding").and_then(|x| x.get("allocation_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let aid = b.get("launch_binding").and_then(|x| x.get("execution_identity")).and_then(|x| x.get("allocation_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
         let Some(p) = self.by_alloc.get_mut(&aid) else { return wire::reply_err(wire::CLASS_INVALID, "not_projected", &aid) };
         p.lrd = Some(lrd.to_string()); p.record = Some(b.clone()); p.admission = true;
         p.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default();

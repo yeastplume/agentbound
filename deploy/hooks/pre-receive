@@ -1,9 +1,11 @@
 #!/bin/sh
 # Host-side protected-branch rule (composes with the gateway; WP1 GS-6): refuse any update to refs/heads/main and any non-staging ref.
 rc=0
+# push options carry the session trace (GIT_PUSH_OPTION_*); record them with the ref update for host-side correlation
+opts=""; i=0; while [ $i -lt ${GIT_PUSH_OPTION_COUNT:-0} ]; do eval o=\$GIT_PUSH_OPTION_$i; opts="$opts $o"; i=$((i+1)); done
 while read -r old new ref; do
   case "$ref" in
-    refs/agentbound/*) ;;
+    refs/agentbound/*) echo "$(date -u +%FT%TZ) $ref $old $new$opts" >> "$GIT_DIR/agentbound-receive.log" ;;
     *) echo "protected: $ref" >&2; rc=1 ;;
   esac
 done

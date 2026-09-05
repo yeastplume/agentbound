@@ -29,7 +29,7 @@ fn call(sock: &str, op: &str, idem: &str, body: Value, fds: &[RawFd], step: u32)
     if fds.is_empty() { c.send(&req) } else { c.send_with_fds(&req, fds) }.map_err(|e| Fail { step, rule: "lifecycle_unavailable", detail: e.to_string() })?;
     let r = c.recv().map_err(|e| Fail { step, rule: "lifecycle_unavailable", detail: e.to_string() })?.ok_or(Fail { step, rule: "lifecycle_unavailable", detail: "closed".into() })?;
     if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { Ok(r.get("body").cloned().unwrap_or(Value::Null)) }
-    else { fail(step, "lifecycle_rejected", format!("{}:{}:{}", r.get("class").and_then(|x| x.as_str()).unwrap_or(""), r.get("rule").and_then(|x| x.as_str()).unwrap_or(""), r.get("detail").and_then(|x| x.as_str()).unwrap_or(""))) }
+    else { let b = r.get("body"); let g = |k: &str| b.and_then(|b| b.get(k)).and_then(|x| x.as_str()).unwrap_or("").to_string(); fail(step, if sock.contains("gateway") { "gateway_rejected" } else { "lifecycle_rejected" }, format!("{}:{}:{}", r.get("class").and_then(|x| x.as_str()).unwrap_or(""), g("rule"), g("detail"))) }
 }
 
 /// D-Bus `StartTransientUnit` for a delegated scope around a placeholder, via busctl (libsystemd binding is a WP3 item).
@@ -104,6 +104,7 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     led.fds.push(rootfs);
     let mut mounts: Vec<(RawFd, String, bool)> = Vec::new(); let mut projections = Vec::new();
     for mi in &m.mount_intents {
+        if mi.mount_id == "mount:gateway-socket" { continue; } // projected by the gateway block below
         let src = cfg.catalogue.get("mount_sources").and_then(|s| s.get(mi.catalogue_id)).cloned().ok_or(Fail { step: 3, rule: "mount_source_unresolvable", detail: mi.catalogue_id.into() })?;
         let target = cfg.catalogue.get("mount_targets").and_then(|t| t.get(mi.target_template_id)).and_then(|x| x.as_str()).ok_or(Fail { step: 3, rule: "mount_target_unresolvable", detail: mi.target_template_id.into() })?.to_string();
         let (base, rel) = (src.get("base").and_then(|x| x.as_str()).unwrap_or(""), src.get("relative").and_then(|x| x.as_str()).unwrap_or(""));
@@ -126,7 +127,7 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     // allocation, bind-mounted read-only at the catalogue's gateway_socket target. `none` projects nothing.
     let mut gateway_projection = Value::Null;
     if m.topology == "local-socket" {
-        let target = cfg.catalogue.get("mount_targets").and_then(|t| t.get("target:gateway-socket")).and_then(|x| x.as_str()).ok_or(Fail { step: 3, rule: "gateway_target_unresolvable", detail: "target:gateway-socket".into() })?.to_string();
+        let target = cfg.catalogue.get("mount_targets").and_then(|t| t.get("mount-target:gateway-socket")).and_then(|x| x.as_str()).ok_or(Fail { step: 3, rule: "gateway_target_unresolvable", detail: "mount-target:gateway-socket".into() })?.to_string();
         let pr = call(&cfg.gateway_sock, "project", &format!("{authorization_id}/project"), Value::obj(vec![("allocation_id", Value::s(&aid)), ("authorization_id", Value::s(authorization_id)), ("gid", Value::Int(gids[0] as i64)), ("uid", Value::Int(uid as i64))]), &[], 3)?;
         let spath = pr.get("socket_path").and_then(|x| x.as_str()).ok_or(Fail { step: 3, rule: "gateway_project", detail: "no socket_path".into() })?.to_string();
         led.gateway_alloc = Some(aid.clone());
@@ -134,7 +135,10 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
         let t = open_tree_clone(sfd).map_err(|e| Fail { step: 3, rule: "gateway_open_tree", detail: format!("errno={e}") })?; unsafe { libc::close(sfd) };
         mount_setattr(t, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC | MOUNT_ATTR_RDONLY).map_err(|e| Fail { step: 3, rule: "gateway_setattr", detail: format!("errno={e}") })?;
         led.fds.push(t); mounts.push((t, target.clone(), true));
-        gateway_projection = Value::obj(vec![("channel_topology", Value::s("local-socket")), ("socket_path_digest", Value::s(&sha256_hex(spath.as_bytes()))), ("socket_type", Value::s("AF_UNIX/SOCK_SEQPACKET")), ("target", Value::s(&target))]);
+        let gi = m.mount_intents.iter().find(|x| x.mount_id == "mount:gateway-socket").ok_or(Fail { step: 3, rule: "gateway_intent_missing", detail: "mount:gateway-socket".into() })?;
+        projections.push(Value::obj(vec![("access", Value::s("read-only")), ("catalogue_version", Value::s(cfg.catalogue.get("catalogue_version").and_then(|x| x.as_str()).unwrap_or(""))), ("mount_id", Value::s(gi.mount_id)), ("target_template_projection", Value::s(gi.target_template_id))]));
+        gateway_projection = Value::obj(vec![("seqpacket", Value::Bool(true)), ("socket_mount_id", Value::s("mount:gateway-socket"))]);
+        led.note(3, "gateway_socket_digest", &sha256_hex(spath.as_bytes()));
         led.note(3, "gateway_projected", &target);
     }
     led.note(3, "mounts", &format!("{} intents resolved", mounts.len()));
@@ -185,7 +189,8 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     let binding = Value::obj(vec![
         ("authorization_id", Value::s(authorization_id)), ("authorization_manifest_digest", Value::s(&mdigest)),
         ("constructor", Value::obj(vec![("agentbound_launch_version_digest", Value::s(&cfg.self_digest)), ("invocation_profile_digest", Value::s(&profile_digest)), ("key_id", Value::s(&cfg.signer.key_id))])),
-        ("credential_grants", Value::Arr(vec![])),
+        // one non-exportable handle per grant intent: the gateway's grant record reference, usable only through the authenticated socket
+        ("credential_grants", Value::Arr(m.grant_intent_ids.iter().map(|g| Value::obj(vec![("grant_intent_id", Value::s(g)), ("issued_handle", Value::s(&format!("gateway-grant:{}:{g}", aid.rsplit(':').next().unwrap_or(""))))])).collect())),
         // `gateway_socket` is listed as the schema requires but is realised as the bind-mounted socket node, not an inherited
         // connected descriptor: ADR-0002 D2 requires every process to open its own connection (FINDING for manifest-schema, see DESIGN-1B).
         ("descriptor_allowlist", Value::Arr(["stdin", "stdout", "stderr"].iter().map(|k| Value::obj(vec![("descriptor_id", Value::s(&format!("fd:{k}"))), ("kind", Value::s(k)), ("purpose", Value::s("harness"))]))
