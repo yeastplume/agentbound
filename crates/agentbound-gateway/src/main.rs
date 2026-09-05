@@ -19,6 +19,19 @@ pub struct Projection { pub authorization_id: String, pub allocation_id: String,
 
 pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn>, pub inherited: Vec<(String, OwnedFd)> }
 
+/// Requirement named in a denial (D7 item 9). Rules map to the R-GW / R-ISO requirement whose check produced them.
+pub fn requirement_for(rule: &str) -> &'static str {
+    match rule {
+        "process_mismatch" | "scope_mismatch" | "uid_mismatch" | "creds_count" | "peer_gone" | "attribution" => "R-GW-3",
+        "descriptor_transfer" => "R-GW-3",
+        "operation_not_granted" | "scope_repository" | "args_schema" | "ref_tail_grammar" | "ref_tail_marker" | "ref_tail_charset" | "ref_tail_empty_or_long" | "ref_tail_names_ref" | "tip_grammar" => "R-GW-4",
+        "admission_closed" => "R-GW-2",
+        "budget_bytes" | "budget_operations" | "connection_limit" | "packet_truncated" => "R-GW-7",
+        "bundle_invalid" | "bundle_fetch" | "fsck" | "tip_mismatch" | "budget_objects" | "upstream_rejected" | "payload_missing" | "payload_sha256" => "R-GW-5",
+        _ => "R-GW-1",
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |k: &str, d: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| d.to_string());
@@ -93,8 +106,27 @@ impl Gateway {
         self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0 });
         Ok(path)
     }
-    pub fn emit(&mut self, kind: &str, outcome: &str, c: &ab_common::audit::Correlation, detail: Value) { self.cfg.audit.emit(&ab_common::audit::event(kind, "agentbound-gateway", outcome, c, detail)); }
-    pub fn corr(p: &Projection) -> ab_common::audit::Correlation { ab_common::audit::Correlation { authorization_id: Some(p.authorization_id.clone()), allocation_id: Some(p.allocation_id.clone()), launch_record_digest: p.lrd.clone(), execution_uid: Some(p.uid), ..Default::default() } }
+    /// D7 item 8: audit loss follows the manifest's `audit.loss_behaviour`. The gateway cannot stop a session itself; on `quarantine`
+    /// or `stop` it closes admission for every projection whose events are being lost and asks lifecycle to act, then stops
+    /// forwarding new operations (fail closed). `continue-degraded` keeps admitting and counts.
+    pub fn emit(&mut self, kind: &str, outcome: &str, c: &ab_common::audit::Correlation, detail: Value) {
+        let before = self.cfg.audit.lost;
+        self.cfg.audit.emit(&ab_common::audit::event(kind, "agentbound-gateway", outcome, c, detail));
+        if self.cfg.audit.lost > before { self.audit_lost(); }
+    }
+    fn audit_lost(&mut self) {
+        let keys: Vec<String> = self.by_alloc.keys().cloned().collect();
+        for aid in keys {
+            let p = &self.by_alloc[&aid];
+            let beh = p.record.as_ref().and_then(|r| r.get("authorization_manifest")).and_then(|m| m.get("audit")).and_then(|a| a.get("loss_behaviour")).and_then(|x| x.as_str()).unwrap_or("stop").to_string();
+            if beh == "continue-degraded" { continue; }
+            let lrd = p.lrd.clone();
+            self.by_alloc.get_mut(&aid).unwrap().admission = false;
+            if let Some(l) = lrd { let _ = self.lc("revocation_signal", Value::obj(vec![("launch_record_digest", Value::s(&l)), ("source", Value::s("agentbound-gateway")), ("trigger", Value::s("audit_pipeline_degraded_below_stop_threshold"))])); }
+            eprintln!("gateway: audit loss with behaviour {beh}: admission closed for {aid}");
+        }
+    }
+    pub fn corr(p: &Projection) -> ab_common::audit::Correlation { ab_common::audit::Correlation { authorization_id: Some(p.authorization_id.clone()), allocation_id: Some(p.allocation_id.clone()), launch_record_digest: p.lrd.clone(), execution_uid: Some(p.uid), trace_id: p.record.as_ref().and_then(|r| r.get("authorization_manifest")).and_then(|m| m.get("session_trace")).and_then(|t| t.get("trace_id")).and_then(|x| x.as_str()).map(str::to_string), session_id: p.record.as_ref().and_then(|r| r.get("authorization_manifest")).and_then(|m| m.get("session_trace")).and_then(|t| t.get("session_id")).and_then(|x| x.as_str()).map(str::to_string), ..Default::default() } }
 
     /// Control plane: root callers only (launch and lifecycle).
     fn control(&mut self, c: wire::Conn) {
@@ -158,7 +190,13 @@ impl Gateway {
         if let Err((class, rule, detail, close)) = outcome {
             let cr = self.by_alloc.get(&self.conns[i].allocation_id).map(Self::corr).unwrap_or_default();
             self.emit(if rule == "process_mismatch" { "gateway.process_mismatch" } else if rule == "descriptor_transfer" { "gateway.descriptor_transfer_rejected" } else if class == wire::CLASS_INVALID || rule == "process_mismatch" { "gateway.packet_rejected" } else { "gateway.operation_denied" }, "deny", &cr, if class == wire::CLASS_INVALID || rule == "process_mismatch" { Value::obj(vec![("class", Value::s(class)), ("credential_pid", Value::Int(self.conns[i].last_cred_pid as i64)), ("detail", Value::s(&detail)), ("establishing_pid", Value::Int(self.conns[i].inst.pid as i64)), ("rule", Value::s(rule))]) } else { Value::obj(vec![("class", Value::s(class)), ("credential_pid", Value::Int(self.conns[i].last_cred_pid as i64)), ("detail", Value::s(&detail)), ("establishing_pid", Value::Int(self.conns[i].inst.pid as i64)), ("operation", Value::s(&detail.split(' ').nth(1).unwrap_or("").to_string())), ("operation_seq", Value::Int(0)), ("rule", Value::s(rule))]) });
-            let _ = wire::send_raw(fd, &ab_common::json::canonical(&wire::reply_err(class, rule, &detail)));
+            // D7 item 9: a denial names the requirement, the authorization, the launch record and the trace — of this session only
+            let mut reply = wire::reply_err(class, rule, &detail);
+            let mut b = reply.get("body").cloned().unwrap_or(Value::Null);
+            let opt = |x: &Option<String>| x.as_ref().map(|x| Value::s(x)).unwrap_or(Value::Null);
+            b.set("requirement_id", Value::s(requirement_for(rule))); b.set("authorization_id", opt(&cr.authorization_id)); b.set("launch_record_digest", opt(&cr.launch_record_digest)); b.set("trace_id", opt(&cr.trace_id));
+            reply.set("body", b);
+            let _ = wire::send_raw(fd, &ab_common::json::canonical(&reply));
             if close { self.close_conn(i, rule); return false }
         }
         true

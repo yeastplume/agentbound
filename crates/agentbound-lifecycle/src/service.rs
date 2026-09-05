@@ -32,7 +32,7 @@ fn closed(b: &Value, want: &[&str]) -> Result<(), (&'static str, &'static str, S
 const CONSTRUCTOR_OPS: [&str; 5] = ["reserve_identity", "commit_binding", "register_session", "report_activation", "report_construction_failed"];
 const OBSERVER_OPS: [&str; 5] = ["status", "list", "terminate", "quiesce", "revocation_signal"];
 /// Gateway (ADR-0002 D4.7): reads only; reconstructs grants from the signed launch-record store.
-const GATEWAY_OPS: [&str; 3] = ["status", "list", "record"];
+const GATEWAY_OPS: [&str; 4] = ["status", "list", "record", "revocation_signal"];
 
 impl Service {
     /// Handle one connection: one request, one reply (descriptors only on `register_session`).

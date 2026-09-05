@@ -240,7 +240,7 @@ fn main() {
     let (_, frozen_new) = sh(&format!("python3 /tmp/gw-forge.py /run/agentbound/gw/{}.sock {ipid} 2>&1 | head -1", js(&v, "allocation_id").rsplit(':').next().unwrap_or("")));
     let r = sig(&glrd, "authority_revoked"); let beh = js(&r, "body.behaviour");
     std::thread::sleep(std::time::Duration::from_secs(3));
-    let (_, late) = sh(&format!("cat {ws}/held-{guid}.out 2>&1 | head -c 300; rm -f {ws}/revoked-{guid}"));
+    let (_, late) = sh(&format!("cat {ws}/held-{guid}.out 2>&1 | head -c 1200; rm -f {ws}/revoked-{guid}"));
     let gst = { match wire::connect("/run/agentbound/gateway.sock") { Ok(c) => c.call(&wire::request("status", "conf-gw", Value::obj(vec![("launch_record_digest", Value::s(&glrd))]))).unwrap_or(Value::Null), Err(_) => Value::Null } };
     g.rec("T-6.4-014", qst == "quiescing" && js(&gst_q, "body.admission") == "false" && beh == "terminate" && late.contains("\"ok\":true") && (late.contains("admission_closed") || late.contains("closed by gateway")), format!("quiesce state={qst} gateway admission={} new-conn-while-quiesced={} behaviour={beh}; held connection's post-denial packet: {} ; status after seal: {}", js(&gst_q, "body.admission"), frozen_new.trim(), late.lines().last().unwrap_or("").chars().take(120).collect::<String>(), js(&gst, "body.rule")));
     std::thread::sleep(std::time::Duration::from_secs(4));
@@ -252,17 +252,20 @@ fn main() {
     let (_, sockleft) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
     g.rec("T-6.3-007.socket", sockleft.trim() == "0", format!("host-side socket nodes left for this allocation: {}", sockleft.trim()));
     // ---- T-6.4-013 / T-6.3-008: replay of another session's identity through a fresh session ----
-    let (rc2, v2, _) = gb.request(&greq, ""); let lrd2 = js(&v2, "launch_record_digest"); std::thread::sleep(std::time::Duration::from_secs(3));
+    let (rc2, v2, _) = gb.request(&greq, ""); let lrd2 = js(&v2, "launch_record_digest");
+    // the worker inside runs the whole in-session row set (incl. 16 held connections); wait until its connections are gone
+    for _ in 0..60 { std::thread::sleep(std::time::Duration::from_millis(500)); let st = wire::connect("/run/agentbound/gateway.sock").ok().and_then(|c| c.call(&wire::request("status", "conf-gw2", Value::obj(vec![("launch_record_digest", Value::s(&lrd2))]))).ok()).unwrap_or(Value::Null); if st.get("body").and_then(|b| b.get("connections")).and_then(|x| x.as_int()) == Some(0) && st.get("body").and_then(|b| b.get("operations")).and_then(|x| x.as_int()).unwrap_or(0) > 20 { break; } }
     let (_, ipid2) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{}/cgroup.procs", js(&v2, "scope_id"))); let ipid2 = ipid2.trim().to_string(); let uid2 = js(&v2, "uid");
-    let (_, rep) = sh(&format!("nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging '{{\"expect_old\":null,\"ref_tail\":\"steal\",\"repository_id\":\"repo:demo\",\"session_id\":\"session:{sid}\",\"trace_id\":\"{trace}\",\"tip\":\"{}\"}}' /etc/hostname 2>&1 | head -c 300", "2".repeat(40)));
+    let scope2 = js(&v2, "scope_id");
+    let steal_args = format!(r#"{{"expect_old":null,"ref_tail":"steal","repository_id":"repo:demo","session_id":"session:{sid}","trace_id":"{trace}","tip":"{}"}}"#, "2".repeat(40));
+    let (_, rep) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging {} /image/probe.sh' 2>&1 | head -c 300", steal_args.replace('"', "\\\"")));
     let (_, refs2) = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git for-each-ref' | grep -c steal");
-    g.rec("T-6.4-013", rc2 == 0 && refs2.trim() == "0" && !rep.contains(&format!("refs/agentbound/{sid}/")), format!("caller-supplied session/trace ignored; no ref under the other session's namespace: {}", rep.replace('\n', " ")));
+    g.rec("T-6.4-013", rc2 == 0 && refs2.trim() == "0" && rep.contains("\"rule\"") && !rep.contains(&format!("refs/agentbound/{sid}/")), format!("caller-supplied session/trace refused (closed argument set); no ref under the other session's namespace: {}", rep.replace('\n', " ")));
     // ---- D4.7: gateway restart reconstructs projections from the launch-record store; the live session keeps working, no caller state consulted ----
     let (_, before) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v2, "allocation_id").rsplit(':').next().unwrap_or("x")));
     sh("systemctl restart agentbound-gateway; sleep 1");
     let (_, rec_ev) = sh("grep gateway.reconstructed /var/lib/agentbound/gateway/audit-gateway.jsonl | tail -1 | grep -o '\"projections\":[0-9]*'");
     // enter the session's scope cgroup first (host root may move itself), then its namespaces and identity: a legitimate in-scope peer
-    let scope2 = js(&v2, "scope_id");
     let (_, after_ping) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- sh -c \"sleep 0.3; ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}}\"' 2>&1 | head -c 200"));
     g.rec("D4.7-reconstruct", before.trim() == "1" && after_ping.contains("\"pong\":true") && !rec_ev.contains(":0"), format!("socket before restart={} {} ping after restart: {}", before.trim(), rec_ev.trim(), after_ping.replace('\n', " ")));
     // ---- T-6.4-009: PID reuse against the per-operation check — a PID recycled to another process instance must not be accepted.
@@ -278,11 +281,27 @@ fn main() {
     let redir_args = format!(r#"{{"expect_old":null,"ref_tail":"x","repository_id":"repo:demo","tip":"{}","url":"/tmp/evil.git"}}"#, "3".repeat(40));
     let (_, redir) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging {} /image/probe.sh' 2>&1 | grep -o \"rule[^,]*\" | head -2 | tr \"\\n\" \" \"", redir_args.replace('"', "\\\"")));
     g.rec("T-6.4-012", redir.contains("args_schema"), format!("caller-supplied url ignored; bundle path enforced: {}", redir.replace('\n', " ")));
+    // ---- D7 item 9: a denial names requirement, authorization, launch record and trace of *this* session only ----
+    let (_, den) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging-force git.push_staging_force {{}}' 2>&1 | grep \"^{{\" | head -c 1200"));
+    let dv = parse(den.lines().find(|l| l.contains("\"rule\"")).unwrap_or("")); let az2 = js(&dv, "body.authorization_id");
+    g.rec("D7-9.diagnostics", js(&dv, "body.requirement_id") == "R-GW-4" && az2.starts_with("launchrec:") && az2 != js(&rec, "body.binding.authorization_manifest.authorization_id") && js(&dv, "body.launch_record_digest") == lrd2 && js(&dv, "body.trace_id").starts_with("trace:") && !den.contains(&glrd) && !den.contains(&trace), format!("requirement={} authorization={} lrd-matches={} trace={} foreign-ids-absent={}", js(&dv, "body.requirement_id"), js(&dv, "body.authorization_id"), js(&dv, "body.launch_record_digest") == lrd2, js(&dv, "body.trace_id"), !den.contains(&glrd)));
+    // ---- D7 item 8: audit loss follows the manifest — stop the receiver and make the gateway's local spool unwritable, then operate ----
+    sh("systemctl stop agentbound-audit; mv /var/lib/agentbound/gateway/audit-gateway.jsonl /var/lib/agentbound/gateway/audit-gateway.jsonl.hold; mkdir /var/lib/agentbound/gateway/audit-gateway.jsonl");
+    sh("systemctl restart agentbound-gateway; sleep 1.5");
+    let (_, lossop) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- sh -c \"ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}}; sleep 0.5; ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}}\"' 2>&1 | head -c 400"));
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let st2 = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd2))]));
+    sh("rmdir /var/lib/agentbound/gateway/audit-gateway.jsonl; mv /var/lib/agentbound/gateway/audit-gateway.jsonl.hold /var/lib/agentbound/gateway/audit-gateway.jsonl; systemctl start agentbound-audit; sleep 1; systemctl restart agentbound-gateway; sleep 1");
+    let (_, lossev) = sh(&format!("grep '{lrd2}' /var/lib/agentbound/audit-lifecycle.jsonl | grep revocation_received | tail -1 | grep -o '\"trigger\":\"[^\"]*\"'"));
+    // the first admitted operation's event cannot be recorded anywhere → gateway closes admission and signals lifecycle; manifest maps the
+    // trigger to terminate, so by the second attempt the session is gone (nsenter target missing) or the packet meets admission_closed
+    let second = lossop.lines().last().unwrap_or("").to_string();
+    g.rec("D7-8.audit-loss", (second.contains("admission_closed") || second.contains("No such file") || second.contains("closed by gateway")) && lossev.contains("audit_pipeline_degraded_below_stop_threshold") && js(&st2, "body.state") == "terminated", format!("gateway with no audit path (receiver down, spool unwritable): first op's event lost → admission closed + revocation_signal; lifecycle {} → state={}; second attempt: {}", lossev.trim(), js(&st2, "body.state"), second.chars().take(100).collect::<String>()));
     if !lrd2.is_empty() { g.terminate(&lrd2); }
     // ---- carry-in: storage-principal ownership projection at seal — the session's workspace files now belong to the manifest's storage principal ----
     std::thread::sleep(std::time::Duration::from_secs(3));
     let (_, own) = sh(&format!("stat -c '%U %G' {ws}/work-{uid2} 2>&1; find {ws} -user {uid2} 2>/dev/null | wc -l"));
-    let (_, own_ev) = sh(&format!("grep '{lrd2}' /var/lib/agentbound/audit/events.jsonl | grep ownership_projected | grep -o '\"detail\":{{[^}}]*}}'"));
+    let (_, own_ev) = sh(&format!("grep '{lrd2}' /var/lib/agentbound/audit-lifecycle.jsonl /var/lib/agentbound/audit/events.jsonl | grep ownership_projected | head -1 | grep -o '\"detail\":{{[^}}]*}}'"));
     g.rec("D-06.storage-principal", own.starts_with("storage-engineering") && own.lines().last().unwrap_or("1").trim() == "0" && own_ev.contains("\"failed\": 0") || own.starts_with("storage-engineering") && own.lines().last().unwrap_or("1").trim() == "0" && own_ev.contains("\"failed\":0"), format!("work dir owner after seal: {}; files still owned by ephemeral uid: {}; {}", own.lines().next().unwrap_or(""), own.lines().last().unwrap_or(""), own_ev.trim()));
     // ---- 1A partial / N-A rows re-run under local-socket (recorded verdicts; the driver asserts the property that changed) ----
     // D-02 / T-6.1-003: still no PTY or attach interface at 1B; the descriptor allowlist is unchanged (0/1/2 + one gateway socket mount) — remains partial by design
@@ -290,7 +309,9 @@ fn main() {
     g.rec("D-02.1B", alw.trim().ends_with('4'), format!("descriptor allowlist entries={} (stdin, stdout, stderr, gateway_socket mount); no attach/PTY path exists to deny — partial stays recorded", alw.trim()));
     g.rec("T-6.1-003.1B", alw.trim().ends_with('4'), "no PTY projected under local-socket either; N/A stays recorded");
     // T-6.1-013: broker socket reuse — the sibling's projected socket path is not present in this mount namespace; the gateway directory is not reachable
-    g.rec("T-6.1-013", true, "covered by T-6.4-003 (host socket dir ENOENT from inside) + T-6.4-003.only (exactly one socket node) + T-6.4-013 (other session's identity fields in args ignored)");
+    // T-6.1-013: broker socket reuse — the previous session's socket node is gone from the host and its mount is not in a new session; connecting to a stale path fails
+    let (_, stale) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}; python3 -c \"import socket\ns=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET)\ntry:\n s.connect('/run/agentbound/gw/{}.sock'); print('connected')\nexcept OSError as e: print('err',e.errno)\"", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x"), js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
+    g.rec("T-6.1-013", stale.starts_with('0') && stale.contains("err"), format!("sealed session's socket: nodes left={} connect={}", stale.lines().next().unwrap_or(""), stale.lines().last().unwrap_or("")));
     // T-6.2-008: the git-worker image has git + sh + the client only; no package loader; interpreter set is closed by the image
     let (_, img) = sh("ls /var/lib/agentbound/images/rootfs/usr/bin /var/lib/agentbound/images/rootfs/bin | grep -cE '^(python|perl|pip|npm|node|apt|dpkg|curl|wget)'");
     g.rec("T-6.2-008.1B", img.trim() == "0", format!("loaders/interpreters beyond sh+git in image: {}", img.trim()));
