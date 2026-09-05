@@ -1,8 +1,8 @@
 # Phase 1 Reference Implementation Plan
 
-**Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record); WP1 complete ([evidence register](../evidence/wp1/README.md)); WP2 complete, milestone 1A recorded ([evidence register](../evidence/wp2/README.md)); WP3 next  
-**Plan version:** 0.14  
-**Date:** 4 September 2026  
+**Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record); WP1 complete ([evidence register](../evidence/wp1/README.md)); WP2 complete, milestone 1A recorded ([evidence register](../evidence/wp2/README.md)); WP3 complete, milestone 1B recorded ([evidence register](../evidence/wp3/README.md)) — **stop point: independent review before WP4**  
+**Plan version:** 0.15  
+**Date:** 5 September 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  
 **Normative technical report:** [`../papers/technical-report.md`](../papers/technical-report.md)  
 **Architecture specifications:** [`../architecture/README.md`](../architecture/README.md)  
@@ -23,6 +23,7 @@
 - **0.10** — §6.8 1A case list uses the split outage-trigger vocabulary and the `continue-degraded` restriction.
 - **0.11** — Post-freeze maintenance: status reflects the WP0 freeze; WP0 section marked complete and in past tense; fault-point list uses the empty-network-namespace/gateway-socket wording.
 - **0.12** — Editorial pass under docs/STYLE.md: demonstration 16 split by milestone; control-arm rationale consolidated in §8; review narrative removed; Oxford spelling. No milestone, gate, deliverable, or criterion changed.
+- **0.15** — WP3 closed: milestone 1B outcome recorded (139/139 conformance rows incl. 55 new 1B rows, 5 of them PASS (weak) and 5 PASS (recorded) with stated reasons; Gate 3 pass, provisional until independent review; Gate 1 republished: direct privileged SLOC 2 124, gateway authentication path 107, gateway core 317). WP2 carry-ins all closed (storage-principal projection, power-loss round, D-Bus deviation recorded, ADR-0002 D7 items 6–9 → ADR 0.9). Two implementation findings recorded (socket projected as mount → manifest-schema 0.8; unprivileged gateway cannot chown the node). 1B limits recorded: no TLS upstream, attach/delegation rows unchanged, same-tick PID reuse evidence weak. Stop point: independent review of the WP3 register and the 107-SLOC trust boundary before WP4.
 - **0.14** — WP2 closed: milestone 1A outcome recorded (84/84 conformance rows, Gate 1 direct SLOC 2 166, Gate 2 pass); wire-format document 0.1 added to the WP0 set as the component-interfaces §10 fill; carry-ins re-dispositioned (durable-ownership projection: group-grant model at 1A, storage-principal projection to WP3; allocator power-loss: recorded residual for WP3; D-Bus subscription: recorded deviation, `busctl` scope creation and cgroup/pidfd observation at 1A). WP3 next.
 - **0.13** — WP1 closed: spike list distinguishes the Decision 7 mechanism subset (1–5) from the component-dependent items (6–9, WP2–WP3); durable-ownership projection carried to WP2; exit condition restated to allow reopen-amend-reaccept; outcome paragraph records the D7-2d failure and the VM-1 fallback with the resulting ADR versions.
 
@@ -630,6 +631,8 @@ Exit condition: Gates 1 and 2 pass with `/bin/sh` and the scripted loop; the mil
 Implement the ADR-0002 authentication mechanism, the Git staging-ref gateway operation, session-bound trace identity, the egress topology, and correlated audit. Run §6.3, §6.4, and §6.9.
 
 Exit condition: Gate 3 passes; the remote effect is attributable end to end; the thin integrity slice (goal 11) holds; bypass tests have defined outcomes.
+
+**Outcome (met, provisional on review):** `agentbound-gateway` (ADR-0002 D1–D5, unprivileged, 317 SLOC; authentication path 107 SLOC), the `git.push_staging` adapter (bundle → quarantine → fsck/limits → `refs/agentbound/<session>/…` with the GS-4 refusal set, trace as push option, force never granted), `local-socket` constructor/manifest support, lifecycle §5 deny-admission and zero-connections steps, storage-principal projection, closed audit schemas for every gateway event. Final run **139 rows PASS, 0 FAIL** ([WP3 evidence register](../evidence/wp3/README.md)); D-13 shows the staging ref on the host with the session's trace in the host hook log while `main` is untouched; D-12 shows all 15 required event kinds on one launch record. Gate 3 recorded pass (ADR-0002 0.9). Carry-ins closed including a real power-loss round. Recorded limits: no TLS upstream (1C), no attach interface, no delegation path, weak same-tick PID-reuse evidence. **Stop point:** independent review of the register and trust boundary before WP4.
 
 ### WP4 — Inference adapter and existing-harness integration (milestone 1C)
 

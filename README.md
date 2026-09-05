@@ -4,7 +4,7 @@
 
 Agentbound treats an organizational AI agent as a durable security principal. Each task runs in a separately governed Unix session and process tree. The foundational papers retain the title *Agents as Unix Principals*.
 
-WP0 is frozen; WP1 mechanism verification and WP2 (milestone 1A: constructor, identity allocator, lifecycle daemon, policy stub, audit receiver, conformance suite) are complete; WP3 (gateway, milestone 1B) is next.
+WP0 is frozen; WP1 mechanism verification, WP2 (milestone 1A: constructor, identity allocator, lifecycle daemon, policy stub, audit receiver, conformance suite) and WP3 (milestone 1B: unprivileged gateway with per-connection process authentication, Git staging-ref adapter, end-to-end audit correlation) are complete. The project is at a stop point for independent review of the [WP3 register](docs/evidence/wp3/README.md) before WP4.
 
 ## Documents and their authority
 
@@ -33,9 +33,9 @@ tests/            Test implementations, fixtures, and conformance suites (placeh
 |---|---|---|
 | Position paper | 0.10 | working draft for external review |
 | Technical report | 0.5-TR11 | working draft for external review |
-| Phase 1 plan | 0.14 | active; WP0–WP2 complete, milestone 1A recorded |
+| Phase 1 plan | 0.15 | active; WP0–WP3 complete, milestones 1A and 1B recorded; stop point for independent review before WP4 |
 | WP0 architecture set | see [index](docs/architecture/README.md) | **frozen (WP0)** after three independent review rounds |
-| `crates/`, `deploy/` | commit-pinned | 1A reference implementation; [WP2 evidence register](docs/evidence/wp2/README.md) 84/84 rows |
+| `crates/`, `deploy/` | commit-pinned | 1A + 1B reference implementation; [WP2 register](docs/evidence/wp2/README.md) 84/84, [WP3 register](docs/evidence/wp3/README.md) 139/139 rows (Gate 3 provisional) |
 
 A failed spike or conformance row reopens the ADR or specification that depends on its result; WP1 exercised this twice (ADR-0002, ADR-0003 amendments).
 

@@ -11,7 +11,7 @@ Decision status (is the architecture settled?) and specification completeness (a
 | Artefact | Version | Decision status | Specification completeness |
 |---|---|---|---|
 | [Phase 1 normative requirements](phase-1-requirements.md) | 0.10 | frozen (WP0); WP1 findings applied | complete; all questions answered |
-| [Authorization manifest and launch binding schema](manifest-schema.md) | 0.7 | frozen (WP0) | complete, with gateway-free 1A form and worked examples; all questions answered |
+| [Authorization manifest and launch binding schema](manifest-schema.md) | 0.8 | frozen (WP0) | complete, with gateway-free 1A form and worked examples; all questions answered |
 | [Session lifecycle and failure states](session-lifecycle.md) | 0.7 | frozen (WP0); WP1 findings applied | complete; LC-2 answered by WP1 |
 | [Execution-identity lifecycle](execution-identity-lifecycle.md) | 0.7 | frozen (WP0); WP1 findings applied | complete; ID-1 answered by WP1 |
 | [Component interfaces (skeleton)](component-interfaces.md) | 0.3 | frozen (WP0); security-relevant decisions | wire formats and versioning negotiation deferred to WP1 by design |

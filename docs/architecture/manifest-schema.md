@@ -1,6 +1,6 @@
 # Agentbound Manifest Schema
 
-**Version:** 0.7
+**Version:** 0.8
 **Status:** Frozen (WP0)
 **Date:** 28 August 2026
 **Applies to:** the Unix-governed reference implementation and its microVM control arm
@@ -16,6 +16,7 @@
 | 0.5 | 28 August 2026 | §3.6 revocation trigger vocabulary split; `continue-degraded` restriction enforced by policy; example updated. |
 | 0.6 | 28 August 2026 | Post-freeze editorial maintenance (no normative change): wording. |
 | 0.7 | 28 August 2026 | WP2 correction (no normative change): the §6 illustrative pair omitted the `connection_count` class required by §3.5; added as `absent` in both objects; §3.7 `constructor` member list and the example gain `invocation_profile_digest`, which §3.3 (0.4) already required the constructor to record. The example pair now validates under the reference validator. |
+| 0.8 | 5 September 2026 | WP3 implementation finding (unfrozen narrowly, no binding element renamed): under `local-socket` the `gateway_socket` allowlist entry is realised by the reference constructor as the **bind-mounted socket node** named by `gateway_projection.socket_mount_id` (a file mountpoint at the catalogue target, e.g. `/run/gateway.sock`), not as an inherited descriptor — the constructor's inherited-descriptor set stays stdin/stdout/stderr and the session connects to the node itself, which is what lets the gateway authenticate each *connection* by `SO_PEERCRED`/pidfd (ADR-0002 D2). The 0.7 wording "MUST be the descriptor described by `gateway_projection`" is read as "MUST be the socket described by `gateway_projection`"; `descriptor_id` for the entry is the mount id (`mount:gateway_socket`). Evidence: [WP3 register](../evidence/wp3/README.md) §6. |
 
 
 ---
@@ -427,8 +428,10 @@ per mount intent and no raw path string.
 `kind`, and `purpose`; allowed kinds are `stdin`, `stdout`, `stderr`, `pty`, and
 `gateway_socket`. Every descriptor not listed MUST be closed before exec.
 Under `local-socket`, `gateway_socket` MUST appear exactly once, MUST be
-`AF_UNIX SOCK_SEQPACKET`, and MUST be the descriptor described by
-`gateway_projection`; under `none` it MUST NOT appear.
+`AF_UNIX SOCK_SEQPACKET`, and MUST be the socket described by
+`gateway_projection` — realised either as an inherited descriptor or as the
+bind-mounted socket node named by `socket_mount_id` (the reference constructor
+does the latter; 0.8); under `none` it MUST NOT appear.
 
 Under `local-socket`, `gateway_projection` MUST contain `seqpacket: true` and
 `socket_mount_id`, which MUST name the single projected local-socket gateway

@@ -319,7 +319,7 @@ fn main() {
     let (_, ops) = sh("python3 -c \"import json;c=json.load(open('/etc/agentbound/catalogue.json'));print([o for o in c['operations'] if 'deleg' in o or 'session' in o])\"");
     g.rec("D-15.1B", ops.trim() == "[]", format!("delegation operations in catalogue: {} — residual stays recorded (no delegation path to narrow)", ops.trim()));
     let pass = g.rows.iter().filter(|r| r.verdict == "PASS").count();
-    let mut md = format!("# WP2 conformance run (machine output)\n\n- Host: {}\n- Kernel: {}\n- systemd: {}\n- Rows: {} PASS / {} FAIL\n\n| Row | Verdict | Evidence |\n|---|---|---|\n", sh("hostname").1.trim(), sh("uname -r").1.trim(), sh("systemctl --version | head -1").1.trim(), pass, g.rows.len() - pass);
+    let mut md = format!("# Agentbound conformance run — 1A + 1B rows (machine output)\n\n- Host: {}\n- Kernel: {}\n- systemd: {}\n- git: {}\n- Date: {}\n- Rows: {} PASS / {} FAIL\n\n| Row | Verdict | Evidence |\n|---|---|---|\n", sh("hostname").1.trim(), sh("uname -r").1.trim(), sh("systemctl --version | head -1").1.trim(), sh("git --version").1.trim(), sh("date -u +%FT%TZ").1.trim(), pass, g.rows.len() - pass);
     for r in &g.rows { md.push_str(&format!("| {} | {} | {} |\n", r.id, r.verdict, r.evidence.replace('|', "\\|"))); }
     std::fs::write("/root/wp2/conformance-run.md", md).unwrap();
     println!("\n{pass}/{} PASS; register at /root/wp2/conformance-run.md", g.rows.len());
