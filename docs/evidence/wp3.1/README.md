@@ -105,3 +105,154 @@ Two probe-side facts learned the hard way and now written into `probe.sh`: a fai
 **Result** ([raw/run-04-implementation-defects.md](raw/run-04-implementation-defects.md)): 136 PASS, 3 WEAK, 4 RECORDED, 0 FAIL; catalogue 86/121 PASS, **29 NOT-EXECUTED**; run verdict FAIL. Unit tests: 25 (was 19).
 
 **R-CON-8 watch:** direct privileged SLOC 2 417 (launch 494, lifecycle 826, ab-common 1 097; was 2 124 at WP3, +293 for read-back, audit reservation and budget records) — 40 % of the 6 000 ceiling. Gateway 424 (was 317+107).
+
+## Round 5 — missing rows (item 4)
+
+Item 4 of the plan is the largest single block of work in WP3.1: the rows the frozen catalogue names that WP3 never executed. This
+round implemented the fault-injection families and the remaining 1B rows. The 1A prose-only rows are still outstanding.
+
+### Fault injection: eleven rows, each proving its own step
+
+The catalogue's F-C (construction) and F-T (termination) families require that each step of the two protocols be made to fail *with
+its side effects already in place*, and that the recovery be observed rather than assumed. Faults are accepted from root only, apply
+to exactly one action, and never relax a check — a fault makes a step fail; it does not make a test pass.
+
+| Row | Step made to fail | What must then hold |
+| --- | --- | --- |
+| F-C-01 | 1 — `clone3` barrier never released | child reaped; it never reached `execve`; no session registered |
+| F-C-02 | 2 — private mount namespace | construction fails at step 2; nothing mounted on the host |
+| F-C-03 | 3 — mount intent (symlinked source) | refused at step 3 with a `mount_source` rule |
+| F-C-04 | 4 — `pivot_root` (fails *after* the pivot) | failure inside the restricted tree still rolls back cleanly |
+| F-C-05 | 5 — `proc` mount after the pid namespace | host mount table gains nothing (`findmnt` count 0) |
+| F-C-06 | 6 — a descriptor opened *after* the closure pass | step 6's own verification through the fresh `/proc` catches it (`leaked 3:/image`) |
+| F-C-07 | pre-commit crash | no launch record; identity reclaimed |
+| F-C-08 | 8 — record committed and socket bound, activation never reached | socket node removed, gateway holds no projection (`unknown_record`), rollback names both, identity held |
+| F-C-09 | post-commit crash | record retained, session never activated |
+| F-T-01 | 1 — admission closure | the step-6 projection release still makes the node unusable: no new operation can be admitted |
+| F-T-05 | 5 — no-live-process confirmation | `termination-incomplete`; identity **not** released; record **not** sealed |
+| F-T-06 | 6 — gateway grant/connection release | cleanup holds with `released:false`; no identity release precedes the failure |
+| F-T-07 | 7 — broker/credential closure | cleanup holds with `broker_closed:false`; identity retained |
+| F-T-09 | 9 — gateway socket removal | the node survives with no listener behind it: connect+send is reset, ledger retained |
+
+Each F-T row also asserts `<id>.resumable`: with the fault removed, a repeated `terminate` drives the session to a terminal state.
+The protocol is resumable, and a failed step is a hold, not a lost session.
+
+Two things about *how* these rows assert are worth recording, because both were initially wrong in ways that would have produced
+false passes:
+
+**No new audit event kinds.** The first implementation emitted `session.fault_injected`, `session.grant_release_failed` and
+`session.credential_closure_failed`. The receiver rejected all three with `event_member_count` / `unknown_event_kind`: the audit
+vocabulary in `agentbound-audit/src/events.rs` is **closed**, and every event's detail members are checked against a fixed set. The
+events therefore reached only the component spool — the exact failure mode WP3 recorded, reproduced here by accident. A test
+affordance must not extend the production event set, so steps 6 and 7 now report inside the existing `session.cleanup_completed`
+record, whose `grants` object carries `released`, `remaining` and (new) `broker_closed`.
+
+**Order, not a timing snapshot.** The rows first read session status *after* the faulted terminate and asserted it had not advanced.
+That is unsound: lifecycle re-terminates a session whose init has exited, and that retry runs without the fault, so a later snapshot
+legitimately reads `cleaned/sealed`. The rows now assert **ordering** in the hash-chained log — no `session.identity_released` and no
+`session.sealed` may precede the record of the failing step — which is the property the protocol actually owes.
+
+### A real deadlock between the two daemons (found by this round, fixed here)
+
+The full run stopped making progress for 25 minutes. All three processes were blocked in `recvmsg`:
+
+```
+ab-conformance      __skb_wait_for_more_packets  (fd 3 → /run/agentbound/lifecycle.sock)
+agentbound-lifecycle __skb_wait_for_more_packets  (fd 11 → gateway, 1280 bytes queued unread)
+agentbound-gateway   __skb_wait_for_more_packets  (fd 9  → lifecycle, 1280 bytes queued unread)
+```
+
+Both daemons serve **one request at a time**, and each calls the other:
+
+- gateway → lifecycle `record_budget`, on every admitted operation (R-GW-7 budget persistence, added in round 4);
+- lifecycle → gateway `deny_admission` / `release`, during quiesce and termination (§5 steps 1 and 6), including from the
+  unattended `poll_sessions` deadline path.
+
+When those cross, each daemon is waiting for a reply from a peer that is blocked waiting for *it*. Neither can time out, because
+`Conn::call` had no receive bound. Every live session is held with them, and no revocation or termination can be processed — a
+containment failure, not merely a liveness bug. **Round 4's budget-persistence change is what made this reachable**; the cycle was
+latent before it, since termination already called the gateway, but nothing on the gateway's request path called back.
+
+Fix, in `ab-common/src/wire.rs`: `connect_bounded` sets `SO_RCVTIMEO`/`SO_SNDTIMEO`, and both cross-daemon call helpers use it with a
+4 s bound. Each side already had a fail-closed path for "the other daemon did not answer" — the gateway closes admission and emits
+`budget_persist_failed`; lifecycle records `released:false` and holds cleanup — so a bound converts an unbounded wedge into the
+refusal the design already specified. A timeout is the correct remedy rather than a lock or a thread, because the requirement is that
+*neither daemon may be made unavailable by the other*, and that must hold regardless of what the peer is doing.
+
+`T-6.9-005.no-deadlock` is a permanent regression row for it: a session issues gateway operations in a tight loop (each persisting a
+budget through lifecycle) while the driver terminates it from the other side, and the row requires that the terminate return, that
+both daemons answer afterwards within a bound, and that the session reach a terminal state. This row FAILs on the round-4 build.
+
+### Remaining 1B rows
+
+- **T-6.3-005** — the socket is a broker capability, not a transferable object: copying the node out of the session yields nothing
+  usable, handing the connected descriptor to another process is refused (`descriptor_transfer`), and root on the host connecting to
+  the same node from outside the session's mount namespace is refused. Every use is authenticated per peer instance.
+- **T-6.3-008** — replay from *another session*: two live sessions, B connects to A's socket node from inside B's namespaces with B's
+  credentials. A's projection refuses, and the refusal is recorded against A. This is distinct from T-6.4-013 (caller-supplied
+  identity arguments on the caller's *own* socket): here the path is right and the peer is wrong.
+- **T-6.8-008** — Git grant withdrawn: a gateway ping that succeeded before the signal must not succeed after it, on the same
+  in-scope peer. The declared behaviour comes from the manifest, and the effect is observed, not inferred.
+- **T-6.8-009** — gateway unavailable (class RR): the gateway is genuinely stopped for this row, and the declared behaviour must be
+  reached *without* it. `session.quiesce_started` records `admission:denied-no-gateway` — the gateway's availability at that moment.
+- **T-6.9-008** — every budget class the catalogue declares is enforced, each with denials in the hash-chained log; the classes that
+  do not exist at 1B (`rate`, `tokens`, `spend`, deferred to 1C under R-GW-9) are listed rather than claimed. The `objects` class was
+  declared but *never demonstrated*: at 10 000 objects no bundle a session can build within its other budgets can exceed it. The
+  force operation's limit is now 8, and `T-6.9-008.objects` exceeds it, so the class is enforced in evidence and not only on paper.
+- **D-16** — the aggregate: every trigger in the frozen 11-trigger vocabulary must have been exercised with a declared action and a
+  `session.revocation_received` record. It initially failed at 8/11, which exposed that `policy_withdrawn` was in the vocabulary but
+  never signalled by any row (the catalogue's T-6.8-004 reads "policy/catalogue withdrawal" and only the catalogue half was covered);
+  `T-6.8-004.policy` now covers it. Invariant 21 stays incomplete until 1C regardless, per R-LC-3.
+
+A catalogue error found the same way: giving the Git task a partial `revocation` map made `agentbound-policy` reject every 1B request,
+because the manifest schema closes over all eleven triggers. Correct behaviour, and the reason the whole 1B section went red at once.
+
+### The twelve 1A rows WP2 recorded from prose
+
+WP2's register carried twelve 1A rows whose evidence was an argument in prose rather than an executed assertion. All twelve now
+execute. Six run inside the session (in `probe.sh`, with new syscall modes in `ab-gwclient`), six from the driver:
+
+| Row | How it is now decided |
+| --- | --- |
+| T-6.1-006 | symlinks planted in the session temp dir at the host catalogue, the lifecycle store and `/` — every write through them refused, the targets absent from this mount namespace |
+| T-6.1-008 | the session sets env vars and writes its own startup files; no sibling session's startup file can be written |
+| T-6.1-010 | `pidfd_open` on a live host pid (passed in through the workspace) returns ESRCH; the same pair against our own init is recorded as a control so the negative cannot be a broken-syscall artefact |
+| T-6.1-011 | `process_vm_readv` against that host pid returns ESRCH — denied, never a partial read |
+| T-6.1-012 | the driver binds `agentbound-conf-abs` in the host netns; the session cannot connect to it (ECONNREFUSED) **and** binds the identical name itself, which proves the abstract namespaces are separate rather than merely that a connect failed |
+| T-6.2-005 | the double-forked orphan is located in the session's own pid namespace with our init as its parent — contained here, reaped at termination by D-07 |
+| D-03 | two concurrent sessions of *different principals*; each private-state interface of one attempted with the other's identity, judged **by effect**: A's `memory.max` unchanged, A's process count unchanged after a signal attempt, A's environ/root unreadable, no file created in A's workspace. Reverse direction too |
+| D-05 | three runtimes on the same task and resource: distinct uids from one allocator range, distinct scope cgroups, an identical committed namespace set, every namespace the record commits as private in fact distinct from PID 1's, and the same boundary-establishing audit events |
+| T-6.5-005 | the catalogue's `pids` limit is rewritten every 150 ms while eight requests race it; every admitted session's installed `pids.max` equals the value in **its own** committed manifest — never a mixture, never a value that existed only between decisions |
+| T-6.5-008 | four confusions of a genuine committed record replayed to `commit_binding`: constructor envelope as the policy envelope, manifest mutated after signing, a valid signature over the wrong object, corrupted signature bytes. All refused, each naming the check that caught it |
+| T-6.6-007 | a correctly signed binding replayed for an allocation that has advanced is refused (`binding_allocation_mismatch`), and the catalogue's `policy_version` is rolled backwards to confirm no session derives from a rolled-back policy |
+| T-6.7-001 | axes measured against the committed manifest (mounts, grants, descriptors), a child of the workload gains nothing, and seven recovery paths — remount rw, fresh tmpfs, raise pids/memory/NOFILE, re-exec as root, rewrite the catalogue — are each refused |
+
+Three of these initially "passed" for the wrong reason, and the fixes are worth recording because each was a way a suite can lie to
+itself:
+
+- **D-03 counted an empty output as a denial.** `setpriv --reuid` was receiving an empty uid, so every attempt failed with
+  `failed to parse reuid` — which contains no data, looks like nothing happened, and would have been read as "denied". The row now
+  judges each attempt by its **effect** on the victim (limit unchanged, process count unchanged, no file created), treats an attempt
+  that could not be made as `unmeasured` rather than as a pass, and reports a setup failure as a setup failure. The empty uid itself
+  was a real setup bug: the request kept alice's initiator credential while running as bob, which the platform correctly rejected.
+- **D-05 compared namespaces against the driver's own.** The driver runs as a systemd service whose mount namespace is already
+  private, so "not shared with the driver" was not the claim being made. It now compares against PID 1, and only for the namespaces
+  the record actually commits as private (`user` is `inherited`, so claiming it would be false).
+- **The T-6.1-012 host-name fixture never ran.** `pkill -f abs-holder.py` matched the shell that was starting it — the pattern
+  appears in that shell's own argv — so the fixture killed itself and the row was scored against a name nobody held. It now uses a
+  pidfile.
+
+**Result** ([raw/run-05-missing-rows.md](raw/run-05-missing-rows.md)): **175 PASS, 3 WEAK, 4 RECORDED, 0 FAIL; catalogue 115/121
+PASS, 0 NOT-EXECUTED, dups=0, extra=0; run verdict PASS.** This is the first run in the project whose verdict is not FAIL, and the
+first in which every row the frozen catalogue names is actually executed.
+
+That verdict is *not* the WP3.1 exit condition, and it should not be read as one. Four items of the plan remain, and two of them
+exist precisely because a green suite is not yet trustworthy: D-12 is still a presence check rather than the pre-registered metric
+(8 sessions × 230 effects × 10 seeded repetitions), the ten seeded repetitions per bypass row required by catalogue §4 have not been
+run, **no negative control has yet been built** — that is, nothing has yet demonstrated that these rows can fail when the property
+they assert is broken — and there has been no fresh-host reproduction. Until the negative controls exist, "0 FAIL" evidences that
+the assertions ran, not that they discriminate.
+
+The three WEAK rows and four RECORDED deviations are unchanged from WP3 and are listed there: T-6.9-006 (cooperative fan-out),
+T-6.4-012 (no TLS upstream in this deployment), D-12 (presence check), D-02/T-6.1-003 (no PTY path exists to deny), T-6.2-008
+(loader inventory), D-15 (no delegation operation exists to narrow).

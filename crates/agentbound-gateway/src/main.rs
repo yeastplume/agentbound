@@ -77,7 +77,9 @@ fn main() {
 }
 
 impl Gateway {
-    fn lc(&self, op: &str, body: Value) -> Option<Value> { wire::connect(&self.cfg.lifecycle_sock).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
+    /// Bounded: lifecycle may itself be calling back into this process (`deny_admission`/`release`), and both daemons serve one
+    /// request at a time. A timeout here surfaces as a fail-closed refusal, never as a wedged gateway.
+    fn lc(&self, op: &str, body: Value) -> Option<Value> { wire::connect_bounded(&self.cfg.lifecycle_sock, 4_000).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
     /// D4.7: on start, rebuild projections only for records lifecycle still reports live; no connection survives.
     fn reconstruct(&mut self) {
         // boot ordering: lifecycle is Type=simple, so After= does not imply its socket is bound yet — retry for up to ~10 s

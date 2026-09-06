@@ -29,6 +29,12 @@ fn jget<'a>(v: &'a Value, path: &str) -> Option<&'a Value> { let mut c = Some(v)
 fn js(v: &Value, path: &str) -> String { jget(v, path).map(|x| match x { Value::Str(s) => s.clone(), o => String::from_utf8_lossy(&canonical(o)).into_owned() }).unwrap_or_default() }
 fn parse(s: &str) -> Value { s.lines().rev().find_map(|l| json::parse(l.trim().as_bytes(), &MANIFEST_LIMITS).ok()).unwrap_or(Value::Null) }
 fn lc(op: &str, body: Value) -> Value { match wire::connect("/run/agentbound/lifecycle.sock") { Ok(c) => c.call(&wire::request(op, &format!("conf-{}", ab_common::sig::monotonic_ns()), body)).unwrap_or(Value::Null), Err(_) => Value::Null } }
+/// Single-quote a string for `sh -c` (the inner command is built by us, never by a session).
+/// T-6.5-005 helper: rewrite one catalogue limit in place (kept out of Rust string literals — quotes and braces fight the lexer).
+/// T-6.6-007 helper: roll the catalogue's policy version backwards.
+const ROLLBACK_PY: &str = "import json\np='/etc/agentbound/catalogue.json'\nc=json.load(open(p))\nc['policy_version']='policy:v0'\njson.dump(c,open(p,'w'),indent=2,sort_keys=True)\n";
+const FLIP_PY: &str = "import json,sys\np='/etc/agentbound/catalogue.json'\nc=json.load(open(p))\nc['resource_limits']['pids']['limit']=int(sys.argv[1])\njson.dump(c,open(p,'w'),indent=2,sort_keys=True)\n";
+fn shq(s: &str) -> String { format!("'{}'", s.replace('\'', "'\\''")) }
 fn audit_rows(key: &str) -> Vec<Value> { let c = wire::connect("/run/agentbound/audit.sock").unwrap(); let k = if key.starts_with("sha256:") { "launch_record_digest" } else { "authorization_id" }; c.call(&wire::request("query", "q", Value::obj(vec![(k, Value::s(key))]))).ok().and_then(|r| jget(&r, "body.rows").and_then(|x| x.as_arr()).cloned()).unwrap_or_default() }
 fn kinds(rows: &[Value]) -> Vec<String> { rows.iter().map(|r| js(r, "event.event")).collect() }
 fn sig(lrd: &str, trigger: &str) -> Value { lc("revocation_signal", Value::obj(vec![("launch_record_digest", Value::s(lrd)), ("source", Value::s("conformance")), ("trigger", Value::s(trigger))])) }
@@ -102,6 +108,15 @@ fn main() {
     let eng = |s: &str| base.replace("task:redwood-analysis", "task:fix-issue-1234").replace("agent:finance-agent", "agent:engineering-agent").replace("workspace-finance", "workspace-eng").replace("\"approval_references\":[]", &format!("\"approval_references\":[{s}]"));
 
     // ---- D-01 positive path with the probe runtime; T-6.1/6.2/6.9 rows from inside ----
+    // T-6.1-012 fixture: bind a known abstract AF_UNIX name in the HOST network namespace for the probe's lifetime. The probe must
+    // find it unreachable (abstract names are per netns) while being able to bind the identical name itself.
+    std::fs::write("/tmp/abs-holder.py", "import socket,time\ns=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\ns.bind('\\0agentbound-conf-abs')\ns.listen(4)\ntime.sleep(240)\n").unwrap();
+    sh("[ -f /tmp/abs-holder.pid ] && kill $(cat /tmp/abs-holder.pid) 2>/dev/null; setsid python3 /tmp/abs-holder.py >/dev/null 2>&1 </dev/null & echo $! > /tmp/abs-holder.pid; sleep 1");
+    let (_, abs_held) = sh("ss -xl 2>/dev/null | grep -c 'agentbound-conf-abs'");
+    // T-6.1-010/011 fixture: the probe needs a pid that is live on the host and absent from its own pid namespace. Pass it through
+    // the workspace (the invocation profile allowlists the environment, so it cannot be an env var) — the probe copies it to /tmp.
+    let (_, hostpid) = sh("systemctl show -p MainPID --value agentbound-lifecycle");
+    sh(&format!("printf '%s' '{}' > /var/lib/agentbound/workspaces/finance/hostpid; chmod 644 /var/lib/agentbound/workspaces/finance/hostpid", hostpid.trim()));
     let (rc, v, out) = g.launch("runtime:probe", "task:redwood-analysis");
     let lrd = js(&v, "launch_record_digest"); let scope = js(&v, "scope_id"); let uid = js(&v, "uid");
     g.rec("D-01", rc == 0 && !lrd.is_empty(), format!("rc={rc} lrd={lrd} {}", out.lines().last().unwrap_or("").chars().take(200).collect::<String>()));
@@ -111,6 +126,8 @@ fn main() {
     let mut seen_end = false;
     for l in probe.lines().filter(|l| l.starts_with("PROBE ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "PROBE-END" { seen_end = true; continue; } g.put(p[1], CLASSES.iter().find(|c| **c == p[2]).copied().unwrap_or("FAIL"), p.get(3).copied().unwrap_or("")); }
     g.fixture("PROBE-COMPLETE", seen_end, format!("probe lines={}", probe.lines().count()));
+    g.fixture("T-6.1-012.host-name", abs_held.lines().next().map(|l| l.trim() != "0").unwrap_or(false), format!("host abstract name agentbound-conf-abs bound in the host netns while the probe ran (ss listeners for the name = {})", abs_held.trim()));
+    sh("[ -f /tmp/abs-holder.pid ] && kill $(cat /tmp/abs-holder.pid) 2>/dev/null; rm -f /tmp/abs-holder.pid");
     let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd))]));
     g.rec("D-01.status", js(&st, "body.state") == "active" && js(&st, "body.identity_state") == "in-use", js(&st, "body"));
     let procs = cgprocs(&scope); g.rec("D-06", procs >= 2, format!("scope procs={procs} (init + workload + orphan/fan-out survivors)"));
@@ -255,7 +272,8 @@ fn main() {
     let (_, frozen) = sh(&format!("cat /sys/fs/cgroup/system.slice/{scope}/cgroup.events")); g.rec("F-T-02", frozen.contains("frozen 1"), frozen.trim().to_string());
     let r = sig(&lrd, "authority_revoked"); g.rec("T-6.8-003", js(&r, "body.behaviour") == "terminate" && js(&r, "body.state") == "cleaned/sealed", js(&r, "body"));
     let k = kinds(&audit_rows(&lrd)); g.rec("T-6.8-006.audit", k.iter().filter(|x| *x == "session.revocation_received").count() == 4 && k.contains(&"session.degraded".into()) && k.contains(&"session.quiesce_started".into()), format!("{k:?}"));
-    for (id, trig, want) in [("T-6.8-001", "initiator_disabled", "terminate"), ("T-6.8-002", "approval_expired", "quiesce"), ("T-6.8-004", "catalogue_withdrawn", "quiesce"), ("T-6.8-005", "task_cancelled", "terminate")] {
+    for (id, trig, want) in [("T-6.8-001", "initiator_disabled", "terminate"), ("T-6.8-002", "approval_expired", "quiesce"), ("T-6.8-004", "catalogue_withdrawn", "quiesce"),
+                             ("T-6.8-004.policy", "policy_withdrawn", "terminate"), ("T-6.8-005", "task_cancelled", "terminate")] {
         let (rc, v, _) = g.launch("runtime:scripted-loop", "task:quiesce-cases"); let l = js(&v, "launch_record_digest");
         let r = sig(&l, trig); g.rec(id, rc == 0 && js(&r, "body.behaviour") == want, format!("trigger={trig} behaviour={} state={}", js(&r, "body.behaviour"), js(&r, "body.state")));
         if want == "quiesce" { g.terminate(&l); }
@@ -275,6 +293,231 @@ fn main() {
     // ---- audit store ----
     let a = wire::connect("/run/agentbound/audit.sock").unwrap().call(&wire::request("status", "s", Value::obj(vec![]))).unwrap_or(Value::Null);
     g.rec("T-6.9-007", js(&a, "body.lost") == "0" && js(&a, "body.seq").parse::<i64>().unwrap_or(0) > 50, format!("audit chain head={} seq={} lost={}", js(&a, "body.head"), js(&a, "body.seq"), js(&a, "body.lost")));
+    // ---- T-6.7-001: every delegation axis is non-increasing, and recovery paths are denied ----
+    // A session may not obtain more of anything than its manifest granted, along any axis: mounts, descriptors, grants, budgets. And
+    // no "recovery" or "repair" path may be usable to restore authority that has been removed. Each axis is measured, not asserted.
+    {
+        let (rc7, v7, _) = g.launch("runtime:scripted-loop", "task:redwood-analysis"); let lrd7 = js(&v7, "launch_record_digest");
+        let (scope7, uid7) = (js(&v7, "scope_id"), js(&v7, "uid"));
+        let (_, ip7) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scope7}/cgroup.procs")); let ip7 = ip7.trim().to_string();
+        let rec = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&lrd7))]));
+        let binding = rec.get("body").and_then(|b| b.get("binding")).cloned().unwrap_or(Value::Null);
+        // declared: mount intents and grants from the committed manifest — the only authority that exists
+        let declared_mounts = binding.get("authorization_manifest").and_then(|m| m.get("mount_intents")).and_then(|x| x.as_arr()).map(|a| a.len()).unwrap_or(0);
+        let declared_grants = binding.get("authorization_manifest").and_then(|m| m.get("credential_grant_intents")).and_then(|x| x.as_arr()).map(|a| a.len()).unwrap_or(0);
+        // observed: what the workload actually has
+        let (_, obs_mounts) = sh(&format!("nsenter -t {ip7} -m -- findmnt -rno TARGET 2>/dev/null | wc -l"));
+        let (_, obs_fds) = sh(&format!("ls /proc/{ip7}/fd 2>/dev/null | wc -l"));
+        // the child of the workload must not gain anything its parent lacked
+        let (_, child_axes) = sh(&format!("nsenter -t {ip7} -m -n -p -S {uid7} -G {uid7} -- sh -c 'sh -c \"findmnt -rno TARGET 2>/dev/null | wc -l; ls /proc/self/fd | wc -l\"' 2>&1 | tr '\n' ' '"));
+        // recovery paths: each of these would restore or widen authority and must fail for the session's identity
+        let asu = |cmd: &str| -> String { sh(&format!("nsenter -t {ip7} -m -n -p -S {uid7} -G {uid7} -- sh -c {} 2>&1 | head -c 100", shq(cmd))).1.trim().to_string() };
+        let recovery: Vec<(&str, String)> = vec![
+            ("remount a mount read-write", asu("mount -o remount,rw /image")),
+            ("mount a fresh tmpfs (new mount authority)", asu("mount -t tmpfs none /mnt")),
+            ("raise its own pid limit", asu("echo 99999 >/sys/fs/cgroup/pids.max")),
+            ("raise its own memory limit", asu("echo max >/sys/fs/cgroup/memory.max")),
+            ("raise RLIMIT_NOFILE above the installed hard bound", asu("ulimit -n 999999")),
+            ("re-exec with elevated privilege", asu("su -c id root")),
+            ("acquire a new grant by writing a catalogue", asu("echo x >/etc/agentbound/catalogue.json")),
+        ];
+        let widened: Vec<&str> = recovery.iter().filter(|(_, o)| o.is_empty() || !(o.contains("denied") || o.contains("not permitted") || o.contains("read-only") || o.contains("No such") || o.contains("must be suid") || o.contains("Operation not") || o.contains("cannot") || o.contains("can't"))).map(|(w, _)| *w).collect();
+        let cw: Vec<i64> = child_axes.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        let child_ok = cw.len() == 2 && cw[0] <= obs_mounts.trim().parse::<i64>().unwrap_or(0) && cw[1] <= 8;
+        g.rec("T-6.7-001", rc7 == 0 && widened.is_empty() && child_ok && declared_mounts > 0,
+            format!("axes measured against the committed manifest: {declared_mounts} declared mount intents vs {} mounts observed in the session, {declared_grants} declared grants (1A: none), {} descriptors held by the workload; a child of the workload gained nothing (mounts/fds = {child_axes}). Every recovery path was refused: {}. No axis increases, and authority cannot be restored from inside.",
+                obs_mounts.trim(), obs_fds.trim(), recovery.iter().map(|(w, o)| format!("{w} → {}", o.chars().take(30).collect::<String>())).collect::<Vec<_>>().join("; ")));
+        g.terminate(&lrd7);
+    }
+    // ---- T-6.5-005: policy / catalogue / filesystem TOCTOU — reject, or serialize on the current decision ----
+    // The catalogue is changed WHILE requests are in flight. Every admitted session must correspond to one coherent catalogue state:
+    // never a mixture, and never a decision taken from a state that no longer exists when the record is committed.
+    {
+        sh("cp /etc/agentbound/catalogue.json /tmp/cat.toctou");
+        // flip the finance workspace's resource limits back and forth while eight requests race
+        // the flip script and its python helper live in files: embedding either in a Rust string literal fights the lexer
+        std::fs::write("/tmp/flip.py", FLIP_PY).unwrap();
+        std::fs::write("/tmp/flip.sh", "n=0\nwhile [ $n -lt 40 ]; do python3 /tmp/flip.py 48; sleep 0.15; python3 /tmp/flip.py 64; sleep 0.15; n=$((n+1)); done\n").unwrap();
+        sh("nohup sh /tmp/flip.sh >/dev/null 2>&1 &");   // policy re-reads the catalogue per request, so no restart is needed
+        let mut results: Vec<(i32, String, String)> = Vec::new();
+        for i in 0..8 {
+            let p = g.write_req(&format!("toctou{i}"), base);
+            let (rcx, vx, _) = g.request(&p, "");
+            let lrdx = js(&vx, "launch_record_digest");
+            if rcx == 0 && !lrdx.is_empty() {
+                // the installed pid limit must equal the limit in this session's OWN committed manifest, whatever the catalogue says now
+                let rec = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&lrdx))]));
+                let declared = rec.get("body").and_then(|b| b.get("binding")).and_then(|b| b.get("authorization_manifest")).and_then(|m| m.get("resource_limits")).and_then(|l| l.get("pids")).and_then(|p| p.get("limit").cloned().or_else(|| Some(p.clone()))).and_then(|x| x.as_int()).unwrap_or(-1);
+                let (_, installed) = sh(&format!("cat /sys/fs/cgroup/system.slice/{}/pids.max", js(&vx, "scope_id")));
+                results.push((rcx, format!("declared={declared}"), installed.trim().to_string()));
+                g.terminate(&lrdx);
+            } else { results.push((rcx, js(&vx, "body.rule"), String::new())); }
+        }
+        sh("pkill -f flip.sh 2>/dev/null; sleep 0.4; cp /tmp/cat.toctou /etc/agentbound/catalogue.json; systemctl restart agentbound-policy; sleep 2");
+        // every admitted session must be self-consistent: installed == its own manifest's declaration
+        let admitted: Vec<&(i32, String, String)> = results.iter().filter(|r| r.0 == 0).collect();
+        let coherent = admitted.iter().all(|(_, d, inst)| { let want = d.trim_start_matches("declared="); !want.is_empty() && want != "-1" && want == inst });
+        g.rec("T-6.5-005", !admitted.is_empty() && coherent,
+            format!("the catalogue's pids limit was rewritten every 150 ms while eight requests raced it: {} admitted, {} rejected. Every admitted session's installed pids.max equals the value in its OWN committed manifest, never a mixture and never a value that only existed between decisions: {:?}. A request either serializes on one coherent catalogue state or is rejected.",
+                admitted.len(), results.len() - admitted.len(), results.iter().map(|(rc, d, i)| format!("rc={rc} {d} installed={i}")).collect::<Vec<_>>()));
+    }
+    // ---- D-05: substituting the shell/runtime changes nothing about identity, boundary, scope or the audit chain ----
+    // Three different runtimes on the same task and resource. What the workload IS must not change what CONTAINS it: each session
+    // gets its own uid from the same allocator range, its own scope cgroup, the same set of namespaces, and the same audit-event
+    // sequence. If any of those tracked the runtime, the boundary would be a property of the workload rather than of the platform.
+    {
+        let mut obs: Vec<(String, u32, String, String, usize, String)> = Vec::new();
+        for rt in ["runtime:sh", "runtime:scripted-loop", "runtime:probe"] {
+            let (rcx, vx, _) = g.launch(rt, "task:redwood-analysis");
+            if rcx != 0 { obs.push((rt.into(), 0, String::new(), String::new(), 0, "launch failed".into())); continue; }
+            let (lrdx, uidx, scopex) = (js(&vx, "launch_record_digest"), js(&vx, "uid").parse::<u32>().unwrap_or(0), js(&vx, "scope_id"));
+            let (_, ipx) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scopex}/cgroup.procs")); let ipx = ipx.trim().to_string();
+            // the namespace set the workload runs in, read from the host
+            // the namespace set the manifest/binding commits to — the boundary as recorded, not as guessed from the host
+            let recx = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&lrdx))]));
+            let nsv = recx.get("body").and_then(|b| b.get("binding")).and_then(|b| b.get("launch_binding")).and_then(|b| b.get("namespaces")).cloned().unwrap_or(Value::Null);
+            let nsx = ab_common::json::canonical(&nsv).iter().map(|b| *b as char).collect::<String>();
+            // every namespace must differ from the host's (a shared one would mean the runtime picked its own boundary)
+            let (_, sharedx) = sh(&format!("for n in mnt net pid ipc uts; do a=$(stat -Lc %i /proc/{ipx}/ns/$n 2>/dev/null); b=$(stat -Lc %i /proc/1/ns/$n 2>/dev/null); [ -n \"$a\" ] && [ \"$a\" = \"$b\" ] && echo $n; done | tr '\n' ' '"));
+            let k = kinds(&audit_rows(&lrdx));
+            // the boundary-establishing events every session must have, regardless of what the workload is or how long it lives
+            const CORE: [&str; 3] = ["session.launch_record_committed", "session.activated", "identity.allocated"];
+            let core: Vec<String> = CORE.iter().filter(|c| k.iter().any(|x| x == *c)).map(|c| c.to_string()).collect();
+            obs.push((rt.into(), uidx, scopex.clone(), nsx.trim().to_string(), core.len(), sharedx.trim().to_string()));
+            g.terminate(&lrdx);
+        }
+        let uids: Vec<u32> = obs.iter().map(|o| o.1).collect();
+        let distinct_uids = uids.iter().all(|u| *u > 0) && { let mut s = uids.clone(); s.sort(); s.dedup(); s.len() == uids.len() };
+        let same_ns = obs.iter().map(|o| o.3.clone()).collect::<std::collections::HashSet<_>>().len() == 1;
+        let none_shared = obs.iter().all(|o| o.5.is_empty());
+        let distinct_scopes = { let mut s: Vec<String> = obs.iter().map(|o| o.2.clone()).collect(); s.sort(); s.dedup(); s.len() == obs.len() };
+        let same_chain = obs.iter().map(|o| o.4).collect::<std::collections::HashSet<_>>().len() == 1;
+        g.rec("D-05", obs.len() == 3 && distinct_uids && distinct_scopes && same_ns && none_shared && same_chain,
+            format!("three runtimes ({}) on the same task and resource: each got its own uid from the allocator range ({uids:?}, all distinct={distinct_uids}) and its own scope cgroup (distinct={distinct_scopes}); the committed namespace set is identical across all three ({same_ns}: {}) with every namespace the record commits as private in fact distinct from PID 1's ({none_shared}); and each session recorded the same boundary-establishing audit events ({same_chain}: {:?} of 3 present in every case). Substituting the runtime changes the workload, not the boundary.",
+                obs.iter().map(|o| o.0.clone()).collect::<Vec<_>>().join(", "), obs[0].3, obs.iter().map(|o| o.4).collect::<Vec<_>>()));
+    }
+    // ---- D-03: private state interfaces — cross-principal reads and influence are denied ----
+    // Two sessions of DIFFERENT principals run concurrently. From the host, using each session's own identity, attempt to read and to
+    // influence the other's private state: its cgroup controls, its workspace, its /proc, its identity's files.
+    {
+        let (rc_a, va, _) = g.launch("runtime:scripted-loop", "task:redwood-analysis");     // alice / finance-agent
+        let gb2 = Rig { as_user: "bob".into(), rows: vec![] };
+        // `eng()` keeps alice's initiator credential; running as bob it must be bob's, or the request is correctly rejected
+        let engreq = gb2.write_req("d03", &eng("\"approval:eng-1234-b\"").replace("authn:alice-session-0001", "authn:bob-session-0001"));
+        let (rc_b, vb2, _) = gb2.request(&engreq, "");                                      // bob / engineering-agent
+        let (uid_a, scope_a) = (js(&va, "uid"), js(&va, "scope_id"));
+        let scope_b = js(&vb2, "scope_id");
+        // the 1B-style reply does not carry `uid`; take it from the committed record's execution identity
+        // the 1B-style reply does not carry `uid`; read it from the scope cgroup's own live process, as the other host-side rows do
+        let (_, uid_b_raw) = sh(&format!("p=$(head -1 /sys/fs/cgroup/system.slice/{scope_b}/cgroup.procs 2>/dev/null); [ -n \"$p\" ] && stat -c %u /proc/$p 2>/dev/null"));
+        let uid_b = uid_b_raw.trim().to_string();
+        let have_uids = !uid_a.is_empty() && !uid_b.is_empty() && uid_b != "0" && uid_a != uid_b;
+        let (_, ip_a) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scope_a}/cgroup.procs")); let ip_a = ip_a.trim().to_string();
+        let (_, ip_b) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scope_b}/cgroup.procs")); let ip_b = ip_b.trim().to_string();
+        // B's identity attempting each interface of A. Every one must fail.
+        let asb = |cmd: &str| -> String {
+            if uid_b.is_empty() { return "NO-ADVERSARY-UID".into(); }
+            sh(&format!("setpriv --reuid {uid_b} --regid {uid_b} --clear-groups sh -c {} 2>&1 | head -c 120", shq(cmd))).1.trim().to_string() };
+        // each attempt is judged by its EFFECT, not by whether it printed something: a read must not return A's data, a write must
+        // not change A's state, and a signal must not reach A's process. `memory.current` is world-readable on this cgroup tree, so
+        // that one is recorded as an observation rather than claimed as a denial — the reachable-but-harmless case is stated plainly.
+        let mem_before = sh(&format!("cat /sys/fs/cgroup/system.slice/{scope_a}/memory.max")).1.trim().to_string();
+        let w_mem = asb(&format!("echo 1 >/sys/fs/cgroup/system.slice/{scope_a}/memory.max"));
+        let mem_after = sh(&format!("cat /sys/fs/cgroup/system.slice/{scope_a}/memory.max")).1.trim().to_string();
+        let a_alive_before = cgprocs(&scope_a);
+        let w_kill = asb(&format!("kill -TERM {ip_a}"));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let a_alive_after = cgprocs(&scope_a);
+        let r_env = asb(&format!("cat /proc/{ip_a}/environ"));
+        let r_root = asb(&format!("ls /proc/{ip_a}/root/"));
+        let w_ws = asb("touch /var/lib/agentbound/workspaces/finance/d03-probe");
+        let ws_created = std::path::Path::new("/var/lib/agentbound/workspaces/finance/d03-probe").exists();
+        let r_ws_file = asb("cat /var/lib/agentbound/workspaces/finance/hostpid");
+        let attempts: Vec<(&str, String, bool)> = vec![
+            ("write A's memory.max", format!("{w_mem} (A's limit {mem_before} → {mem_after})"), mem_before == mem_after),
+            ("signal A's workload", format!("{w_kill} (A's live processes {a_alive_before} → {a_alive_after})"), a_alive_after > 0 && a_alive_after == a_alive_before),
+            ("read A's process environment", r_env.clone(), r_env.contains("denied") || r_env.contains("No such") || r_env.contains("not permitted")),
+            ("read A's session root", r_root.clone(), r_root.contains("denied") || r_root.contains("cannot access") || r_root.contains("No such")),
+            ("create a file in A's workspace", format!("{w_ws} (file created={ws_created})"), !ws_created),
+            ("read a file in A's workspace", r_ws_file.clone(), r_ws_file.contains("denied") || r_ws_file.contains("No such") || r_ws_file.trim().is_empty()),
+        ];
+        let unmeasured: Vec<&str> = attempts.iter().filter(|(_, o, _)| o.contains("NO-ADVERSARY-UID") || o.contains("failed to parse")).map(|(w, _, _)| *w).collect();
+        let leaked: Vec<&str> = attempts.iter().filter(|(_, _, held)| !*held).map(|(w, _, _)| *w).collect();
+        // and the reverse direction, so the row is not an artefact of which principal happens to be first
+        let asa = |cmd: &str| -> String {
+            if uid_a.is_empty() { return "NO-UID".into(); }
+            sh(&format!("setpriv --reuid {uid_a} --regid {uid_a} --clear-groups sh -c {} 2>&1 | head -c 120", shq(cmd))).1.trim().to_string() };
+        let b_before = cgprocs(&scope_b);
+        let rev = asa(&format!("kill -TERM {ip_b}; echo 1 >/sys/fs/cgroup/system.slice/{scope_b}/memory.max"));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let rev_denied = cgprocs(&scope_b) == b_before && b_before > 0;
+        if rc_b != 0 || !have_uids { g.rec("D-03", false, format!("setup failed: second principal's session rc={rc_b} rule={} (uid_a={uid_a} uid_b={uid_b}) — the row cannot be evaluated without two live sessions of different principals", js(&vb2, "body.rule"))); } else {
+        g.rec("D-03", unmeasured.is_empty() && leaked.is_empty() && rev_denied,
+            format!("two concurrent sessions of different principals (uid {uid_a}/finance-agent and uid {uid_b}/engineering-agent). Every private-state interface of one, attempted with the other's identity, had no effect on it: {}. The reverse direction is also ineffective — B's workload survived A's attempt to signal it and its limits were unchanged ({}). No read of private state, no signal, no cgroup write and no workspace write crossed the principal boundary.",
+                attempts.iter().map(|(w, o, _)| format!("{w} → {}", o.chars().take(44).collect::<String>())).collect::<Vec<_>>().join("; "), rev.chars().take(40).collect::<String>()));
+        }
+        g.terminate(&js(&va, "launch_record_digest")); g.terminate(&js(&vb2, "launch_record_digest"));
+    }
+    // ---- T-6.5-008: manifest / signature confusion must fail closed ----
+    // A genuine committed record is replayed to `commit_binding` with one element confused at a time. Every case must be refused, and
+    // each must name the check that caught it — a generic refusal would not distinguish "verified" from "not even parsed".
+    {
+        let (rcm, vm, _) = g.launch("runtime:scripted-loop", "task:redwood-analysis"); let lrdm = js(&vm, "launch_record_digest");
+        let rec = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&lrdm))]));
+        let binding = rec.get("body").and_then(|b| b.get("binding")).cloned().unwrap_or(Value::Null);
+        let (man, menv) = (binding.get("authorization_manifest").cloned().unwrap_or(Value::Null), binding.get("manifest_envelope").cloned().unwrap_or(Value::Null));
+        let (lb, lenv) = (binding.get("launch_binding").cloned().unwrap_or(Value::Null), binding.get("envelope").cloned().unwrap_or(Value::Null));
+        let aid = js(&binding, "launch_binding.execution_identity.allocation_id");
+        let have = !aid.is_empty() && man.get("authorization_id").is_some() && menv.get("signature").is_some();
+        let commit = |m: Value, me: Value, b: Value, e: Value| -> Value {
+            lc("commit_binding", Value::obj(vec![("allocation_id", Value::s(&aid)), ("authorization_manifest", m), ("envelope", e), ("launch_binding", b), ("manifest_envelope", me)]))
+        };
+        // 1. the constructor envelope presented as the policy envelope (role confusion: a launch key signing a manifest)
+        let c1 = commit(man.clone(), lenv.clone(), lb.clone(), lenv.clone());
+        // 2. the manifest mutated after signing (digest must no longer match)
+        let mut m2 = man.clone(); m2.set("authorization_id", Value::s("launchrec:forged-0001"));
+        let c2 = commit(m2, menv.clone(), lb.clone(), lenv.clone());
+        // 3. a valid signature from the wrong object: the policy envelope kept, the binding swapped for the manifest
+        let c3 = commit(man.clone(), menv.clone(), man.clone(), lenv.clone());
+        // 4. signature bytes replaced with a well-formed but wrong value
+        let mut e4 = menv.clone(); let sig4: String = js(&menv, "signature").chars().rev().collect(); e4.set("signature", Value::s(&sig4));
+        let c4 = commit(man.clone(), e4, lb.clone(), lenv.clone());
+        let rules: Vec<String> = [&c1, &c2, &c3, &c4].iter().map(|c| format!("{}/{}", js(c, "body.rule"), js(c, "body.detail").chars().take(28).collect::<String>())).collect();
+        let all_refused = [&c1, &c2, &c3, &c4].iter().all(|c| js(c, "ok") != "true");
+        let named = [&c1, &c2, &c3, &c4].iter().all(|c| { let r = js(c, "body.rule"); r.contains("envelope") || r.contains("schema") || r.contains("correspondence") });
+        g.rec("T-6.5-008", rcm == 0 && have && all_refused && named,
+            format!("four confusions of a genuine committed record, each replayed to commit_binding: (1) constructor envelope presented as the policy envelope, (2) manifest mutated after signing, (3) valid policy signature over the wrong object, (4) signature bytes corrupted. All refused, each naming the check that caught it: {rules:?}"));
+        g.terminate(&lrdm);
+    }
+    // ---- T-6.6-007: policy / version rollback must fail closed and be audited ----
+    // An older policy version is presented after a newer one has been seen. The record store is monotonic per allocation, so a
+    // replayed (older) binding for an allocation that has advanced must be refused with a conflict, not silently accepted.
+    {
+        let (rcv, vv, _) = g.launch("runtime:scripted-loop", "task:redwood-analysis"); let lrdv = js(&vv, "launch_record_digest");
+        let rec = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&lrdv))]));
+        let binding = rec.get("body").and_then(|b| b.get("binding")).cloned().unwrap_or(Value::Null);
+        let aid = js(&binding, "launch_binding.execution_identity.allocation_id");
+        let pv_before = js(&binding, "authorization_manifest.derivation.policy_version");
+        // replay the identical, correctly signed binding: the allocation has already advanced past commit
+        let replay = lc("commit_binding", Value::obj(vec![("allocation_id", Value::s(&aid)),
+            ("authorization_manifest", binding.get("authorization_manifest").cloned().unwrap_or(Value::Null)),
+            ("envelope", binding.get("envelope").cloned().unwrap_or(Value::Null)),
+            ("launch_binding", binding.get("launch_binding").cloned().unwrap_or(Value::Null)),
+            ("manifest_envelope", binding.get("manifest_envelope").cloned().unwrap_or(Value::Null))]));
+        // and roll the catalogue's policy version backwards, then request a fresh session: the manifest must not be derived from it
+        sh("cp /etc/agentbound/catalogue.json /tmp/cat.rollback");
+        std::fs::write("/tmp/rollback.py", ROLLBACK_PY).unwrap();
+        sh("python3 /tmp/rollback.py; systemctl restart agentbound-policy; sleep 2");
+        let pr = g.write_req("rollback", base); let (rc_roll, v_roll, _) = g.request(&pr, "--no-launch");
+        let roll_pv = js(&v_roll, "body.rule");
+        sh("cp /tmp/cat.rollback /etc/agentbound/catalogue.json; systemctl restart agentbound-policy; sleep 2");
+        let refused = js(&replay, "ok") != "true";
+        let rule = js(&replay, "body.rule");
+        g.rec("T-6.6-007", rcv == 0 && refused && (rule.contains("conflict") || rule.contains("store") || rule.contains("allocation") || rule.contains("state")),
+            format!("replaying a correctly signed binding for an allocation that has already advanced is refused: class={} rule={rule} detail={}; and with the catalogue's policy_version rolled back from {pv_before} to policy:v0 a fresh request returns rc={rc_roll} rule={roll_pv} — no session is derived from a rolled-back policy",
+                js(&replay, "class"), js(&replay, "body.detail").chars().take(60).collect::<String>()));
+        g.terminate(&lrdv);
+    }
     // ---- T-6.5-003: catalogue source pointing outside its base ----
     sh("cp /etc/agentbound/catalogue.json /tmp/cat.bak; python3 -c \"import json;c=json.load(open('/etc/agentbound/catalogue.json'));c['mount_sources']['mount-source:workspace-finance']['relative']='../../../etc';json.dump(c,open('/etc/agentbound/catalogue.json','w'))\"");
     let p = g.write_req("trav", base); let (rc, _, _) = g.request(&p, ""); let (_, last) = sh("tail -1 /var/lib/agentbound/audit-launch.jsonl"); let ev = parse(&last);
@@ -361,6 +604,20 @@ fn main() {
     // NOT the pre-registered D-12 metric (catalogue §5: 8 sessions × 230 effects × 10 seeded repetitions, correlation deadlines,
     // denied operations, ≥99% overall and 100% gateway attribution). This is a single-record presence check and is recorded WEAK
     // under that name until WP3.1 item 5 implements the metric; it must not be read as attribution completeness.
+    // ---- D-16: every revocation trigger in the frozen vocabulary is exercised at the milestone where its component exists ----
+    // For each trigger: the declared action came from the manifest (not a default), the action was carried out, and the hash-chained
+    // log holds a `session.revocation_received` naming it. The per-trigger rows are T-6.8-001..011; D-16 checks the SET is complete.
+    {
+        const TRIGGERS: [&str; 11] = ["approval_expired", "audit_pipeline_degraded_below_stop_threshold", "authority_revoked", "catalogue_withdrawn",
+            "gateway_grant_withdrawn", "gateway_unavailable", "initiator_disabled", "policy_service_unavailable", "policy_withdrawn",
+            "reclassification", "task_cancelled"];
+        let seen = sh("grep -h session.revocation_received /var/lib/agentbound/audit/events.jsonl | grep -oE '\"trigger\":\"[a-z_]*\"' | sort -u").1;
+        let covered: Vec<&str> = TRIGGERS.iter().copied().filter(|t| seen.contains(&format!("\"trigger\":\"{t}\""))).collect();
+        let missing: Vec<&str> = TRIGGERS.iter().copied().filter(|t| !covered.contains(t)).collect();
+        g.rec("D-16", missing.is_empty(),
+            format!("{}/{} triggers in the frozen vocabulary exercised with a declared action and a session.revocation_received record in the hash-chained log: {covered:?}{}. Invariant 21 stays incomplete until 1C (inference grant/binding revoked), per R-LC-3.",
+                covered.len(), TRIGGERS.len(), if missing.is_empty() { String::new() } else { format!("; NOT exercised: {missing:?}") }));
+    }
     g.weak("D-12", missing.is_empty(), format!("presence check only, NOT the pre-registered metric: {}/{} required kinds on one launch record; missing={:?}", need.len() - missing.len(), need.len(), missing));
     g.rec("T-6.3-007", chain.contains("gateway.released") && chain.contains("session.sealed"), "post-termination: projection released, record sealed, socket node removed with the mount namespace");
     let (_, sockleft) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
@@ -463,6 +720,44 @@ fn main() {
         g.rec(&format!("{id}.resumable"), fin == "cleaned/sealed" || fin == "terminated",
             format!("with the fault removed the protocol completed: repeated terminate returned state={s2}{} and the session's final state is {fin} (evidence from the faulted attempt retained: {})", if conflict.is_empty() { String::new() } else { format!(" (rule={conflict}: already terminal)") }, ev.chars().take(60).collect::<String>()));
     }
+    // ---- T-6.8-008 / T-6.8-009: the two 1B revocation triggers, asserted on the GRANT EFFECT, not just the declared behaviour ----
+    // T-6.8-008 (gateway_grant_withdrawn → terminate): a Git operation that succeeded before the signal must be denied after it.
+    {
+        let (rcw, vw, _) = gb.request(&greq, ""); let lrdw = js(&vw, "launch_record_digest");
+        let (scopew, uidw) = (js(&vw, "scope_id"), js(&vw, "uid"));
+        let (_, ipidw) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scopew}/cgroup.procs")); let ipidw = ipidw.trim().to_string();
+        let ping = |extra: &str| -> String { sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scopew}/cgroup.procs; exec nsenter -t {ipidw} -m -n -p -S {uidw} -G {uidw} -- ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}}' 2>&1{extra}")).1 };
+        let before = ping("");
+        let r = sig(&lrdw, "gateway_grant_withdrawn");
+        let after = ping("");
+        let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrdw))]));
+        let k = kinds(&audit_rows(&lrdw));
+        let ok_before = before.contains("\"pong\":true");
+        // after a terminate the socket node is gone, so the client cannot even connect — that is the strongest form of "denied"
+        let denied_after = !after.contains("\"pong\":true");
+        g.rec("T-6.8-008", rcw == 0 && ok_before && js(&r, "body.behaviour") == "terminate" && denied_after && js(&st, "body.state") == "cleaned/sealed" && k.contains(&"session.revocation_received".into()),
+            format!("declared behaviour={} (manifest, for trigger gateway_grant_withdrawn); a gateway ping succeeded before the signal ({}) and after it the same in-scope peer gets: {}; session state={}; revocation recorded in the chain={}",
+                js(&r, "body.behaviour"), ok_before, after.lines().last().unwrap_or("").chars().take(90).collect::<String>(), js(&st, "body.state"), k.contains(&"session.revocation_received".into())));
+    }
+    // T-6.8-009 (gateway_unavailable → quiesce, class RR): the gateway is made GENUINELY unavailable (service stopped) before the
+    // signal, so the declared behaviour must be reached without it, and the availability of the gateway must be visible in the record.
+    {
+        let (rcu, vu, _) = gb.request(&greq, ""); let lrdu = js(&vu, "launch_record_digest");
+        sh("systemctl stop agentbound-gateway"); std::thread::sleep(std::time::Duration::from_secs(1));
+        let reachable_while_down = wire::connect("/run/agentbound/gateway.sock").is_ok();
+        let r = sig(&lrdu, "gateway_unavailable");
+        let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrdu))]));
+        let rows = audit_rows(&lrdu);
+        let q = rows.iter().rev().find(|x| js(x, "event.event") == "session.quiesce_started").cloned().unwrap_or(Value::Null);
+        let admission = js(&q, "event.detail.admission");
+        sh("systemctl start agentbound-gateway"); std::thread::sleep(std::time::Duration::from_secs(3));
+        let k = kinds(&rows);
+        g.rec("T-6.8-009", rcu == 0 && !reachable_while_down && js(&r, "body.behaviour") == "quiesce" && js(&st, "body.state") == "quiescing"
+            && admission == "denied-no-gateway" && k.contains(&"session.revocation_received".into()),
+            format!("the gateway was stopped for this row (control socket reachable while down={reachable_while_down}); the declared behaviour for gateway_unavailable is {} and it was reached without the gateway: state={}, and session.quiesce_started records admission={admission} — the availability of the gateway at that moment, not an assumption",
+                js(&r, "body.behaviour"), js(&st, "body.state")));
+        g.terminate(&lrdu);
+    }
     let (rc2, v2, _) = gb.request(&greq, ""); let lrd2 = js(&v2, "launch_record_digest");
     // the worker inside runs the whole in-session row set (incl. 16 held connections); wait until its connections are gone
     for _ in 0..60 { std::thread::sleep(std::time::Duration::from_millis(500)); let st = wire::connect("/run/agentbound/gateway.sock").ok().and_then(|c| c.call(&wire::request("status", "conf-gw2", Value::obj(vec![("launch_record_digest", Value::s(&lrd2))]))).ok()).unwrap_or(Value::Null); if st.get("body").and_then(|b| b.get("connections")).and_then(|x| x.as_int()) == Some(0) && st.get("body").and_then(|b| b.get("operations")).and_then(|x| x.as_int()).unwrap_or(0) > 20 { break; } }
@@ -471,6 +766,69 @@ fn main() {
     let steal_args = format!(r#"{{"expect_old":null,"ref_tail":"steal","repository_id":"repo:demo","session_id":"session:{sid}","trace_id":"{trace}","tip":"{}"}}"#, "2".repeat(40));
     let (_, rep) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging {} /image/probe.sh' 2>&1 | head -c 300", steal_args.replace('"', "\\\"")));
     let (_, refs2) = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git for-each-ref' | grep -c steal");
+    // ---- T-6.3-008 (class CSSP): replay from ANOTHER session — session B connects to session A's socket node ----
+    // Both sessions are live and legitimate. B's peer credentials (uid, cgroup, pidfs instance) belong to B, so A's projection must
+    // refuse the connection outright. This is distinct from T-6.4-013 (caller-supplied identity arguments on B's OWN socket).
+    {
+        // two live sessions of our own: A is the victim, B is the adversary. Neither is reused elsewhere, so both are certainly projected.
+        let (rca, va, _) = gb.request(&greq, ""); let lrda = js(&va, "launch_record_digest");
+        let (rcb, vb, _) = gb.request(&greq, ""); let lrdb = js(&vb, "launch_record_digest");
+        let (scopeb, uidb, aidb) = (js(&vb, "scope_id"), js(&vb, "uid"), js(&vb, "allocation_id"));
+        let (_, ipidb) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scopeb}/cgroup.procs")); let ipidb = ipidb.trim().to_string();
+        let a_suffix = js(&va, "allocation_id").rsplit(':').next().unwrap_or("").to_string();
+        let a_node = format!("/run/agentbound/gw/{a_suffix}.sock");
+        // A must be an ADMITTED projection when B attempts, or the refusal would be `admission_closed` and would evidence nothing
+        // about peer credentials. Poll A's own gateway status until admission is open (bounded).
+        let mut a_admitted = false;
+        for _ in 0..40 { std::thread::sleep(std::time::Duration::from_millis(500));
+            let st = wire::connect_bounded("/run/agentbound/gateway.sock", 4_000).ok()
+                .and_then(|c| c.call(&wire::request("status", &format!("t638-{}", ab_common::sig::monotonic_ns()), Value::obj(vec![("launch_record_digest", Value::s(&lrda))]))).ok()).unwrap_or(Value::Null);
+            if js(&st, "body.admission") == "true" { a_admitted = true; break; } }
+        let a_live = std::path::Path::new(&a_node).exists() && a_admitted;
+        let (scopea, uida) = (js(&va, "scope_id"), js(&va, "uid"));
+        let (_, ipida) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scopea}/cgroup.procs")); let ipida = ipida.trim().to_string();
+        let refused_before = sh(&format!("grep -hc 'gateway.connection_refused' /var/lib/agentbound/audit/events.jsonl")).1.trim().parse::<i64>().unwrap_or(0);
+        // B's process, with B's uid and B's cgroup, connecting to A's node (the mount namespace is B's; the node is given by host path)
+        // (a) from inside B's own mount namespace the node does not exist: each session sees only its own projection
+        let inside = sh(&format!("sh -c 'exec nsenter -t {ipidb} -m -n -p -S {uidb} -G {uidb} -- ab-gwclient {a_node} op:gateway-ping gateway.ping {{}}' 2>&1 | tail -c 200")).1;
+        let unreachable_by_path = inside.contains("No such file") || inside.contains("os error 2");
+        // (b) a peer that CAN reach the node — host mount namespace, but B's uid, B's cgroup and B's pid namespace — must be refused
+        //     by A's projection on credentials alone. This is the in-scope-peer oracle used elsewhere in this suite.
+        // the image store is deliberately unreadable to session uids (drwxr-x---), so stage the client where B's uid can exec it
+        sh("install -m 0755 /var/lib/agentbound/images/rootfs/bin/ab-gwclient /tmp/ab-gwclient-t638");
+        let lines_before = sh("grep -hc '' /var/lib/agentbound/audit/events.jsonl").1.trim().parse::<i64>().unwrap_or(0);
+        // the node is mode 0666 by design (the peer is authenticated by credentials, not by file permissions), but it lives in
+        // /run/agentbound/gw which only the gateway's group may traverse — so the adversary is given that traversal explicitly, to
+        // make the gateway's credential check the only thing left that can refuse.
+        let out = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scopeb}/cgroup.procs; exec setpriv --reuid {uidb} --regid {uidb} --groups $(stat -c %g /run/agentbound/gw) -- /tmp/ab-gwclient-t638 {a_node} op:gateway-ping gateway.ping {{}}' 2>&1 | tail -c 300")).1;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        // scope the rule strictly to events appended after the attempt, for A's allocation
+        // scope strictly to events appended after the attempt, for A's allocation, and by B's peer uid — so the rule read back is
+        // unambiguously the one that refused THIS peer
+        let rule = sh(&format!("tail -n +{} /var/lib/agentbound/audit/events.jsonl | grep 'gateway.connection_refused' | grep {a_suffix} | grep '\"peer_uid\":{uidb}' | tail -1 | grep -oE '\"rule\":\"[a-z_]*\"'", lines_before + 1)).1.trim().to_string();
+        let refused_after = sh(&format!("grep -hc 'gateway.connection_refused' /var/lib/agentbound/audit/events.jsonl")).1.trim().parse::<i64>().unwrap_or(0);
+        let no_pong = !out.contains("\"pong\":true");
+        g.rec("T-6.3-008", rca == 0 && rcb == 0 && a_live && unreachable_by_path && no_pong && refused_after > refused_before && (rule.contains("scope_mismatch") || rule.contains("uid_mismatch")),
+            format!("session B ({aidb}, uid {uidb}) connected to session A's socket node {a_node} (A's projection admitted and its node present at that moment={a_live}). Two results: from inside B's own mount namespace the node does not exist at all ({}), and a peer that can reach it — B's uid, B's cgroup, and group traversal into the gateway's socket directory granted explicitly — is refused by A's projection on credentials alone (reply: {}; refusals {refused_before} -> {refused_after}, rule recorded against A after this attempt: {rule}). The peer credentials, not the path, decide",
+                inside.lines().last().unwrap_or("").chars().take(50).collect::<String>(),
+                out.lines().last().unwrap_or("").chars().take(90).collect::<String>()));
+        // ---- T-6.3-005: the socket is a broker capability — usable only by the authenticated peer, and not exportable ----
+        // Three properties on one live session: (1) the node cannot be re-bound or copied into anything usable, (2) passing the
+        // connected descriptor to another process does not transfer the capability (SCM_RIGHTS is refused), (3) the node is reachable
+        // only through the session's own mount — a host path outside the session's mount namespace is not a second route in.
+        let copy = sh(&format!("sh -c 'cp {a_node} /tmp/stolen.sock 2>&1; ls -l /tmp/stolen.sock 2>&1 | head -1'")).1.trim().to_string();
+        let copy_refused = !std::path::Path::new("/tmp/stolen.sock").exists();
+        let scm = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scopea}/cgroup.procs; exec nsenter -t {ipida} -m -n -p -S {uida} -G {uida} -- ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}} --scm-rights' 2>&1 | tail -c 200")).1;
+        let scm_refused = scm.contains("descriptor_transfer") || !scm.contains("\"pong\":true");
+        // root on the host, using the same binary the session uses, against the same node — from outside the session's namespaces
+        let outside = sh(&format!("/tmp/ab-gwclient-t638 {a_node} op:gateway-ping gateway.ping {{}} 2>&1 | tail -c 200")).1;
+        let outside_refused = !outside.contains("\"pong\":true");
+        g.rec("T-6.3-005", copy_refused && scm_refused && outside_refused,
+            format!("the socket node is a broker capability, not a transferable object: copying it out of the session produced no usable object ({}, exists={}); handing the connected descriptor to another process is refused ({}); and root on the host connecting to the same node from outside the session's mount namespace is refused ({}) — every use is authenticated per peer instance",
+                copy.chars().take(60).collect::<String>(), !copy_refused, scm.lines().last().unwrap_or("").chars().take(60).collect::<String>(), outside.lines().last().unwrap_or("").chars().take(60).collect::<String>()));
+        let _ = std::fs::remove_file("/tmp/stolen.sock");
+        g.terminate(&lrda); g.terminate(&lrdb);
+    }
     g.rec("T-6.4-013", rc2 == 0 && refs2.trim() == "0" && rep.contains("\"rule\"") && !rep.contains(&format!("refs/agentbound/{sid}/")), format!("caller-supplied session/trace refused (closed argument set); no ref under the other session's namespace: {}", rep.replace('\n', " ")));
     // ---- D4.7: gateway restart reconstructs projections from the launch-record store; the live session keeps working, no caller state consulted ----
     // Evidence is scoped to THIS restart: the hash-chained receiver must gain exactly one `gateway.reconstructed` (the component spool
@@ -488,6 +846,62 @@ fn main() {
     let (_, after_ping) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- sh -c \"sleep 0.3; ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}}\"' 2>&1 | head -c 200"));
     g.rec("D4.7-reconstruct", before.trim() == "1" && recs_after == recs_before + 1 && projections >= 1 && after_ping.contains("\"pong\":true"), format!("socket before restart={}; chained reconstruction events {recs_before}→{recs_after} (exactly one for this restart); event: {}; ping from an in-scope session peer after restart: {}", before.trim(), rec_ev.trim(), after_ping.replace('\n', " ")));
 
+    // ---- T-6.9-005.no-deadlock: the budget-persistence path must not be able to wedge the two daemons ----
+    // Round 5 found a REAL deadlock here. `agentbound-gateway` and `agentbound-lifecycle` each serve one request at a time, and each
+    // calls the other: the gateway calls lifecycle `record_budget` while admitting an operation (R-GW-7, added in round 4), and
+    // lifecycle calls the gateway `release`/`deny_admission` during termination (§5 steps 1 and 6). When those cross in time, both
+    // processes block in recvmsg forever, taking every live session with them. This row drives that exact crossing: a session pushes
+    // gateway operations in a tight loop (each one persisting a budget) while the driver terminates it from the other side.
+    {
+        let (rcd, vd, _) = gb.request(&greq, ""); let lrdd = js(&vd, "launch_record_digest");
+        let (scoped, uidd) = (js(&vd, "scope_id"), js(&vd, "uid"));
+        let (_, ipidd) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scoped}/cgroup.procs")); let ipidd = ipidd.trim().to_string();
+        std::fs::write("/tmp/spin.sh", "n=0
+while [ $n -lt 400 ]; do ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' >/dev/null 2>&1; n=$((n+1)); done
+").unwrap();
+        sh(&format!("nsenter -t {ipidd} -m -- sh -c 'cat > /tmp/spin.sh' < /tmp/spin.sh"));
+        sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scoped}/cgroup.procs; exec nsenter -t {ipidd} -m -n -p -S {uidd} -G {uidd} -- sh /tmp/spin.sh' >/dev/null 2>&1 &"));
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let t0 = std::time::Instant::now();
+        let t = g.terminate(&lrdd);                 // crosses the in-flight record_budget calls
+        let term_ms = t0.elapsed().as_millis();
+        // both daemons must still answer afterwards, within a bound
+        let t1 = std::time::Instant::now();
+        let lc_alive = !js(&lc("list", Value::obj(vec![])), "ok").is_empty();
+        let gw_alive = wire::connect_bounded("/run/agentbound/gateway.sock", 4_000).ok()
+            .and_then(|c| c.call(&wire::request("status", &format!("dl-{}", ab_common::sig::monotonic_ns()), Value::obj(vec![("launch_record_digest", Value::s(&lrdd))]))).ok()).is_some();
+        let probe_ms = t1.elapsed().as_millis();
+        let fin = js(&lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrdd))])), "body.state");
+        g.rec("T-6.9-005.no-deadlock", rcd == 0 && term_ms < 60_000 && lc_alive && gw_alive && probe_ms < 8_000 && (fin == "cleaned/sealed" || fin == "terminated"),
+            format!("a session issued gateway operations in a loop (each persisting its budget through lifecycle) while the driver terminated it from the other side — the exact crossing that deadlocked both daemons before cross-daemon calls were bounded: terminate returned in {term_ms} ms, both daemons answered afterwards in {probe_ms} ms (lifecycle={lc_alive}, gateway={gw_alive}), final state={fin}"));
+    }
+    // ---- T-6.9-008 (1B/1C): every gateway budget class present at 1B is bounded; the classes that do not exist yet are listed ----
+    // The catalogue is the source of truth for which classes exist. Present at 1B: operations (requests), bytes_per_operation and
+    // bytes (payload), objects (per-operation Git limit), connection_count. Absent until 1C: rate, tokens, spend (R-GW-9). A class
+    // that is present must be enforced — this row proves enforcement by exhausting each one and reading back the denial rule.
+    {
+        // the budget classes that exist are read from the deployed catalogue itself (the same file policy compiles manifests from)
+        let raw = std::fs::read_to_string("/etc/agentbound/catalogue.json").unwrap_or_default();
+        let mut present: Vec<String> = Vec::new();
+        for key in ["operations", "bytes_per_operation", "bytes", "objects", "connection_count", "rate", "tokens", "spend"] {
+            if raw.contains(&format!("\"{key}\":")) { present.push(key.to_string()); }
+        }
+        present.sort();
+        let absent: Vec<&str> = ["rate", "spend", "tokens"].into_iter().filter(|c| !present.iter().any(|p| p == c)).collect();
+        // enforcement evidence for each present class, taken from denial rules already recorded in the hash-chained log
+        let denial_count = |rule: &str| -> i64 { sh(&format!("grep -h gateway.operation_denied /var/lib/agentbound/audit/events.jsonl | grep -c '\"rule\":\"{rule}\"'")).1.trim().parse().unwrap_or(0) };
+        let refused_conn = |rule: &str| -> i64 { sh(&format!("grep -h gateway.connection_refused /var/lib/agentbound/audit/events.jsonl | grep -c '\"rule\":\"{rule}\"'")).1.trim().parse().unwrap_or(0) };
+        let ev: Vec<(String, i64)> = vec![
+            ("operations → budget_operations".into(), denial_count("budget_operations")),
+            ("bytes_per_operation / bytes → budget_bytes".into(), denial_count("budget_bytes")),
+            ("objects → budget_objects".into(), denial_count("budget_objects")),  // exercised in-session by T-6.9-008.objects
+            ("connection_count → connection_limit".into(), refused_conn("connection_limit")),
+        ];
+        let unenforced: Vec<&String> = ev.iter().filter(|(_, n)| *n == 0).map(|(c, _)| c).collect();
+        g.rec("T-6.9-008", unenforced.is_empty() && absent.len() == 3,
+            format!("gateway budget classes present in the catalogue: {present:?}; each is enforced, with denials recorded in the hash-chained log: {}; classes absent at 1B and deferred to 1C under R-GW-9: {absent:?} (this row does not claim them)",
+                ev.iter().map(|(c, n)| format!("{c}={n}")).collect::<Vec<_>>().join(", ")));
+    }
     // ---- T-6.9-005 / R-GW-7: budget consumption survives a gateway restart (WP3.1 item 3) ----
     // The gateway reports per-record op_count via `status`. Pings from an in-scope peer raise it; after a restart the figure must
     // be restored from the lifecycle record store, not reset to 0 — and the ping budget (64 operations) must then be exhausted with

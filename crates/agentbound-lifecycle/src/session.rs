@@ -16,12 +16,12 @@ use std::time::{Duration, Instant};
 fn gateway_call_f(sock: &str, op: &str, lrd: &str, idem: &str, fault: Option<&str>) -> Option<Value> {
     let mut b = vec![("launch_record_digest", Value::s(lrd))];
     if let Some(f) = fault { b.push(("fault", Value::s(f))); }
-    let c = wire::connect(sock).ok()?;
+    let c = wire::connect_bounded(sock, 4_000).ok()?;
     let r = c.call(&wire::request(op, idem, Value::obj(b))).ok()?;
     if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { r.get("body").cloned() } else { None }
 }
 fn gateway_call(sock: &str, op: &str, lrd: &str, idem: &str) -> Option<Value> {
-    let c = wire::connect(sock).ok()?;
+    let c = wire::connect_bounded(sock, 4_000).ok()?;
     let r = c.call(&wire::request(op, idem, Value::obj(vec![("launch_record_digest", Value::s(lrd))]))).ok()?;
     if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { r.get("body").cloned() } else { None }
 }

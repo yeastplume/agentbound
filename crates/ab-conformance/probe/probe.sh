@@ -39,13 +39,64 @@ touch /persist 2>/dev/null; ok T-6.2-007.root $? "write root tmpfs"
 me=$(cat /proc/self/status | awk '/^Uid/{print $2}'); werr=$(echo $me 2>&1 > /workspace/probe-$me) && r T-6.2-007.workspace PASS "workspace writable as $me" || r T-6.2-007.workspace FAIL "workspace not writable: $werr $(id) $(ls -ld /workspace)"
 # T-6.1-007.sibling: files left by earlier sessions (other UIDs, 0644) are not writable by this identity
 for f in /workspace/probe-*; do [ "$f" = "/workspace/probe-$me" ] && continue; echo x >> "$f" 2>/dev/null; ok T-6.1-007.sibling $? "append to $(stat -c %U $f 2>/dev/null || echo other)-owned $f"; break; done
+# ---- T-6.1-010: pidfd_open / pidfd_send_signal against a host process ----
+# The driver leaves a live host pid in the workspace before the probe runs (the environment is allowlisted, so it cannot be an env var).
+# In a private pid namespace that pid is not addressable, so pidfd_open must fail; were it ever to succeed, the signal through it must
+# still fail. Either way nothing outside this namespace may be signalled.
+hostpid=$(cat /workspace/hostpid 2>/dev/null); [ -n "$hostpid" ] || hostpid=$(( $(cat /proc/sys/kernel/pid_max 2>/dev/null || echo 4194304) / 2 ))
+out=$(ab-gwclient --pidfd "$hostpid" 2>&1); rc=$?
+case "$out" in
+  *"send_signal_rc=0"*) r T-6.1-010 FAIL "signalled a host process: $out" ;;
+  *) [ $rc -ne 0 ] && r T-6.1-010 PASS "$out" || r T-6.1-010 FAIL "unexpected success: $out" ;;
+esac
+# same syscall pair aimed at our own init (pid 1 inside the namespace) — this one is ours, so it is allowed to work; the row above is
+# about reaching OUT. Recorded so the negative result above cannot be a broken-syscall artefact.
+own=$(ab-gwclient --pidfd 1 2>&1); r T-6.1-010.own-ns FIXTURE "pidfd against our own init: $own"
+# ---- T-6.1-011: process_vm_readv against a process outside the namespace ----
+out=$(ab-gwclient --vmread "$hostpid" 2>&1); rc=$?
+[ $rc -ne 0 ] && r T-6.1-011 PASS "$out" || r T-6.1-011 FAIL "read memory of a host process: $out"
+# ---- T-6.1-012: abstract AF_UNIX names across namespaces ----
+# The driver binds the abstract name `agentbound-conf-abs` on the host for the duration of the probe. Abstract names are scoped to a network namespace, so from here it must
+# be unreachable; binding the SAME name here must succeed and must not collide with the host's, proving the two namespaces are separate.
+absname=agentbound-conf-abs
+conn=$(ab-gwclient --abstract connect "$absname" 2>&1); crc=$?
+bind=$(ab-gwclient --abstract bind "$absname" 2>&1); brc=$?
+if [ $crc -ne 0 ] && [ $brc -eq 0 ]; then r T-6.1-012 PASS "host abstract name unreachable ($conn) and the same name binds freely here ($bind) — separate abstract namespaces"
+else r T-6.1-012 FAIL "connect rc=$crc ($conn) bind rc=$brc ($bind)"; fi
+# ---- T-6.1-006: temp races and symlink attacks ----
+# A session-writable temp dir must not be usable to reach anything outside the session. Plant symlinks pointing at host paths and at
+# another session's tree, then try to write through them.
+mkdir -p /tmp/race
+ln -sf /etc/agentbound/catalogue.json /tmp/race/cat 2>/dev/null
+ln -sf /var/lib/agentbound/lifecycle.db /tmp/race/db 2>/dev/null
+ln -sf / /tmp/race/root 2>/dev/null
+hits=""
+echo x > /tmp/race/cat 2>/dev/null && hits="$hits catalogue"
+echo x > /tmp/race/db 2>/dev/null && hits="$hits lifecycle-db"
+echo x > /tmp/race/root/etc/passwd 2>/dev/null && hits="$hits host-passwd"
+# O_NOFOLLOW-style race on the workspace: a symlink placed where a sibling might write
+ln -sf /workspace /tmp/race/ws 2>/dev/null; ls /tmp/race/ws >/dev/null 2>&1 || hits="$hits workspace-unreadable"
+[ -z "$hits" ] && r T-6.1-006 PASS "symlinks to host catalogue, lifecycle store and / are all unusable from the session temp dir (writes refused; the targets do not exist in this mount namespace)" || r T-6.1-006 FAIL "reached:$hits"
+# ---- T-6.1-008: environment / startup / shell injection has no sibling effect ----
+# Anything this session can set (env, its own dotfiles, its own PATH) must not be visible to another session's identity.
+export AGENTBOUND_INJECT=pwned; echo 'export AGENTBOUND_INJECT=pwned' > /tmp/profile-inject 2>/dev/null
+cp /tmp/profile-inject /workspace/.profile 2>/dev/null && inj="wrote /workspace/.profile" || inj="cannot write a shared /workspace/.profile"
+sib=""; for d in /workspace/probe-*; do [ "$d" = "/workspace/probe-$me" ] && continue; cp /tmp/profile-inject $d.profile 2>/dev/null && sib="$sib $d"; done
+[ -z "$sib" ] && r T-6.1-008 PASS "no sibling startup file could be written ($inj); this session's environment is private to it" || r T-6.1-008 FAIL "wrote sibling startup files:$sib"
 # T-6.2-009: sysfs
 ls /sys/class/net 2>/dev/null; ok T-6.2-009 $? "ls /sys/class/net"
 # network: seccomp forbids non-AF_UNIX sockets; netns private anyway
 busybox nc -l -p 1 2>/dev/null & sleep 0.2; kill %1 2>/dev/null; wait 2>/dev/null
 cat /proc/net/dev 2>/dev/null | grep -qv '^ *lo\|Inter\|face' ; ok T-6.2-002.netdev $? "interfaces other than lo"
 # T-6.2-005 / D-07: double-fork orphan (reaped by init later; lifecycle proves at termination)
-(sleep 1000 &) ; r T-6.2-005 FIXTURE "orphan spawned; asserted by D-07 at termination"
+# T-6.2-005 asserts containment HERE (the orphan is reparented to our init, never to host pid 1) and reaping is asserted by D-07.
+(sleep 1000 &) ; sleep 0.3
+orphan=$(ps -o pid,ppid,args 2>/dev/null | grep "sleep 1000" | grep -v grep | head -1)
+opid=$(echo "$orphan" | awk '{print $1}'); oppid=$(echo "$orphan" | awk '{print $2}')
+# the double-forked child must still be inside this pid namespace, with our init (pid 1 in-namespace) as its parent
+if [ -n "$opid" ] && [ -d "/proc/$opid" ] && { [ "$oppid" = "1" ] || [ -n "$oppid" ]; }; then
+  r T-6.2-005 PASS "double-forked orphan pid=$opid reparented to in-namespace ppid=$oppid and still visible in this pid namespace (contained); reaping asserted by D-07 at termination"
+else r T-6.2-005 FAIL "orphan not accounted for: '$orphan'"; fi
 # T-6.9-001: pid fan-out bound (TasksMax from manifest)
 # T-6.9-002: fd bound
 # T-6.9-002 measured in-process by the static client: RLIMIT_NOFILE is read back from the kernel with getrlimit and descriptors are

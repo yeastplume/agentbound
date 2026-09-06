@@ -27,6 +27,12 @@ for tail in "../main" "main:refs/heads/main" "+fix" "fix.lock" "a b" "" "refs/he
 done
 ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging "{\"expect_old\":null,\"ref_tail\":\"x\",\"repository_id\":\"repo:other\",\"tip\":\"$tip\"}" /tmp/fix.bundle >/tmp/o 2>&1 && r T-6.4-011 FAIL accepted || { rule=$(grep -o '"rule":"[^"]*"' /tmp/o | head -1); [ -n "$rule" ] && r T-6.4-011 PASS "$rule" || r T-6.4-011 FAIL "no verdict: $(head -c 120 /tmp/o)"; }
 ab-gwclient /run/gateway.sock op:git-push-staging-force git.push_staging_force "{\"expect_old\":null,\"ref_tail\":\"fix-1234\",\"repository_id\":\"repo:demo\",\"tip\":\"$tip\"}" /tmp/fix.bundle >/tmp/o 2>&1 && r T-6.4-011.force FAIL accepted || { rule=$(grep -o '"rule":"[^"]*"' /tmp/o | head -1); [ -n "$rule" ] && r T-6.4-011.force PASS "$rule" || r T-6.4-011.force FAIL "no verdict: $(head -c 120 /tmp/o)"; }
+# T-6.9-008: the `objects` budget class. The granted operation's limit is 8 objects; build a bundle that exceeds it and confirm the
+# adapter refuses in the quarantine repository, BEFORE anything reaches the upstream (git.rs counts rev-list --objects there).
+i=0; while [ $i -lt 12 ]; do echo "obj $i" > f$i; git add f$i; git -c commit.gpgsign=false commit -q -m "c$i"; i=$((i+1)); done
+big_tip=$(git rev-parse HEAD); git bundle create -q /tmp/many.bundle HEAD 2>/dev/null || git bundle create /tmp/many.bundle HEAD >/dev/null 2>&1
+ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging "{\"expect_old\":null,\"ref_tail\":\"objbudget\",\"repository_id\":\"repo:demo\",\"tip\":\"$big_tip\"}" /tmp/many.bundle >/tmp/o 2>&1 && r T-6.9-008.objects FAIL "accepted a bundle above the objects budget" || {
+  grep -q budget_objects /tmp/o && r T-6.9-008.objects PASS "$(grep -o '\"rule\":\"[a-z_]*\",\"detail\":\"[^\"]*\"' /tmp/o | head -1)" || r T-6.9-008.objects FAIL "refused, but not by the objects budget: $(head -c 120 /tmp/o)"; }
 # T-6.4-006 / T-6.4-007: descriptor transfer and inherited connection
 ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --scm-rights >/tmp/o 2>&1 && r T-6.4-006 FAIL accepted || { grep -q descriptor_transfer /tmp/o && r T-6.4-006 PASS "$(grep -o '"rule":"[^"]*"' /tmp/o | head -1)" || r T-6.4-006 FAIL "$(head -c 160 /tmp/o | tr '\n' ' ')"; }
 ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --fork >/tmp/o 2>&1 && r T-6.4-007 FAIL accepted || { grep -q process_mismatch /tmp/o && r T-6.4-007 PASS "$(grep -o '"rule":"[^"]*"' /tmp/o | head -1)" || r T-6.4-007 FAIL "$(head -c 160 /tmp/o | tr '\n' ' ')"; }

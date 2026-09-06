@@ -55,6 +55,18 @@ pub fn peercred(fd: RawFd) -> io::Result<Peer> {
     Ok(Peer { pid: uc.pid, uid: uc.uid, gid: uc.gid })
 }
 
+/// Connect with a bounded receive/send timeout. Required for any call between two daemons that can each call the other: both
+/// `agentbound-lifecycle` and `agentbound-gateway` serve one request at a time, so a mutual call (lifecycle→gateway `release` while
+/// the gateway is in a lifecycle `record_budget`) would otherwise wedge both processes and every session with them. With a bound the
+/// call fails, and each caller already has a fail-closed path for "the other daemon did not answer".
+pub fn connect_bounded(path: &str, ms: i64) -> io::Result<Conn> {
+    let c = connect(path)?;
+    let tv = libc::timeval { tv_sec: ms / 1000, tv_usec: ((ms % 1000) * 1000) as i64 };
+    for opt in [libc::SO_RCVTIMEO, libc::SO_SNDTIMEO] {
+        os(unsafe { libc::setsockopt(c.fd.as_raw_fd(), libc::SOL_SOCKET, opt, &tv as *const _ as *const libc::c_void, std::mem::size_of::<libc::timeval>() as u32) })?;
+    }
+    Ok(c)
+}
 pub fn connect(path: &str) -> io::Result<Conn> {
     let fd = os(unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC, 0) })?;
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };

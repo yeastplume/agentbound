@@ -34,6 +34,45 @@ fn main() {
             unsafe { for off in (0..(1 << 20)).step_by(4096) { *p.add(off) = 1; } held.push(Vec::from_raw_parts(p, 1 << 20, 1 << 20)); } }
         println!("touched_mib={mib} errno=0"); return;
     }
+    // T-6.1-010: pidfd_open on a host pid, then pidfd_send_signal through it. A private pid namespace means the host pid is not
+    // addressable at all; if a pidfd could be obtained it must still not be usable to signal outside the namespace.
+    if a.get(1).map(String::as_str) == Some("--pidfd") {
+        let pid: i32 = a.get(2).and_then(|x| x.parse().ok()).unwrap_or(1);
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+        let open_err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if fd < 0 { println!("pidfd_open={pid} rc=-1 errno={open_err}"); std::process::exit(1); }
+        let sig = unsafe { libc::syscall(libc::SYS_pidfd_send_signal, fd as i32, libc::SIGTERM, std::ptr::null_mut::<libc::siginfo_t>(), 0) };
+        let sig_err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        println!("pidfd_open={pid} rc={fd} send_signal_rc={sig} send_signal_errno={sig_err}");
+        if sig == 0 { std::process::exit(0); } else { std::process::exit(2); }
+    }
+    // T-6.1-011: process_vm_readv against a target outside this namespace — must be denied, never a partial read.
+    if a.get(1).map(String::as_str) == Some("--vmread") {
+        let pid: i32 = a.get(2).and_then(|x| x.parse().ok()).unwrap_or(1);
+        let addr: usize = a.get(3).and_then(|x| usize::from_str_radix(x.trim_start_matches("0x"), 16).ok()).unwrap_or(0x400000);
+        let mut buf = [0u8; 64];
+        let local = libc::iovec { iov_base: buf.as_mut_ptr() as *mut libc::c_void, iov_len: buf.len() };
+        let remote = libc::iovec { iov_base: addr as *mut libc::c_void, iov_len: buf.len() };
+        let n = unsafe { libc::syscall(libc::SYS_process_vm_readv, pid, &local, 1usize, &remote, 1usize, 0usize) };
+        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        println!("process_vm_readv pid={pid} rc={n} errno={e}");
+        if n > 0 { std::process::exit(0); } else { std::process::exit(3); }
+    }
+    // T-6.1-012: bind/connect an abstract AF_UNIX name. Abstract names are per network namespace, so a host name must be unreachable.
+    if a.get(1).map(String::as_str) == Some("--abstract") {
+        let (mode, name) = (a.get(2).cloned().unwrap_or_default(), a.get(3).cloned().unwrap_or_default());
+        let mut sa: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        sa.sun_family = libc::AF_UNIX as u16;
+        let b = name.as_bytes(); // sun_path[0] == 0 marks an abstract name
+        for (i, c) in b.iter().enumerate() { sa.sun_path[i + 1] = *c as libc::c_char; }
+        let len = (std::mem::size_of::<libc::sa_family_t>() + 1 + b.len()) as libc::socklen_t;
+        let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+        let rc = if mode == "connect" { unsafe { libc::connect(fd, &sa as *const _ as *const libc::sockaddr, len) } }
+                 else { unsafe { libc::bind(fd, &sa as *const _ as *const libc::sockaddr, len) } };
+        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        println!("abstract {mode} name={name} rc={rc} errno={e}");
+        if rc == 0 { std::process::exit(0); } else { std::process::exit(4); }
+    }
     if a.get(1).map(String::as_str) == Some("--fds") { // T-6.3-003: enumerate inherited descriptors
         for e in std::fs::read_dir("/proc/self/fd").unwrap().flatten() { let n = e.file_name().to_string_lossy().to_string(); if let Ok(t) = std::fs::read_link(e.path()) { println!("{n} {}", t.display()); } }
         return;
