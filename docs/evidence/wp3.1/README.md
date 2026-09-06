@@ -366,3 +366,69 @@ the wrong reason:
 **Result after the protocol change** ([raw/run-06-idempotency.md](raw/run-06-idempotency.md)): **175 PASS, 3 WEAK, 4 RECORDED,
 0 FAIL; catalogue 115/121 PASS, 0 NOT-EXECUTED; run verdict PASS.** Adding a required member to the gateway protocol did not
 regress any row once these three were repaired.
+
+## Item 6 — negative controls: the suite discriminates, and three rows did not
+
+A suite reporting 0 FAIL has established that its assertions ran. It has not established that they would notice if the property
+they assert were false. `crates/ab-conformance/negative-controls.py` establishes that second thing, which is the only thing that
+makes the first one evidence. Each control applies one surgical mutation that removes exactly one enforcement, rebuilds, deploys,
+re-runs the suite, and requires the rows assigned to that mutation to **FAIL**. The source tree is restored afterwards and the
+restoration is verified by digest, so a control cannot leave the tree or the host mutated.
+
+A mutation whose rows keep passing is the interesting outcome: it means those rows do not depend on the enforcement they claim to
+test. **Three of the six controls came back that way**, and each exposed a real false positive that four full green runs had not.
+
+| Control (enforcement removed) | Rows required to fail | First result | After repair |
+|---|---|---|---|
+| pidfs-inode / process-instance comparison | (unit tests) | **CONTROL-FAILED** — T-6.4-009 still passed | CONTROL-OK — the three `session::tests` fail |
+| credential count (`!= 1`) | T-6.4-008 | **CONTROL-FAILED** — nothing failed | CONTROL-OK-UNREACHABLE — branch cannot be reached |
+| scope-cgroup check | T-6.4-005 | CONTROL-OK | — |
+| operations budget | T-6.9-008 | **CONTROL-FAILED** — a different row caught it | CONTROL-OK |
+| peer-uid check | T-6.3-008 | CONTROL-OK | — |
+| idempotency key in gateway records | D-12 | CONTROL-OK | — |
+
+### What each failed control exposed
+
+**T-6.4-009 does not depend on the inode comparison, and the code already said so.** Deleting the entire process-instance
+comparison left the row passing. The reason is legitimate and was already recorded in a comment: the gateway polls each
+connection's peer pidfd, so the establisher's exit closes the connection *before* the recycled process can present itself. The row
+asserts that composite defence; the comparison itself is asserted by three unit tests. The control was wrong about which
+assertion covers this enforcement — so the harness gained the ability to name unit tests as the discriminating assertion, and this
+control now names them. **No conformance row exercises the inode comparison, and the register should not imply one does.**
+
+**The credential-count check is unreachable on the pinned baseline.** Removing it made nothing fail — and that is the correct
+result, not a gap. With `SO_PASSCRED` the kernel delivers exactly one `SCM_CREDENTIALS` message whether the sender attached none,
+one, or several; measured directly on 6.12.107, a sender attaching zero and a sender attaching two both produce exactly one at the
+receiver. The check stays in the implementation, because a transport or kernel that did not normalise would make it reachable, but
+**no conformance row may claim to exercise it**. ADR-0002 is now at **0.10** recording this.
+
+Finding that also exposed **T-6.4-008 as a false positive**: it ran as *host root*, so `establish` refused every case on
+`uid_mismatch` before a single packet was read. Its own recorded evidence had been saying so all along — "DENY host-root-peer"
+three times. The plan's item 2 had required this exact repair ("malformed `SCM_CREDENTIALS` from an in-scope session-UID process")
+and it had not been done. The row now attacks from a peer the gateway *does* authenticate — the session's own uid, in its scope
+cgroup and namespaces — so the per-packet rule is the only thing left that can refuse, and it records `process_mismatch` as the
+rule that does.
+
+**T-6.9-008 was passing on history.** It counted `budget_operations` denials over the *entire* audit log, so denials recorded by
+earlier runs satisfied it forever; with enforcement removed it still reported `budget_operations=1098`. Two repairs: every
+denial-count is now scoped to the lines this run appended (`run_start_line`), and the row exhausts the operations budget **itself**
+rather than depending on whichever row happens to run before it. Getting that exhaustion to actually happen exposed two further
+defects in my own harness, both worth recording because both produced a silent zero rather than an error:
+
+- The loop opened a connection per operation. `connection_count` (16) is itself a cumulative per-session budget, so it was
+  exhausted long before the 64-operation limit — the row was measuring the wrong class. `ab-gwclient --repeat N` now drives N
+  operations over one connection.
+- Before that, the loop reused one idempotency key, so the gateway correctly **replayed** 16 operations instead of consuming
+  budget. That is the item-5 mechanism working as specified; the exhaustion loop was wrong to rely on the default key.
+
+It now records **29 `budget_operations` denials from its own run**, and the control passes.
+
+### Residual
+
+`T-6.9-005.budget-persist` also fails under the budget mutation, which is correct and expected — it asserts consumption survives a
+restart, which presupposes consumption is counted. Two controls produce collateral failures of that kind; they are listed per
+control in `/tmp/negative-controls.json` and do not weaken the assignment.
+
+The clean tree still reports **175 PASS, 3 WEAK, 4 RECORDED, 0 FAIL; catalogue 115/121 PASS, 0 NOT-EXECUTED; verdict PASS**
+([raw/run-07-negative-controls.md](raw/run-07-negative-controls.md)) — and that number now means something it did not mean before
+item 6, because five of the six enforcements behind it are known to be load-bearing and the sixth is known to be unreachable.

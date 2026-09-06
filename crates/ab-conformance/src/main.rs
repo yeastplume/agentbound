@@ -31,6 +31,9 @@ fn parse(s: &str) -> Value { s.lines().rev().find_map(|l| json::parse(l.trim().a
 fn lc(op: &str, body: Value) -> Value { match wire::connect("/run/agentbound/lifecycle.sock") { Ok(c) => c.call(&wire::request(op, &format!("conf-{}", ab_common::sig::monotonic_ns()), body)).unwrap_or(Value::Null), Err(_) => Value::Null } }
 /// Single-quote a string for `sh -c` (the inner command is built by us, never by a session).
 /// T-6.5-005 helper: rewrite one catalogue limit in place (kept out of Rust string literals — quotes and braces fight the lexer).
+/// The 1B session request: `task:fix-issue-1235` is the only task holding the gateway operations, and the only `local-socket` topology.
+const GW_REQ: &str = r#"{"agent_principal_id":"agent:engineering-agent","approval_references":[],"initiator_credential_ref":"authn:bob-session-0001","requested_resources":["resource:workspace-eng"],"requested_runtime":"runtime:git-worker","schema_version":"agentbound.session-request.v0.1","task_purpose_id":"task:fix-issue-1235"}"#;
+
 /// D-03 helper: advance `approval:eng-1234-d03`'s sequence past the highest this approver key has already used, so the row can
 /// obtain a live second-principal session on every run without ever replaying an approval.
 const D03_APPROVAL_PY: &str = "import json,os\np='/etc/agentbound/catalogue.json'\nc=json.load(open(p))\nhi=0\ns='/var/lib/agentbound/policy.jsonl'\nif os.path.exists(s):\n for l in open(s):\n  try:\n   r=json.loads(l)\n  except Exception:\n   continue\n  v=r.get('v') or {}\n  if r.get('kind')=='approval_seq' and v.get('key')=='key:erin-d03': hi=max(hi,int(v.get('seq',0) or 0))\nc['approvals']['approval:eng-1234-d03']['sequence']=hi+1\njson.dump(c,open(p,'w'),indent=2,sort_keys=True)\nprint(hi+1)\n";
@@ -107,6 +110,10 @@ for label,creds in (("forged-pid",[struct.pack("iII",pid,0,0)]),("two-creds",[st
 
 fn main() {
     let mut g = Rig { rows: vec![], as_user: "alice".into() };
+    // Where this run starts in the hash-chained store. Any row whose evidence is "a denial of kind X was recorded" MUST count only
+    // lines appended after this point: counting the whole log lets a previous run's denials satisfy a check that is no longer being
+    // performed, which is exactly how the T-6.9-008 false positive survived until the negative controls (WP3.1 item 6).
+    let run_start_line: i64 = sh("grep -hc '' /var/lib/agentbound/audit/events.jsonl").1.trim().parse().unwrap_or(0);
     sh("rm -f /var/lib/agentbound/workspaces/finance/*");
     let base = r#"{"schema_version":"agentbound.session-request.v0.1","agent_principal_id":"agent:finance-agent","task_purpose_id":"task:redwood-analysis","requested_runtime":"runtime:scripted-loop","requested_resources":["resource:workspace-finance"],"initiator_credential_ref":"authn:alice-session-0001","approval_references":[]}"#;
     let eng = |s: &str| base.replace("task:redwood-analysis", "task:fix-issue-1234").replace("agent:finance-agent", "agent:engineering-agent").replace("workspace-finance", "workspace-eng").replace("\"approval_references\":[]", &format!("\"approval_references\":[{s}]"));
@@ -467,7 +474,7 @@ fn main() {
         let rev = asa(&format!("kill -TERM {ip_b}; echo 1 >/sys/fs/cgroup/system.slice/{scope_b}/memory.max"));
         std::thread::sleep(std::time::Duration::from_millis(300));
         let rev_denied = cgprocs(&scope_b) == b_before && b_before > 0;
-        if rc_b != 0 || !have_uids { g.rec("D-03", false, format!("setup failed: second principal's session rc={rc_b} rule={} (uid_a={uid_a} uid_b={uid_b}, approval sequence {}) — the row cannot be evaluated without two live sessions of different principals", js(&vb2, "body.rule"), seq_used.trim())); } else {
+        if rc_a != 0 || rc_b != 0 || !have_uids { g.rec("D-03", false, format!("setup failed: first principal's session rc={rc_a}, second principal's session rc={rc_b} rule={} (uid_a={uid_a} uid_b={uid_b}, approval sequence {}) — the row cannot be evaluated without two live sessions of different principals", js(&vb2, "body.rule"), seq_used.trim())); } else {
         g.rec("D-03", unmeasured.is_empty() && leaked.is_empty() && rev_denied,
             format!("two concurrent sessions of different principals (uid {uid_a}/finance-agent and uid {uid_b}/engineering-agent). Every private-state interface of one, attempted with the other's identity, had no effect on it: {}. The reverse direction is also ineffective — B's workload survived A's attempt to signal it and its limits were unchanged ({}). No read of private state, no signal, no cgroup write and no workspace write crossed the principal boundary.",
                 attempts.iter().map(|(w, o, _)| format!("{w} → {}", o.chars().take(44).collect::<String>())).collect::<Vec<_>>().join("; "), rev.chars().take(40).collect::<String>()));
@@ -543,7 +550,7 @@ fn main() {
     // ================= 1B: mediated effect (gateway) =================
     // ---- D-10/D-13 + in-session rows from the git-worker runtime (bob, engineering-agent, task:fix-issue-1234) ----
     let gb = Rig { as_user: "bob".into(), rows: vec![] };
-    let greq = gb.write_req("gw", r#"{"agent_principal_id":"agent:engineering-agent","approval_references":[],"initiator_credential_ref":"authn:bob-session-0001","requested_resources":["resource:workspace-eng"],"requested_runtime":"runtime:git-worker","schema_version":"agentbound.session-request.v0.1","task_purpose_id":"task:fix-issue-1235"}"#);
+    let greq = gb.write_req("gw", GW_REQ);
     let main_before = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git rev-parse refs/heads/main'").1.trim().to_string();
     let (rc, v, _) = gb.request(&greq, ""); let glrd = js(&v, "launch_record_digest"); let gscope = js(&v, "scope_id"); let guid = js(&v, "uid");
     g.rec("D-10.launch", rc == 0 && !glrd.is_empty(), format!("rc={rc} lrd={glrd} topology=local-socket"));
@@ -582,10 +589,25 @@ fn main() {
     // ---- T-6.4-005: a process in the session's namespaces but outside its scope cgroup (host nsenter as the session uid) is refused at establishment ----
     let (_, sm) = sh(&format!("nsenter -t {ipid} -m -n -p -S {guid} -G {guid} -- ab-gwclient /run/gateway.sock x gateway.ping '{{}}' 2>&1 | head -c 120; sleep 1; grep -c scope_mismatch /var/lib/agentbound/gateway/audit-gateway.jsonl"));
     g.rec("T-6.4-005", sm.contains("closed by gateway") && sm.lines().last().unwrap_or("0").trim().parse::<i32>().unwrap_or(0) >= 1, format!("outside-scope peer with session uid: {}", sm.replace('\n', " ")));
-    // ---- T-6.4-008: forged/zero/multiple SCM_CREDENTIALS from the host as root against the session's socket ----
-    std::fs::write("/tmp/gw-forge.py", GW_FORGE).unwrap();
-    let (_, forge) = sh(&format!("python3 /tmp/gw-forge.py /run/agentbound/gw/{}.sock {ipid} 2>&1", js(&v, "allocation_id").rsplit(':').next().unwrap_or("")));
-    g.rec("T-6.4-008", forge.lines().filter(|l| l.starts_with("DENY")).count() >= 3 && !forge.contains("ACCEPT"), forge.replace('\n', " | "));
+    // ---- T-6.4-008: malformed SCM_CREDENTIALS from an IN-SCOPE, SESSION-UID process ----
+    // The host-root version of this row was a false positive: `establish` checks the peer uid before any packet is read, so every
+    // case was refused as `uid_mismatch` and the per-packet credential rules were never reached. The row's own recorded evidence said
+    // so ("DENY host-root-peer" three times). A negative control that disabled the credential-count check did not make it fail —
+    // which is how the false positive was found. The peer must therefore be one the gateway WILL authenticate: the session's own uid,
+    // in the session's scope cgroup and namespaces. Then the only thing left that can refuse it is the per-packet rule.
+    let creds_sock = format!("/run/agentbound/gw/{}.sock", js(&v, "allocation_id").rsplit(':').next().unwrap_or(""));
+    let mut creds_out: Vec<String> = Vec::new();
+    for case in ["none", "two", "short", "forged"] {
+        let (_, r) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope}/cgroup.procs; exec nsenter -t {ipid} -m -n -p -S {guid} -G {guid} -- ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}} --creds {case}' 2>&1 | tail -2 | tr '\n' ' '"));
+        creds_out.push(format!("{case} → {}", r.trim().chars().take(90).collect::<String>()));
+    }
+    // every case must be refused, and none may return a successful reply
+    let all_refused = creds_out.iter().all(|l| !l.contains("\"ok\":true"));
+    // the rules the gateway recorded against this session for these attempts, read from the hash-chained log
+    let (_, creds_rules) = sh(&format!("grep -h 'gateway.packet_rejected\\|gateway.process_mismatch' /var/lib/agentbound/audit/events.jsonl | grep {} | tail -6 | grep -oE '\"rule\":\"[a-z_]*\"' | sort -u | tr '\n' ' '", js(&v, "allocation_id").rsplit(':').next().unwrap_or("")));
+    let saw_rule = creds_rules.contains("credential_count") || creds_rules.contains("process_mismatch");
+    let _ = creds_sock;
+    g.rec("T-6.4-008", all_refused && saw_rule, format!("malformed SCM_CREDENTIALS from a peer the gateway does authenticate (session uid {guid}, session scope and namespaces), so the per-packet rule is the only thing left that can refuse: {}; rules recorded: {}", creds_out.join(" | "), creds_rules.trim()));
     // Control for the new-connection half of T-6.4-014: the same peer, twice. `establish` tests admission before peer identity, so the
     // host-root forge client refused `uid_mismatch` while the session admits must be refused `admission_closed` once quiesced. The rule
     // is read from the gateway's own `gateway.connection_refused` event for this allocation, not from the client's output text.
@@ -904,9 +926,46 @@ while [ $n -lt 400 ]; do ab-gwclient /run/gateway.sock op:gateway-ping gateway.p
         }
         present.sort();
         let absent: Vec<&str> = ["rate", "spend", "tokens"].into_iter().filter(|c| !present.iter().any(|p| p == c)).collect();
-        // enforcement evidence for each present class, taken from denial rules already recorded in the hash-chained log
-        let denial_count = |rule: &str| -> i64 { sh(&format!("grep -h gateway.operation_denied /var/lib/agentbound/audit/events.jsonl | grep -c '\"rule\":\"{rule}\"'")).1.trim().parse().unwrap_or(0) };
-        let refused_conn = |rule: &str| -> i64 { sh(&format!("grep -h gateway.connection_refused /var/lib/agentbound/audit/events.jsonl | grep -c '\"rule\":\"{rule}\"'")).1.trim().parse().unwrap_or(0) };
+        // Enforcement evidence per class, counted ONLY over the lines this run appended. Counting the whole log was a false
+        // positive: a negative control that removed the operations-budget check entirely left this row passing, because denials
+        // recorded by earlier runs still satisfied it. `run_start_line` is captured before the suite exercises the budgets.
+        let denial_count = |rule: &str| -> i64 { sh(&format!("tail -n +{} /var/lib/agentbound/audit/events.jsonl | grep -h gateway.operation_denied | grep -c '\"rule\":\"{rule}\"'", run_start_line + 1)).1.trim().parse().unwrap_or(0) };
+        let refused_conn = |rule: &str| -> i64 { sh(&format!("tail -n +{} /var/lib/agentbound/audit/events.jsonl | grep -h gateway.connection_refused | grep -c '\"rule\":\"{rule}\"'", run_start_line + 1)).1.trim().parse().unwrap_or(0) };
+        // The operations budget must be exhausted by THIS row, not inherited from whichever row happens to run before it: relying on
+        // another row's side effect is what let the cumulative count hide the missing enforcement. `op:gateway-ping` allows 64
+        // operations, so a dedicated session drives past that and the denial is read back from the log.
+        let (rc_ex, v_ex, _) = { let gx = Rig { as_user: "bob".into(), rows: vec![] };
+            // the 1B task (`task:fix-issue-1235`) is the one that holds `op:gateway-ping`; 1234 does not permit the git-worker runtime
+            let p = gx.write_req("t69008-ops", GW_REQ);
+            gx.request(&p, "") };
+        let mut ex_loop = String::from("(not run)");
+        if rc_ex != 0 { eprintln!("T-6.9-008: exhaustion session did not launch: rc={rc_ex} rule={} detail={}", js(&v_ex, "body.rule"), js(&v_ex, "body.detail")); }
+        if rc_ex == 0 {
+            let (sx, ux) = (js(&v_ex, "scope_id"), js(&v_ex, "uid"));
+            let (_, ipx) = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{sx}/cgroup.procs")); let ipx = ipx.trim().to_string();
+            // 70 pings against a 64-operation budget, from a peer the gateway authenticates. The loop lives in a file: three levels
+            // of shell quoting through `nsenter -- sh -c` is how the earlier attempt silently ran nothing at all.
+            // One connection, 70 operations. A connection per operation cannot work: `connection_count` (16) is itself a cumulative
+            // per-session budget and would be exhausted long before the 64-operation limit, so the row would measure the wrong class.
+            let script = "ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --idem t69008 --repeat 70 2>&1 | tail -2\necho LOOPDONE\n";
+            std::fs::write("/tmp/t69008-ops.sh", script).unwrap();
+            // `nsenter -m` enters the session's mount namespace, where /tmp is a private tmpfs: the host copy is not visible there.
+            // Place it inside that namespace through the session's own root.
+            sh(&format!("cp /tmp/t69008-ops.sh /proc/{ipx}/root/tmp/t69008-ops.sh && chmod 755 /proc/{ipx}/root/tmp/t69008-ops.sh"));
+            let (_, loop_out) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{sx}/cgroup.procs; exec nsenter -t {ipx} -m -n -p -S {ux} -G {ux} -- /bin/sh /tmp/t69008-ops.sh' 2>&1 | tail -1"));
+            if !loop_out.contains("LOOPDONE") { eprintln!("T-6.9-008: exhaustion loop did not complete: {}", loop_out.trim()); }
+            ex_loop = loop_out.trim().chars().take(160).collect();
+            g.terminate(&js(&v_ex, "launch_record_digest"));
+            // The gateway spools its events and `agentbound-audit` appends them to the hash-chained store asynchronously, so the
+            // denials this loop provoked are NOT in the store the instant the loop returns. Reading immediately was scoring 0 while
+            // the denials appeared ~10 lines later — the row must wait for its own evidence to be durable before counting it.
+            let ex_alloc = js(&v_ex, "allocation_id");
+            for _ in 0..60 {
+                let n: i64 = sh(&format!("tail -n +{} /var/lib/agentbound/audit/events.jsonl | grep -h gateway.operation_denied | grep {ex_alloc} | grep -c '\"rule\":\"budget_operations\"'", run_start_line + 1)).1.trim().parse().unwrap_or(0);
+                if n > 0 { break; }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        }
         let ev: Vec<(String, i64)> = vec![
             ("operations → budget_operations".into(), denial_count("budget_operations")),
             ("bytes_per_operation / bytes → budget_bytes".into(), denial_count("budget_bytes")),
@@ -914,8 +973,8 @@ while [ $n -lt 400 ]; do ab-gwclient /run/gateway.sock op:gateway-ping gateway.p
             ("connection_count → connection_limit".into(), refused_conn("connection_limit")),
         ];
         let unenforced: Vec<&String> = ev.iter().filter(|(_, n)| *n == 0).map(|(c, _)| c).collect();
-        g.rec("T-6.9-008", unenforced.is_empty() && absent.len() == 3,
-            format!("gateway budget classes present in the catalogue: {present:?}; each is enforced, with denials recorded in the hash-chained log: {}; classes absent at 1B and deferred to 1C under R-GW-9: {absent:?} (this row does not claim them)",
+        g.rec("T-6.9-008", rc_ex == 0 && unenforced.is_empty() && absent.len() == 3,
+            format!("gateway budget classes present in the catalogue: {present:?}; each is enforced, with denials recorded in the hash-chained log by THIS run: {}; exhaustion session rc={rc_ex} ({ex_loop}); classes absent at 1B and deferred to 1C under R-GW-9: {absent:?} (this row does not claim them)",
                 ev.iter().map(|(c, n)| format!("{c}={n}")).collect::<Vec<_>>().join(", ")));
     }
     // ---- T-6.9-005 / R-GW-7: budget consumption survives a gateway restart (WP3.1 item 3) ----

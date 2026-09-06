@@ -170,6 +170,19 @@ fn main() {
     if !send(msg.as_bytes()) { eprintln!("send errno={}", std::io::Error::last_os_error()); std::process::exit(5); }
     let Some(r) = recv() else { eprintln!("closed by gateway"); std::process::exit(6) }; let _ = writeln!(out, "{r}");
     if !r.contains("\"ok\":true") { std::process::exit(1); }
+    // `--repeat N`: send N further operations over the SAME connection, each with its own idempotency key. A budget-exhaustion test
+    // cannot open a connection per operation, because `connection_count` is itself a cumulative per-session budget (16) that would be
+    // exhausted first — the operations budget would never be reached and the row would silently measure the wrong limit.
+    if let Some(n) = a.iter().position(|x| x == "--repeat").and_then(|i| a.get(i + 1)).and_then(|v| v.parse::<usize>().ok()) {
+        let mut refused = 0usize;
+        for k in 1..=n {
+            let m = msg.replace(&format!("\"idempotency_key\":\"{idem}\""), &format!("\"idempotency_key\":\"{idem}-r{k}\""));
+            if !send(m.as_bytes()) { eprintln!("repeat {k}: send errno={}", std::io::Error::last_os_error()); break; }
+            match recv() { Some(rr) => { if !rr.contains("\"ok\":true") { refused += 1; let _ = writeln!(out, "{rr}"); } }
+                           None => { eprintln!("repeat {k}: closed by gateway"); break; } }
+        }
+        let _ = writeln!(out, "{{\"repeat_sent\":{n},\"repeat_refused\":{refused}}}");
+    }
     if hold { let mut sink = String::new(); let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut sink); if !send(msg.as_bytes()) { eprintln!("send errno={}", std::io::Error::last_os_error()); std::process::exit(5); } let Some(r) = recv() else { eprintln!("closed by gateway"); std::process::exit(6) }; let _ = writeln!(out, "{r}"); std::process::exit(if r.contains("\"ok\":true") { 0 } else { 1 }); }
     let mut off = 0; let mut last = String::new();
     while off < payload.len() { let end = (off + (128 << 10)).min(payload.len()); if !send(&payload[off..end]) { std::process::exit(5); } let Some(r) = recv() else { eprintln!("closed by gateway"); std::process::exit(6) }; last = r; off = end; }
