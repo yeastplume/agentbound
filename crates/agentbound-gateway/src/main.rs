@@ -153,7 +153,7 @@ impl Gateway {
                     _ => wire::reply_err(wire::CLASS_INVALID, "body", "authorization_id, allocation_id, uid, gid") },
                 "activate" => match s("launch_record_digest") { Some(lrd) => self.activate(&lrd), None => wire::reply_err(wire::CLASS_INVALID, "body", "launch_record_digest") },
                 "deny_admission" => match s("launch_record_digest").and_then(|l| self.by_lrd_mut(&l)) { Some(p) => { p.admission = false; let cr = Self::corr(p); self.emit("gateway.admission_denied", "ok", &cr, Value::obj(vec![("reason", Value::s("lifecycle"))])); wire::reply_ok(Value::obj(vec![("admission", Value::Bool(false))])) }, None => wire::reply_err(wire::CLASS_INVALID, "unknown_record", "") },
-                "release" => match s("launch_record_digest").or_else(|| s("allocation_id").and_then(|a| self.by_alloc.get(&a).and_then(|p| p.lrd.clone().or(Some(format!("alloc:{a}")))))) { Some(key) => self.release(&key), None => wire::reply_err(wire::CLASS_INVALID, "body", "launch_record_digest or allocation_id") },
+                "release" => match s("launch_record_digest").or_else(|| s("allocation_id").and_then(|a| self.by_alloc.get(&a).and_then(|p| p.lrd.clone().or(Some(format!("alloc:{a}")))))) { Some(key) => { let keep = s("fault").as_deref() == Some("socket-unmount"); self.release_with(&key, keep) }, None => wire::reply_err(wire::CLASS_INVALID, "body", "launch_record_digest or allocation_id") },
                 "status" => match s("launch_record_digest").and_then(|l| self.by_lrd_mut(&l).map(|p| (p.admission, p.allocation_id.clone(), p.op_count, p.bytes_used))) { Some((adm, aid, n, b)) => { let conns = self.conns.iter().filter(|c| c.allocation_id == aid).count(); wire::reply_ok(Value::obj(vec![("admission", Value::Bool(adm)), ("bytes_used", Value::Int(b as i64)), ("connections", Value::Int(conns as i64)), ("operations", Value::Int(n as i64))])) }, None => wire::reply_err(wire::CLASS_INVALID, "unknown_record", "") },
                 other => wire::reply_err(wire::CLASS_INVALID, "unknown_op", other) } }
         };
@@ -188,11 +188,14 @@ impl Gateway {
         wire::reply_ok(Value::obj(vec![("admission", Value::Bool(true)), ("operations", Value::Int(n as i64))]))
     }
     /// Close every indexed connection and remove the projection; reply with the count lifecycle must see as zero.
-    fn release(&mut self, key: &str) -> Value {
+    fn release(&mut self, key: &str) -> Value { self.release_with(key, false) }
+    /// `keep_node` is the F-T-09 fault: step 9 (remove the mounted gateway socket) fails while the projection is still released.
+    /// The node then exists with no listener behind it — the gateway is inaccessible and the launch record is retained.
+    fn release_with(&mut self, key: &str, keep_node: bool) -> Value {
         let aid = if let Some(a) = key.strip_prefix("alloc:") { a.to_string() } else { match self.by_lrd_mut(key) { Some(p) => p.allocation_id.clone(), None => return wire::reply_ok(Value::obj(vec![("connections_closed", Value::Int(0)), ("remaining", Value::Int(0)), ("released", Value::Bool(false))])) } };
         let mut closed = 0; let mut i = 0;
         while i < self.conns.len() { if self.conns[i].allocation_id == aid { self.close_conn(i, "released"); self.conns.remove(i); closed += 1; } else { i += 1; } }
-        if let Some(p) = self.by_alloc.remove(&aid) { let _ = std::fs::remove_file(&p.path); wire::fdstore_remove(aid.rsplit(':').next().unwrap_or(&aid)); let cr = Self::corr(&p); self.emit("gateway.released", "ok", &cr, Value::obj(vec![("connections_closed", Value::Int(closed))])); }
+        if let Some(p) = self.by_alloc.remove(&aid) { if !keep_node { let _ = std::fs::remove_file(&p.path); } else { self.emit("gateway.socket_removal_failed", "hold", &Self::corr(&p), Value::obj(vec![("path_digest", Value::s(&ab_common::sig::sha256_hex(p.path.as_bytes())[..16]))])); } wire::fdstore_remove(aid.rsplit(':').next().unwrap_or(&aid)); let cr = Self::corr(&p); self.emit("gateway.released", "ok", &cr, Value::obj(vec![("connections_closed", Value::Int(closed))])); }
         let remaining = self.conns.iter().filter(|c| c.allocation_id == aid).count();
         wire::reply_ok(Value::obj(vec![("connections_closed", Value::Int(closed)), ("remaining", Value::Int(remaining as i64)), ("released", Value::Bool(true))]))
     }

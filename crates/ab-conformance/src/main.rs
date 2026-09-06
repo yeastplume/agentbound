@@ -63,6 +63,8 @@ impl Rig {
     fn request(&self, file: &str, extra: &str) -> (i32, Value, String) { self.cli(&format!("request {file} {extra}")) }
     fn write_req(&self, name: &str, body: &str) -> String { let p = format!("/tmp/conf-{name}.json"); std::fs::write(&p, body).unwrap(); sh(&format!("chmod 644 {p}")); p }
     fn terminate(&self, lrd: &str) -> Value { lc("terminate", Value::obj(vec![("launch_record_digest", Value::s(lrd)), ("reason", Value::s("conformance"))])) }
+    /// Terminate with an injected step fault (F-T rows). The fault makes one protocol step fail; nothing is relaxed.
+    fn terminate_faulted(&self, lrd: &str, fault: &str) -> Value { lc("terminate", Value::obj(vec![("fault", Value::s(fault)), ("launch_record_digest", Value::s(lrd)), ("reason", Value::s(&format!("conformance-fault:{fault}")))])) }
     fn launch(&self, runtime: &str, task: &str) -> (i32, Value, String) {
         let p = self.write_req("launch", &format!(r#"{{"schema_version":"agentbound.session-request.v0.1","agent_principal_id":"agent:finance-agent","task_purpose_id":"{task}","requested_runtime":"{runtime}","requested_resources":["resource:workspace-finance"],"initiator_credential_ref":"authn:alice-session-0001","approval_references":[]}}"#));
         self.request(&p, "")
@@ -195,7 +197,12 @@ fn main() {
     let (_, rej) = sh("grep -c session.rejected /var/lib/agentbound/audit-policy.jsonl"); g.rec("T-6.6-001.audit", rej.trim().parse::<i32>().unwrap_or(0) >= 15, format!("session.rejected events with failed_input={}", rej.trim()));
 
     // ---- constructor faults (D-11, F-C) ----
-    for (id, fault, want_step) in [("F-C-03", "mount-symlink", "3"), ("F-C-07", "pre-commit-crash", "7"), ("F-C-09", "post-commit-crash", "8")] {
+    // Every constructor step that can fail has a fault: the step is made to fail *with its side effects already in place*, so the
+    // rollback runs against a partially constructed session. Common assertion for all of them: non-zero exit, the failure recorded at
+    // the expected step, the identity held (reclaiming/quarantined — never free), and no scope left behind. Per-row extras follow.
+    for (id, fault, want_step) in [("F-C-01", "barrier-hold", "1"), ("F-C-02", "mount-private", "2"), ("F-C-03", "mount-symlink", "3"),
+                                   ("F-C-04", "pivot-root", "4"), ("F-C-05", "proc-mount", "5"), ("F-C-06", "fd-leak", "6"),
+                                   ("F-C-07", "pre-commit-crash", "7"), ("F-C-09", "post-commit-crash", "8")] {
         let p = g.write_req(id, base); let (rc, _, out) = g.request(&p, &format!("--fault {fault}"));
         let (_, last) = sh("tail -1 /var/lib/agentbound/audit-launch.jsonl"); let ev = parse(&last);
         let (step, rule, rb) = (js(&ev, "detail.failed_step"), js(&ev, "detail.rule"), js(&ev, "detail.rollback"));
@@ -203,10 +210,32 @@ fn main() {
         let scope_left = !scope_name.is_empty() && std::path::Path::new(&format!("/sys/fs/cgroup/{scope_name}")).exists(); let scopes = if scope_left { "1" } else { "0" }.to_string();
         let az = out.split("launchrec:").nth(1).map(|x| format!("launchrec:{}", x.chars().take_while(|c| c.is_alphanumeric() || *c == '-').collect::<String>())).unwrap_or_default();
         let ident = js(&lc("status", Value::obj(vec![("authorization_id", Value::s(&az))])), "body.identity_state");
-        g.rec(id, rc != 0 && step == want_step && (ident == "reclaiming" || ident == "quarantined") && scopes.trim() == "0", format!("step={step} rule={rule} identity={ident} scopes_left={} rollback={rb}", scopes.trim()));
+        if fault != "barrier-hold" {
+            g.rec(id, rc != 0 && step == want_step && (ident == "reclaiming" || ident == "quarantined") && scopes.trim() == "0", format!("step={step} rule={rule} identity={ident} scopes_left={} rollback={rb}", scopes.trim()));
+        }
         if fault == "post-commit-crash" { let l = js(&ev, "launch_record_digest"); let k = kinds(&audit_rows(&l)); g.rec("F-C-09.record", !l.is_empty() && k.contains(&"session.launch_record_committed".into()) && k.contains(&"session.construction_failed".into()), format!("lrd={l} kinds={k:?}")); }
+        // F-C-01: the child was released neither to exec nor to the workload — it must have been reaped, and nothing may have run
+        if fault == "barrier-hold" {
+            let reaped = rb.contains("child killed and reaped"); let child_pid = jget(&ev, "detail.ledger").and_then(|l| l.as_arr()).and_then(|l| l.iter().find(|e| js(e, "what") == "clone3").map(|e| js(e, "detail"))).unwrap_or_default();
+            let pid = child_pid.trim_start_matches("pid=").to_string();
+            let alive = !pid.is_empty() && std::path::Path::new(&format!("/proc/{pid}")).exists();
+            g.rec("F-C-01", rc != 0 && step == "1" && reaped && !alive && (ident == "reclaiming" || ident == "quarantined") && scopes.trim() == "0",
+                format!("barrier never released: child {child_pid} reaped by rollback={reaped}, still alive={alive}; identity={ident}; scopes_left={}; rollback={rb}", scopes.trim()));
+        }
+        // F-C-05: the child aborted at the proc mount — no host /proc may have been left mounted anywhere the session could reach,
+        // and (WP1 F-2) no host sysfs may be inherited. The session tree is gone with the namespace; assert the host is unchanged.
+        if fault == "proc-mount" {
+            let (_, leaked) = sh("findmnt -rno TARGET | grep -c '/var/lib/agentbound/sessions/'");
+            g.rec("F-C-05.no-host-proc", leaked.trim() == "0", format!("host mount table shows {} session-tree mounts after the aborted construction (the child's proc/sysfs died with its namespace)", leaked.trim()));
+        }
+        // F-C-06: the leaked descriptor was caught by step 6's own check, not by a later step
+        if fault == "fd-leak" {
+            let d = js(&ev, "detail.detail"); let k = kinds(&audit_rows(&js(&ev, "launch_record_digest")));
+            g.rec("F-C-06.own-check", step == "6" && d.contains("leaked") && !k.contains(&"session.activated".into()),
+                format!("a descriptor surviving the closure pass was caught by step 6's own verification through the fresh /proc: {d}; the session never activated (audit kinds={k:?})"));
+        }
     }
-    g.rec("D-11", g.rows.iter().filter(|r| r.id.starts_with("F-C-0")).all(|r| r.verdict == "PASS"), "constructor fault rows F-C-03/07/09: no runnable session, identity held, scope gone");
+    g.rec("D-11", g.rows.iter().filter(|r| r.id.starts_with("F-C-0")).all(|r| r.verdict == "PASS"), format!("all {} constructor fault rows (F-C-01..09, one per failing step): no runnable session, identity held, scope gone", g.rows.iter().filter(|r| r.id.starts_with("F-C-0")).count()));
     // ---- T-6.5-004: concurrent duplicate launch of one authorization ----
     let p = g.write_req("replay", base); let (_, v, _) = g.request(&p, "--no-launch"); let az = js(&v, "body.authorization_id");
     let (_, o1) = sh(&format!("agentbound-launch --authorization {az} 2>&1 & agentbound-launch --authorization {az} 2>&1; wait"));
@@ -337,6 +366,103 @@ fn main() {
     let (_, sockleft) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
     g.rec("T-6.3-007.socket", sockleft.trim() == "0", format!("host-side socket nodes left for this allocation: {}", sockleft.trim()));
     // ---- T-6.4-013 / T-6.3-008: replay of another session's identity through a fresh session ----
+    // ---- F-C-08: step 8 aborted with the record committed and the gateway socket bound, but grants never activated ----
+    // Requires topology local-socket, so it uses the git request. The grant must be unusable and the socket node released.
+    {
+        let (rc8, _, out8) = gb.request(&greq, "--fault pre-activate-crash");
+        let (_, last8) = sh("tail -1 /var/lib/agentbound/audit-launch.jsonl"); let ev8 = parse(&last8);
+        let (step8, l8, rb8) = (js(&ev8, "detail.failed_step"), js(&ev8, "launch_record_digest"), js(&ev8, "detail.rollback"));
+        let k8 = kinds(&audit_rows(&l8));
+        let suffix = out8.split("allocation:").nth(1).map(|x| x.chars().take_while(|c| c.is_alphanumeric() || *c == '-').collect::<String>()).unwrap_or_default();
+        let sock_gone = suffix.is_empty() || !std::path::Path::new(&format!("/run/agentbound/gw/{suffix}.sock")).exists();
+        // the gateway must hold no projection for the allocation: status by launch record must be unknown
+        let gwst8 = match wire::connect("/run/agentbound/gateway.sock") { Ok(c) => c.call(&wire::request("status", "conf-fc08", Value::obj(vec![("launch_record_digest", Value::s(&l8))]))).unwrap_or(Value::Null), Err(_) => Value::Null };
+        let no_projection = js(&gwst8, "body.rule") == "unknown_record";
+        let az8 = out8.split("launchrec:").nth(1).map(|x| format!("launchrec:{}", x.chars().take_while(|c| c.is_alphanumeric() || *c == '-').collect::<String>())).unwrap_or_default();
+        let ident8 = js(&lc("status", Value::obj(vec![("authorization_id", Value::s(&az8))])), "body.identity_state");
+        g.rec("F-C-08", rc8 != 0 && step8 == "8" && !l8.is_empty() && k8.contains(&"session.launch_record_committed".into()) && k8.contains(&"session.construction_failed".into())
+            && sock_gone && no_projection && rb8.contains("gateway") && (ident8 == "reclaiming" || ident8 == "quarantined"),
+            format!("step={step8}: record committed (lrd={l8}, audit kinds={k8:?}) and socket bound, activation never reached; rollback={rb8}; gateway holds no projection for the record (status rule={})={no_projection}; socket node for {suffix} gone={sock_gone}; identity={ident8}", js(&gwst8, "body.rule")));
+    }
+    // ---- termination-step faults (F-T-01/05/06/07/09) ----
+    // Each fault gets its own session because termination consumes one. The common obligation: a failing step must not produce a
+    // released identity or a sealed record — the protocol reports `termination-incomplete` (or holds cleanup) and audits the failure.
+    for (id, fault, want) in [("F-T-01", "admission-closure", "gateway admission closure"), ("F-T-05", "no-live-confirmation", "no-live-process confirmation"),
+                              ("F-T-06", "gateway-release", "gateway grant/connection closure"), ("F-T-07", "credential-closure", "broker/credential closure"),
+                              ("F-T-09", "socket-unmount", "gateway socket removal")] {
+        let (rcf, vf, _) = gb.request(&greq, ""); let lrdf = js(&vf, "launch_record_digest");
+        if rcf != 0 || lrdf.is_empty() { g.rec(id, false, format!("could not launch a session for the {want} fault: rc={rcf}")); continue; }
+        let aidf = js(&vf, "allocation_id"); let suffix = aidf.rsplit(':').next().unwrap_or("").to_string();
+        // the socket node must exist while the session is live (it is what the fault leaves behind at step 9)
+        let node = format!("/run/agentbound/gw/{suffix}.sock");
+        let node_before = std::path::Path::new(&node).exists();
+        let t = g.terminate_faulted(&lrdf, fault);
+        // F-T-09 must be observed immediately: the poller re-terminates a session whose init has exited, which removes the node
+        let node_after = std::path::Path::new(&node).exists();
+        // "delivered" means the gateway answered — the only outcome that would mean the socket is still usable. A connect that is
+        // refused, or accepted by a stale listener and then reset with no reply, both mean inaccessible.
+        std::fs::write("/tmp/ft-probe.py", "import socket,sys\nn=sys.argv[1]\ns=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET);s.settimeout(3)\ntry:\n s.connect(n)\nexcept OSError as e:\n print('refused',e.errno); raise SystemExit\ntry:\n s.send(b'{\"body\":{},\"idempotency_key\":\"p\",\"op\":\"status\",\"v\":\"agentbound.wire.v0.1\"}')\n r=s.recv(400)\n print('delivered' if r else 'connected, empty reply')\nexcept OSError as e:\n print('connected, no reply:',type(e).__name__)\n").unwrap();
+        let conn_after = sh(&format!("python3 /tmp/ft-probe.py {node} 2>&1")).1.trim().to_string();
+        let state = js(&t, "body.state"); let ev = js(&t, "body.evidence");
+        let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrdf))]));
+        let (sstate, ident) = (js(&st, "body.state"), js(&st, "body.identity_state"));
+        // NOTE: no event kind is invented for fault injection — the audit vocabulary is closed by design (the receiver refuses an
+        // unknown kind or detail member, which is itself asserted by T-6.8-005). The failing step is observed in the reply evidence and
+        // in the existing `session.cleanup_completed` / `session.termination_incomplete` records.
+        // The receiver appends asynchronously, so poll (bounded, 10 s) for the record this row reads.
+        let want_kind = if fault == "no-live-confirmation" { "session.termination_incomplete" } else { "session.cleanup_completed" };
+        let mut k = kinds(&audit_rows(&lrdf));
+        for _ in 0..20 { if k.contains(&want_kind.to_string()) { break; } std::thread::sleep(std::time::Duration::from_millis(500)); k = kinds(&audit_rows(&lrdf)); }
+        let rows_f = audit_rows(&lrdf);
+        let cleanup = rows_f.iter().rev().find(|r| js(r, "event.event") == "session.cleanup_completed").cloned().unwrap_or(Value::Null);
+        // ORDER, not timing: the identity may be released later by the unfaulted retry, but never before the failing step was recorded
+        let pos = |kind: &str| k.iter().position(|x| x == kind);
+        let released_before_failure = match (pos(want_kind), pos("session.identity_released")) { (Some(f), Some(r)) => r < f, (None, Some(_)) => true, _ => false };
+        let sealed = k.contains(&"session.sealed".into()) || sstate == "cleaned/sealed"; let _ = sealed;
+        let released = ident == "free";
+        match fault {
+            // F-T-01: 1B — admission closure failed, so no new gateway operation may be admitted regardless. The gateway was never
+            // told to deny, so this tests the *other* guarantee: releasing the projection at step 6 makes the socket unusable.
+            "admission-closure" => {
+                let denied = js(&t, "body.evidence.gateway_admission_denied") == "false";
+                g.rec(id, denied && !node_after && conn_after.contains("refused") && !released,
+                    format!("1B: step 1 admission closure failed (evidence gateway_admission_denied=false). The other guarantee still holds: releasing the projection at step 6 removed the socket node (present before={node_before}, after={node_after}) and a connect to it is {conn_after}, so no new operation can be admitted; identity={ident} (not free)"));
+            }
+            // F-T-05: the protocol must report termination-incomplete and hold the identity — never release, never seal.
+            "no-live-confirmation" => {
+                // the reply is the protocol's answer; the status may already have advanced because the poller re-terminates a session
+                // whose init has exited (that retry runs without the fault). What must hold is: this attempt refused to complete, and
+                // the identity was never released while the confirmation was missing.
+                g.rec(id, state == "termination-incomplete" && k.contains(&"session.termination_incomplete".into()) && !released_before_failure,
+                    format!("the attempt reported state={state} and recorded session.termination_incomplete; no identity release preceded it (released_before_failure={released_before_failure}); status when read afterwards={sstate} (the poller's unfaulted retry may already have completed it), identity={ident}"));
+            }
+            // F-T-06 / F-T-07: safe state retained — cleanup holds, the identity is not released, and the failure is audited.
+            "gateway-release" | "credential-closure" => {
+                // safe state retained: the failure is recorded, cleanup does not seal on this attempt, and no identity release precedes it
+                // the recorded cleanup evidence must show the step that failed, the outcome must be `hold`, and nothing may be sealed
+                let (outcome, grants) = (js(&cleanup, "event.outcome"), js(&cleanup, "event.detail.grants"));
+                let shows = if fault == "gateway-release" { grants.contains("\"remaining\":\"gateway unreachable\"") || grants.contains("\"released\":false") } else { grants.contains("\"broker_closed\":false") };
+                g.rec(id, shows && outcome == "hold" && !k.contains(&"session.sealed".into()) && !released_before_failure,
+                    format!("{want} failed: session.cleanup_completed recorded outcome={outcome} with grants={grants}; the record was not sealed (sealed={}) and no identity release preceded the failure; state={state}, status={sstate}, identity={ident}", k.contains(&"session.sealed".into())));
+            }
+            // F-T-09: the socket node survives step 9 but the projection is gone — the gateway must be inaccessible through it, and
+            // the launch record must be retained.
+            "socket-unmount" => {
+                let rec = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&lrdf))]));
+                let retained = !js(&rec, "body.binding").is_empty();
+                // the node survives step 9 with no listener behind it: the gateway is inaccessible through it, and the ledger is kept
+                g.rec(id, node_before && node_after && !conn_after.contains("delivered") && retained,
+                    format!("step 9 failed: the node was present before ({node_before}) and after ({node_after}) termination, but the projection is released, so a connect+send is {conn_after} — the gateway is inaccessible through it; the launch record is retained={retained}; identity={ident}"));
+                let _ = std::fs::remove_file(&node);
+            }
+            _ => {}
+        }
+        // clean up: a second, unfaulted terminate must be able to finish the job (the protocol is resumable)
+        let t2 = g.terminate(&lrdf); let s2 = js(&t2, "body.state"); let conflict = js(&t2, "body.rule");
+        let fin = js(&lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrdf))])), "body.state");
+        g.rec(&format!("{id}.resumable"), fin == "cleaned/sealed" || fin == "terminated",
+            format!("with the fault removed the protocol completed: repeated terminate returned state={s2}{} and the session's final state is {fin} (evidence from the faulted attempt retained: {})", if conflict.is_empty() { String::new() } else { format!(" (rule={conflict}: already terminal)") }, ev.chars().take(60).collect::<String>()));
+    }
     let (rc2, v2, _) = gb.request(&greq, ""); let lrd2 = js(&v2, "launch_record_digest");
     // the worker inside runs the whole in-session row set (incl. 16 held connections); wait until its connections are gone
     for _ in 0..60 { std::thread::sleep(std::time::Duration::from_millis(500)); let st = wire::connect("/run/agentbound/gateway.sock").ok().and_then(|c| c.call(&wire::request("status", "conf-gw2", Value::obj(vec![("launch_record_digest", Value::s(&lrd2))]))).ok()).unwrap_or(Value::Null); if st.get("body").and_then(|b| b.get("connections")).and_then(|x| x.as_int()) == Some(0) && st.get("body").and_then(|b| b.get("operations")).and_then(|x| x.as_int()).unwrap_or(0) > 20 { break; } }

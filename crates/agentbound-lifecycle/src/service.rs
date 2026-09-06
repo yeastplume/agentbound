@@ -13,7 +13,9 @@ use std::os::fd::OwnedFd;
 
 pub struct Config { pub cli_uids: Vec<u32>, pub keyring: Keyring, pub host_id: String, pub boot_id: String, pub launch_version_digest: String, pub managed_paths: Vec<String>, pub workspace_roots: Vec<String>, pub gateway_uid: Option<u32>, pub gateway_sock: String, pub storage_principals: Vec<(String, u32, u32)> }
 
-pub struct Service { pub store: Store, pub cfg: Config, pub sessions: Sessions, pub audit: audit::Sink }
+pub struct Service { pub store: Store, pub cfg: Config, pub sessions: Sessions, pub audit: audit::Sink,
+    /// Injected termination-step fault for the F-T conformance rows (root-only, audited, cleared after each action).
+    pub term_fault: Option<String> }
 
 pub type Reply = Result<Value, (&'static str, &'static str, String)>;
 fn err<T>(class: &'static str, rule: &'static str, detail: impl Into<String>) -> Result<T, (&'static str, &'static str, String)> { Err((class, rule, detail.into())) }

@@ -163,7 +163,7 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     if pid == 0 {
         unsafe { libc::close(sp[0]); libc::close(bp[1]); }
         crate::child::run(ChildPlan { rootfs_fd: rootfs, mounts, uid, gids: gids.clone(), argv, env: envv, status_w: sp[1], barrier_r: bp[0], keep_fds: vec![0, 1, 2], tmpfs_size: lv("disk_bytes").map(|b| b.to_string()).unwrap_or_else(|| "64m".into()), tmpfs_inodes: lv("disk_inodes").map(|n| n.to_string()), workspace_uid_chown: true,
-            nproc_limit: lv("pids").map(|n| n as u64), nofile_limit: lv("file_descriptors").map(|n| n as u64), stdio: (devnull, console) });
+            nproc_limit: lv("pids").map(|n| n as u64), nofile_limit: lv("file_descriptors").map(|n| n as u64), stdio: (devnull, console), fault: cfg.fault.clone() });
     }
     unsafe { libc::close(sp[1]); libc::close(bp[0]); libc::kill(holder, libc::SIGKILL); libc::waitpid(holder, std::ptr::null_mut(), 0); }
     led.child_pid = pid; led.child_pidfd = Some(unsafe { OwnedFd::from_raw_fd(pidfd) }); led.note(1, "clone3", &format!("pid={pid}"));
@@ -239,11 +239,16 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     let lrd = committed.get("launch_record_digest").and_then(|x| x.as_str()).unwrap_or("").to_string(); led.lrd = Some(lrd.clone()); led.note(8, "commit_binding", &lrd);
     if fault("post-commit-crash") { return fail(8, "fault_injected", "post-commit-crash"); }
     // step 8 (session-lifecycle §3): gateway authority becomes usable only now, from the committed record, never from this process's arguments
+    // F-C-08: the record is committed and the gateway socket is bound, but activation never happens — the grant and socket must be
+    // unusable and the rollback must release both.
+    if fault("pre-activate-crash") { return fail(8, "fault_injected", "pre-activate-crash: record committed, socket bound, grants never activated".to_string()); }
     if m.topology == "local-socket" { call(&cfg.gateway_sock, "activate", &format!("{authorization_id}/gw-activate"), Value::obj(vec![("launch_record_digest", Value::s(&lrd))]), &[], 8)?; led.note(8, "gateway_activated", "grants loaded from launch-record store"); }
     // ---- step 9: hand the live evidence to lifecycle, release the barrier, report activation ----
     let ds = Value::Arr(vec![Value::obj(vec![("index", Value::Int(0)), ("kind", Value::s("init_pidfd"))]), Value::obj(vec![("index", Value::Int(1)), ("kind", Value::s("cgroup_dir"))])]);
     let reg = Value::obj(vec![("allocation_id", Value::s(&aid)), ("descriptors", ds), ("init_pid", Value::Int(pid as i64)), ("launch_record_digest", Value::s(&lrd)), ("pid_namespace_id", Value::s(&format!("pidns:{pidns}"))), ("scope_id", Value::s(&format!("{scope_name}.scope"))), ("session_dir", Value::s(&session_dir))]);
     call(&cfg.lifecycle_sock, "register_session", &format!("{authorization_id}/register"), reg, &[pidfd, cgfd], 9)?;
+    // F-C-01: the barrier is never released — the child must stay blocked and be reaped by the rollback, never exec
+    if fault("barrier-hold") { return fail(1, "fault_injected", "barrier-hold: child left blocked at the step-8 barrier".to_string()); }
     if !write_all_fd(bp[1], b"g") { return fail(9, "barrier_release", errno().to_string()); }
     unsafe { libc::close(bp[1]) };
     let line = read_line_fd(sp[0], 15_000).ok_or(Fail { step: 9, rule: "child_silent", detail: "no exec report".into() })?;

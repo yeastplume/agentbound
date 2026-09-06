@@ -16,6 +16,9 @@ pub struct ChildPlan {
     pub keep_fds: Vec<RawFd>,           // stdin/stdout/stderr (0,1,2) per descriptor allowlist
     pub tmpfs_size: String, pub tmpfs_inodes: Option<String>, pub workspace_uid_chown: bool,
     pub nproc_limit: Option<u64>, pub nofile_limit: Option<u64>,
+    /// Injected construction fault (F-C rows): the named step is made to fail *after* its side effects are in place, so the
+    /// rollback path is exercised against a partially constructed session rather than an empty one.
+    pub fault: Option<String>,
     pub stdio: (RawFd, RawFd),                // (stdin source, console sink) dup'd onto 0 and 1/2 so the harness pipe is never inherited
 }
 
@@ -25,10 +28,11 @@ macro_rules! step { ($w:expr, $n:expr, $e:expr) => { match $e { Ok(v) => { repor
 /// Never returns.
 pub fn run(p: ChildPlan) -> ! {
     let w = p.status_w;
+    let fault = |s: &str| p.fault.as_deref() == Some(s);
     // no PDEATHSIG: the constructor is a transient parent that exits after activation; supervision is the lifecycle pidfd + scope
     unsafe { libc::dup2(p.stdio.0, 0); libc::dup2(p.stdio.1, 1); libc::dup2(p.stdio.1, 2); libc::close(p.stdio.0); libc::close(p.stdio.1); }
     // 2 — no propagation back to the host
-    step!(w, 2, if unsafe { libc::mount(c("none").as_ptr(), c("/").as_ptr(), std::ptr::null(), libc::MS_REC | libc::MS_PRIVATE, std::ptr::null()) } == 0 { Ok(()) } else { Err(errno()) });
+    step!(w, 2, if fault("mount-private") { Err(libc::EPERM) } else if unsafe { libc::mount(c("none").as_ptr(), c("/").as_ptr(), std::ptr::null(), libc::MS_REC | libc::MS_PRIVATE, std::ptr::null()) } == 0 { Ok(()) } else { Err(errno()) });
     // 4 — tmpfs root; image and intents attached by mount fd; pivot; detach old root
     step!(w, 4, (|| -> Result<(), i32> {
         // the root tmpfs is root-owned and unwritable by the session: it only carries mount points
@@ -61,17 +65,21 @@ pub fn run(p: ChildPlan) -> ! {
         for (link, target) in [("bin", "image/bin"), ("usr", "image/usr"), ("lib", "image/lib"), ("lib64", "image/lib64"), ("sbin", "image/sbin")] { let _ = unsafe { libc::symlinkat(c(target).as_ptr(), sd, c(link).as_ptr()) }; }
         if unsafe { libc::chdir(c(stage).as_ptr()) } != 0 { return Err(errno()); }
         pivot_root(".", "oldroot")?;
+        if fault("pivot-root") { return Err(libc::EIO); } // F-C-04: fail with the restricted tree already established
         if unsafe { libc::chdir(c("/").as_ptr()) } != 0 { return Err(errno()); }
         if unsafe { libc::umount2(c("/oldroot").as_ptr(), libc::MNT_DETACH) } != 0 { return Err(errno()); }
         let _ = unsafe { libc::rmdir(c("/oldroot").as_ptr()) };
         unsafe { libc::close(sd) }; Ok(())
     })());
     // 5 — fresh procfs after pidns (nosuid,nodev,noexec); no sysfs at 1A (no netns content to expose)
-    step!(w, 5, if unsafe { libc::mount(c("proc").as_ptr(), c("/proc").as_ptr(), c("proc").as_ptr(), libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC, std::ptr::null()) } == 0 { Ok(()) } else { Err(errno()) });
+    step!(w, 5, if fault("proc-mount") { Err(libc::EPERM) } else if unsafe { libc::mount(c("proc").as_ptr(), c("/proc").as_ptr(), c("proc").as_ptr(), libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC, std::ptr::null()) } == 0 { Ok(()) } else { Err(errno()) });
     // 6 — close everything not on the allowlist; verify through the fresh /proc before privilege drop
     step!(w, 6, (|| -> Result<(), i32> {
         let keep: Vec<RawFd> = p.keep_fds.iter().copied().chain([p.status_w, p.barrier_r]).collect();
         for (fd, _) in open_fds() { if !keep.contains(&fd) { unsafe { libc::close(fd) }; } }
+        // F-C-06: simulate a descriptor that survives the closure pass (the failure mode the step exists to catch): open it AFTER
+        // the pass, so step 6's own verification through the fresh /proc is what must notice it and abort.
+        if fault("fd-leak") { unsafe { libc::open(c("/image").as_ptr(), libc::O_PATH | libc::O_DIRECTORY) }; }
         let now = open_fds(); let extra: Vec<String> = now.iter().filter(|(fd, _)| !keep.contains(fd)).map(|(fd, t)| format!("{fd}:{t}")).collect();
         if !extra.is_empty() { report(w, 6, false, &format!("leaked {}", extra.join(","))); unsafe { libc::_exit(106) } }
         // the status/barrier pipes are CLOEXEC and die at exec; record what survives

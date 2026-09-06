@@ -12,6 +12,14 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
 
 /// Gateway control call (session-lifecycle §5 steps 1 and 6). Returns None when the gateway is unreachable; callers record that.
+/// As `gateway_call`, with an optional injected fault forwarded to the gateway (F-T rows; the gateway accepts it only from this daemon).
+fn gateway_call_f(sock: &str, op: &str, lrd: &str, idem: &str, fault: Option<&str>) -> Option<Value> {
+    let mut b = vec![("launch_record_digest", Value::s(lrd))];
+    if let Some(f) = fault { b.push(("fault", Value::s(f))); }
+    let c = wire::connect(sock).ok()?;
+    let r = c.call(&wire::request(op, idem, Value::obj(b))).ok()?;
+    if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { r.get("body").cloned() } else { None }
+}
 fn gateway_call(sock: &str, op: &str, lrd: &str, idem: &str) -> Option<Value> {
     let c = wire::connect(sock).ok()?;
     let r = c.call(&wire::request(op, idem, Value::obj(vec![("launch_record_digest", Value::s(lrd))]))).ok()?;
@@ -66,7 +74,15 @@ impl Service {
         if matches!(s.state.as_str(), "terminated" | "cleaned/sealed" | "construction-failed" | "aborted") { return Err((wire::CLASS_CONFLICT, "terminal_state", s.state.clone())); }
         let reason = gs(b, "reason").unwrap_or("client_request").to_string();
         let bound = b.get("bound_s").and_then(|x| x.as_int()).unwrap_or(DEFAULT_TERM_BOUND_S).clamp(1, 300);
-        match op {
+        // Injected termination fault (F-T rows), root only, always audited: the named step is made to fail so the protocol's
+        // response to a failing step can be observed rather than argued. It never relaxes a check — it only makes one fail.
+        self.term_fault = b.get("fault").and_then(|x| x.as_str()).map(|s| s.to_string());
+        if let Some(f) = self.term_fault.clone() {
+            if _uid != 0 { return Err((wire::CLASS_UNAUTHORIZED, "fault_injection_root_only", f)); }
+            // The audit vocabulary is closed (agentbound-audit `events.rs`) and a test affordance must not extend the production event
+            // set, so the injection is reported in the reply and shows up as the named step's own failure evidence — nowhere else.
+        }
+        let out = match op {
             "terminate" => self.terminate(&lrd, &reason, bound),
             "quiesce" => self.quiesce(&lrd, &reason, bound),
             "revocation_signal" => {
@@ -77,7 +93,9 @@ impl Service {
                 Ok(Value::obj(vec![("behaviour", Value::s(&behaviour)), ("state", r.get("state").cloned().unwrap_or(Value::Null))]))
             }
             _ => unreachable!(),
-        }
+        };
+        self.term_fault = None; // a fault applies to exactly one requested action
+        out
     }
 
     /// Manifest-declared behaviour for a trigger, read from the committed record (never caller-supplied).
@@ -123,7 +141,9 @@ impl Service {
         self.append_event(lrd, "session.termination_started", "ok", Value::obj(vec![("bound_s", Value::Int(bound_s)), ("ordering_deviation", Value::Null), ("reason", Value::s(reason)), ("scope_id", Value::s(&scope))]));
         let t0 = Instant::now();
         // 1 deny admission at the gateway (mandatory on entry, distinct from releasing grant records — §5). 2 freeze.
-        let gw_deny = gateway_call(&self.cfg.gateway_sock, "deny_admission", lrd, &format!("{lrd}/deny/{}", monotonic_ns()));
+        // F-T-01: step 1 admission closure fails (gateway unreachable / refuses). 1A has no gateway state, so the step is not
+        // applicable there; 1B must leave admission closed by another means or refuse to proceed to grant release.
+        let gw_deny = if self.term_fault.as_deref() == Some("admission-closure") { None } else { gateway_call(&self.cfg.gateway_sock, "deny_admission", lrd, &format!("{lrd}/deny/{}", monotonic_ns())) };
         let step2 = cg_write(cg, "cgroup.freeze", "1");
         // 3 thaw and SIGTERM init via pidfd, bounded (F-4: a PID-ns init without a handler ignores it)
         cg_write(cg, "cgroup.freeze", "0");
@@ -140,7 +160,10 @@ impl Service {
         let init_exited = pidfd < 0 || pidfd_exited(pidfd);
         let (inside, outside) = credential_scan(uid, gid, &scope);
         let dstate: Vec<i32> = procs.iter().copied().filter(|p| proc_state(*p) == "D").collect();
-        let complete = procs.is_empty() && init_exited && inside.is_empty() && outside.is_empty();
+        // F-T-05: step 5 cannot confirm the absence of live processes — the protocol must report `termination-incomplete`
+        // and MUST NOT release the identity (§5: uncertainty holds the identity).
+        let no_live_confirmed = self.term_fault.as_deref() != Some("no-live-confirmation");
+        let complete = procs.is_empty() && init_exited && inside.is_empty() && outside.is_empty() && no_live_confirmed;
         let evidence = Value::obj(vec![("cgroup_kill_written", Value::Bool(step4)), ("cgroup_procs_remaining", pids(&procs)), ("credential_scan_inside_scope", pids(&inside)), ("credential_scan_outside_scope", pids(&outside)), ("d_state", pids(&dstate)),
             ("elapsed_ms", Value::Int(t0.elapsed().as_millis() as i64)), ("freeze_written", Value::Bool(step2)), ("gateway_admission_denied", Value::Bool(gw_deny.is_some())), ("frozen_observed", Value::Bool(cg_frozen(cg))), ("init_pid", Value::Int(init_pid as i64)), ("init_pidfd_exited", Value::Bool(init_exited)), ("sigterm_sent", Value::Bool(step3))]);
         if !outside.is_empty() { self.append_event(lrd, "identity.scope_escape_suspected", "hold", Value::obj(vec![("pids", pids(&outside)), ("uid", Value::Int(uid as i64))])); }
@@ -197,14 +220,26 @@ impl Service {
         let (inside, outside) = credential_scan(uid, gid, &scope);
         // §5 step 6: release gateway grant records and indexed connections; the gateway MUST acknowledge zero connections
         // before identity release. A projection that was never made (topology none) releases as `released:false, remaining:0`.
-        let gw = gateway_call(&self.cfg.gateway_sock, "release", lrd, &format!("{lrd}/release/{}", monotonic_ns()));
+        // F-T-06: step 6 gateway grant/connection closure fails — safe state is retained (no identity release) and the failure is audited
+        let gw = if self.term_fault.as_deref() == Some("gateway-release") { None } else {
+            let f = if self.term_fault.as_deref() == Some("socket-unmount") { Some("socket-unmount") } else { None };
+            gateway_call_f(&self.cfg.gateway_sock, "release", lrd, &format!("{lrd}/release/{}", monotonic_ns()), f) };
+
         // release the session's audit event budget (R-RES-2 audit_capacity) — after the gateway, before this record's final events
         if let Some(az) = self.sessions.get(lrd).map(|s| s.authorization_id.clone()) {
             if let Ok(c) = wire::connect(&std::env::var("AGENTBOUND_AUDIT_SOCKET").unwrap_or_else(|_| "/run/agentbound/audit.sock".into())) { let _ = c.call(&wire::request("release", &format!("{lrd}/audit-release"), Value::obj(vec![("authorization_id", Value::s(&az))]))); }
         }
+        // §5 step 7: close broker access and any session credential capability. At 1B the only upstream credential is held by the
+        // gateway process for its whole lifetime (never per session, never in the session — R-GW-6), so the step's obligation for a
+        // session is to confirm that nothing session-scoped remains open: the gateway's acknowledgement of zero connections IS that
+        // confirmation, because a credential is only ever used inside an admitted operation on a connection.
+        // F-T-07 makes this confirmation fail: safe state must be retained and no identity released.
+        let broker_closed = self.term_fault.as_deref() != Some("credential-closure");
         let gw_remaining = gw.as_ref().and_then(|b| b.get("remaining")).and_then(|x| x.as_int());
-        let gw_ok = gw_remaining == Some(0) || (gw.is_none() && self.sessions.get(lrd).map(|s| s.topology != "local-socket").unwrap_or(true));
-        let grants = match &gw { Some(b) => Value::obj(vec![("connections_closed", b.get("connections_closed").cloned().unwrap_or(Value::Int(0))), ("released", b.get("released").cloned().unwrap_or(Value::Bool(false))), ("remaining", b.get("remaining").cloned().unwrap_or(Value::Null))]), None => Value::s("gateway unreachable") };
+        let gw_ok = broker_closed && (gw_remaining == Some(0) || (gw.is_none() && self.sessions.get(lrd).map(|s| s.topology != "local-socket").unwrap_or(true)));
+        // §5 steps 6 and 7 report inside `grants`: `released`/`remaining` for the gateway records, `broker_closed` for the broker and
+        // session credential capability. Either being false holds cleanup — nothing is released and the record is not sealed.
+        let grants = match &gw { Some(b) => Value::obj(vec![("broker_closed", Value::Bool(broker_closed)), ("connections_closed", b.get("connections_closed").cloned().unwrap_or(Value::Int(0))), ("released", b.get("released").cloned().unwrap_or(Value::Bool(false))), ("remaining", b.get("remaining").cloned().unwrap_or(Value::Null))]), None => Value::obj(vec![("broker_closed", Value::Bool(broker_closed)), ("connections_closed", Value::Int(0)), ("released", Value::Bool(false)), ("remaining", Value::s("gateway unreachable"))]) };
         let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_str()).is_none() && r.get("removed").and_then(|x| x.as_bool()) == Some(true)) && gw_ok && projection_ok;
         self.append_event(lrd, "session.cleanup_completed", if cond { "ok" } else { "hold" }, Value::obj(vec![("acl_entries_removed", Value::Int(0)), ("grants", grants), ("ipc_namespace", Value::s("destroyed with last process")), ("residue", Value::Arr(removed)), ("unmounts", Value::Arr(unmounts))]));
         if let Ok(Some(a)) = self.store.latest(&aid) {
