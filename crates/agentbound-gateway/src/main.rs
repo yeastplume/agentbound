@@ -83,7 +83,11 @@ fn main() {
 impl Gateway {
     /// Bounded: lifecycle may itself be calling back into this process (`deny_admission`/`release`), and both daemons serve one
     /// request at a time. A timeout here surfaces as a fail-closed refusal, never as a wedged gateway.
-    fn lc(&self, op: &str, body: Value) -> Option<Value> { wire::connect_bounded(&self.cfg.lifecycle_sock, ab_common::wire::CROSS_DAEMON_MS).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
+    /// A call to `agentbound-lifecycle`. `record_budget` is bounded much more tightly than the rest: it is the call that can close a
+    /// cycle with lifecycle's own gateway calls, and the gateway's fail-closed path for it is cheap (refuse the operation, close
+    /// admission) whereas lifecycle's is not.
+    fn lc(&self, op: &str, body: Value) -> Option<Value> { let ms = if op == "record_budget" { ab_common::wire::BUDGET_PERSIST_MS } else { ab_common::wire::CROSS_DAEMON_MS };
+        wire::connect_bounded(&self.cfg.lifecycle_sock, ms).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
     /// D4.7: on start, rebuild projections only for records lifecycle still reports live; no connection survives.
     fn reconstruct(&mut self) {
         // boot ordering: lifecycle is Type=simple, so After= does not imply its socket is bound yet — retry for up to ~10 s

@@ -31,6 +31,10 @@ fn parse(s: &str) -> Value { s.lines().rev().find_map(|l| json::parse(l.trim().a
 fn lc(op: &str, body: Value) -> Value { match wire::connect("/run/agentbound/lifecycle.sock") { Ok(c) => c.call(&wire::request(op, &format!("conf-{}", ab_common::sig::monotonic_ns()), body)).unwrap_or(Value::Null), Err(_) => Value::Null } }
 /// Single-quote a string for `sh -c` (the inner command is built by us, never by a session).
 /// T-6.5-005 helper: rewrite one catalogue limit in place (kept out of Rust string literals — quotes and braces fight the lexer).
+/// D-03 helper: advance `approval:eng-1234-d03`'s sequence past the highest this approver key has already used, so the row can
+/// obtain a live second-principal session on every run without ever replaying an approval.
+const D03_APPROVAL_PY: &str = "import json,os\np='/etc/agentbound/catalogue.json'\nc=json.load(open(p))\nhi=0\ns='/var/lib/agentbound/policy.jsonl'\nif os.path.exists(s):\n for l in open(s):\n  try:\n   r=json.loads(l)\n  except Exception:\n   continue\n  v=r.get('v') or {}\n  if r.get('kind')=='approval_seq' and v.get('key')=='key:erin-d03': hi=max(hi,int(v.get('seq',0) or 0))\nc['approvals']['approval:eng-1234-d03']['sequence']=hi+1\njson.dump(c,open(p,'w'),indent=2,sort_keys=True)\nprint(hi+1)\n";
+
 /// T-6.6-007 helper: roll the catalogue's policy version backwards.
 const ROLLBACK_PY: &str = "import json\np='/etc/agentbound/catalogue.json'\nc=json.load(open(p))\nc['policy_version']='policy:v0'\njson.dump(c,open(p,'w'),indent=2,sort_keys=True)\n";
 const FLIP_PY: &str = "import json,sys\np='/etc/agentbound/catalogue.json'\nc=json.load(open(p))\nc['resource_limits']['pids']['limit']=int(sys.argv[1])\njson.dump(c,open(p,'w'),indent=2,sort_keys=True)\n";
@@ -284,8 +288,14 @@ fn main() {
     sh("systemctl kill -s SIGKILL agentbound-lifecycle; systemctl stop agentbound-lifecycle 2>/dev/null; sleep 0.5");
     let alive = cgprocs(&scope); let (_, down) = sh("su -s /bin/sh alice -c 'agentbound list' </dev/null 2>&1");
     let probe_up = std::path::Path::new("/run/agentbound/lifecycle.sock").exists() && wire::connect("/run/agentbound/lifecycle.sock").is_ok();
-    sh("systemctl start agentbound-lifecycle; sleep 2");
-    let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd))])); let k = kinds(&audit_rows(&lrd));
+    // Poll for reconciliation rather than assuming a fixed restart time: `reconcile_on_start` scans every live record, so the wait
+    // grows with the store. A fixed sleep silently turned "reconciliation is slower now" into "reconciliation did not happen".
+    sh("systemctl start agentbound-lifecycle");
+    let mut k = Vec::new();
+    for _ in 0..60 { std::thread::sleep(std::time::Duration::from_millis(500));
+        k = kinds(&audit_rows(&lrd));
+        if k.contains(&"session.recovery_reconciled".to_string()) { break; } }
+    let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd))]));
     g.rec("T-6.8-012", rc == 0 && alive > 0 && !probe_up && k.contains(&"session.recovery_reconciled".into()), format!("procs_while_down={alive} (containment held, no authority available: daemon_reachable={probe_up}) cli_reply={} after_restart={} kinds={k:?}", down.trim().chars().take(60).collect::<String>(), js(&st, "body.state")));
     std::thread::sleep(std::time::Duration::from_secs(3));
     let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd))]));
@@ -402,8 +412,14 @@ fn main() {
     {
         let (rc_a, va, _) = g.launch("runtime:scripted-loop", "task:redwood-analysis");     // alice / finance-agent
         let gb2 = Rig { as_user: "bob".into(), rows: vec![] };
+        // Approval sequences are strictly monotonic per approver key and durable across runs, so a fixed sequence works exactly once
+        // in the life of the store. D-03 has its own approver key (`key:erin-d03`), and the driver advances its sequence past whatever
+        // the store has already seen — replaying one would be correctly rejected, which is a different row's job (T-6.6-002).
+        std::fs::write("/tmp/d03-approval.py", D03_APPROVAL_PY).unwrap();
+        let (_, seq_used) = sh("python3 /tmp/d03-approval.py");
+        sh("systemctl restart agentbound-policy; sleep 2");
         // `eng()` keeps alice's initiator credential; running as bob it must be bob's, or the request is correctly rejected
-        let engreq = gb2.write_req("d03", &eng("\"approval:eng-1234-b\"").replace("authn:alice-session-0001", "authn:bob-session-0001"));
+        let engreq = gb2.write_req("d03", &eng("\"approval:eng-1234-d03\"").replace("authn:alice-session-0001", "authn:bob-session-0001"));
         let (rc_b, vb2, _) = gb2.request(&engreq, "");                                      // bob / engineering-agent
         let (uid_a, scope_a) = (js(&va, "uid"), js(&va, "scope_id"));
         let scope_b = js(&vb2, "scope_id");
@@ -451,7 +467,7 @@ fn main() {
         let rev = asa(&format!("kill -TERM {ip_b}; echo 1 >/sys/fs/cgroup/system.slice/{scope_b}/memory.max"));
         std::thread::sleep(std::time::Duration::from_millis(300));
         let rev_denied = cgprocs(&scope_b) == b_before && b_before > 0;
-        if rc_b != 0 || !have_uids { g.rec("D-03", false, format!("setup failed: second principal's session rc={rc_b} rule={} (uid_a={uid_a} uid_b={uid_b}) — the row cannot be evaluated without two live sessions of different principals", js(&vb2, "body.rule"))); } else {
+        if rc_b != 0 || !have_uids { g.rec("D-03", false, format!("setup failed: second principal's session rc={rc_b} rule={} (uid_a={uid_a} uid_b={uid_b}, approval sequence {}) — the row cannot be evaluated without two live sessions of different principals", js(&vb2, "body.rule"), seq_used.trim())); } else {
         g.rec("D-03", unmeasured.is_empty() && leaked.is_empty() && rev_denied,
             format!("two concurrent sessions of different principals (uid {uid_a}/finance-agent and uid {uid_b}/engineering-agent). Every private-state interface of one, attempted with the other's identity, had no effect on it: {}. The reverse direction is also ineffective — B's workload survived A's attempt to signal it and its limits were unchanged ({}). No read of private state, no signal, no cgroup write and no workspace write crossed the principal boundary.",
                 attempts.iter().map(|(w, o, _)| format!("{w} → {}", o.chars().take(44).collect::<String>())).collect::<Vec<_>>().join("; "), rev.chars().take(40).collect::<String>()));

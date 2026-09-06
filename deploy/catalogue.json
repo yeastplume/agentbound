@@ -17,6 +17,14 @@
       "sequence": 6,
       "subject": "task:fix-issue-1234"
     },
+    "approval:eng-1234-d03": {
+      "approver_id": "human:erin",
+      "approver_key": "key:erin-d03",
+      "decision": "approve",
+      "expires_at": "2100-01-01T00:00:00Z",
+      "sequence": 1,
+      "subject": "task:fix-issue-1234"
+    },
     "approval:eng-1234-expired": {
       "approver_id": "human:dave",
       "approver_key": "key:dave",

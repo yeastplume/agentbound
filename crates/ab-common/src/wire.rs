@@ -61,6 +61,15 @@ pub fn peercred(fd: RawFd) -> io::Result<Peer> {
 /// failed launches that would otherwise have succeeded. This value exists to stop an indefinite wait, not to impose a latency budget.
 pub const CROSS_DAEMON_MS: i64 = 60_000;
 
+/// The bound for the ONE call that closes the cycle: `agentbound-gateway` → `agentbound-lifecycle` `record_budget`, made while a
+/// session operation is in flight. Bounding both directions at the same generous value stops the deadlock from being permanent but
+/// leaves it *truncated* rather than broken: lifecycle's `terminate` still waits out the whole bound before it can finish, which is
+/// exactly what T-6.9-005 measures. Breaking the cycle needs the bounds to be ASYMMETRIC, and this is the side to shorten, because
+/// its fail-closed path is cheap and correct: the gateway refuses the operation and closes admission, so no operation ever proceeds
+/// on unrecorded consumption. Lifecycle's own calls keep the generous bound, since a termination that gives up early would leave
+/// authority live. See ADR-0002 and the WP3.1 register.
+pub const BUDGET_PERSIST_MS: i64 = 2_000;
+
 /// Connect with a bounded receive/send timeout. Required for any call between two daemons that can each call the other: both
 /// `agentbound-lifecycle` and `agentbound-gateway` serve one request at a time, so a mutual call (lifecycle→gateway `release` while
 /// the gateway is in a lifecycle `record_budget`) would otherwise wedge both processes and every session with them. With a bound the

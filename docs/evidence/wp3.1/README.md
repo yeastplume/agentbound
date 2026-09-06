@@ -331,3 +331,38 @@ D-12 stays **WEAK**, and the honest statement is stronger than that: *the attrib
 met by this implementation*, because two of its three effect classes are not collected at all. This is the first finding in
 WP3.1 that a repair inside the work package cannot close, and it belongs in the go/no-go as a **narrow-or-defer** recommendation
 on R-AUD-2 rather than as a residual note.
+
+### The round-5 bound was truncating the deadlock, not breaking it
+
+Widening `CROSS_DAEMON_MS` to 60 s made the deadlock regression row fail — and the failure was the useful part. `T-6.9-005.no-deadlock`
+measures how long `terminate` takes while a session is issuing gateway operations, and it rose to **61 128 ms**: almost exactly the
+new bound. That is the signature of a cycle that is still forming and merely being timed out, not one that has been broken.
+Bounding both directions at the same value only converts a permanent hang into a long one, and widening the bound (which item 5
+showed was necessary, because 4 s was below the peer's legitimate service time) makes the hang longer.
+
+The cycle is broken by making the bounds **asymmetric**, and the choice of which side to shorten follows from which fail-closed
+path is cheap and correct:
+
+- `agentbound-gateway` → `agentbound-lifecycle` `record_budget` is now bounded at **2 s** (`wire::BUDGET_PERSIST_MS`). Its
+  fail-closed path costs nothing: the gateway refuses the operation and closes admission, so no operation ever proceeds on
+  unrecorded consumption.
+- Every other cross-daemon call keeps **60 s** (`wire::CROSS_DAEMON_MS`), because lifecycle's fail-closed path is expensive — a
+  termination that gave up early would leave authority live, which is the failure the whole design exists to prevent.
+
+With that, `terminate` under the same crossing returns in **2 124 ms** instead of 61 128 ms, and both daemons answer afterwards in
+30 ms. The row is now measuring the absence of a cycle rather than the length of a timeout.
+
+Two smaller regressions surfaced in the same run and are worth recording because both were assertions that had been passing for
+the wrong reason:
+
+- **D-03 was relying on a single-use approval.** Approval sequences are strictly monotonic per approver key and durable across
+  runs, so the fixed sequence the row used worked exactly once in the life of the store and thereafter the row's own setup was
+  rejected as `approval_replayed`. It now has its own approver key (`key:erin-d03`) whose sequence the driver advances past
+  whatever the store has already recorded — replaying one is a different row's job (T-6.6-002).
+- **T-6.8-012 slept for a fixed 2 s** waiting for the lifecycle daemon to restart and reconcile. `reconcile_on_start` scans every
+  live record, so that wait grows with the store, and the fixed sleep silently turned "reconciliation is slower now" into
+  "reconciliation did not happen". It now polls for `session.recovery_reconciled`.
+
+**Result after the protocol change** ([raw/run-06-idempotency.md](raw/run-06-idempotency.md)): **175 PASS, 3 WEAK, 4 RECORDED,
+0 FAIL; catalogue 115/121 PASS, 0 NOT-EXECUTED; run verdict PASS.** Adding a required member to the gateway protocol did not
+regress any row once these three were repaired.
