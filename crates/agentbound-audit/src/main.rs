@@ -7,7 +7,9 @@ use ab_common::sig::{object_digest, sha256_hex};
 use ab_common::wire;
 use std::io::Write;
 
-struct Audit { path: String, prev: String, seq: i64, seen: std::collections::HashSet<String>, capacity: i64, lost: u64, writers: Vec<u32> }
+struct Audit { path: String, prev: String, seq: i64, seen: std::collections::HashSet<String>, capacity: i64, lost: u64, writers: Vec<u32>,
+    /// per-session event budget (R-RES-2 `audit_capacity`): authorization_id → (installed capacity, events accepted, events lost)
+    sessions: std::collections::HashMap<String, (i64, i64, i64)> }
 
 impl Audit {
     fn open(path: &str, capacity: i64, writers: Vec<u32>) -> Audit {
@@ -19,10 +21,14 @@ impl Audit {
             if let Some(id) = ev.get("event_id").and_then(|x| x.as_str()) { seen.insert(id.to_string()); }
             let mut b = prev.as_bytes().to_vec(); b.extend(canonical(ev)); prev = sha256_hex(&b); seq = n;
         }
-        Audit { path: path.into(), prev, seq, seen, capacity, lost: 0, writers }
+        Audit { path: path.into(), prev, seq, seen, capacity, lost: 0, writers, sessions: std::collections::HashMap::new() }
     }
     fn append(&mut self, ev: &Value) -> Result<i64, &'static str> {
         if self.seq >= self.capacity { self.lost += 1; return Err("capacity"); }
+        // per-session bound: an event correlated to a reserved session counts against that session's installed capacity
+        if let Some(az) = ev.get("authorization_id").and_then(|x| x.as_str()) {
+            if let Some((cap, used, lost)) = self.sessions.get_mut(az) { if *used >= *cap { *lost += 1; return Err("session_capacity"); } *used += 1; }
+        }
         let mut b = self.prev.as_bytes().to_vec(); b.extend(canonical(ev)); let h = sha256_hex(&b);
         let row = Value::obj(vec![("event", ev.clone()), ("prev", Value::s(&self.prev)), ("seq", Value::Int(self.seq + 1))]);
         let mut line = canonical(&row); line.push(b'\n');
@@ -45,10 +51,17 @@ impl Audit {
                         if object_digest(&without) != id { wire::reply_err(wire::CLASS_INVALID, "event_id_mismatch", "") }
                         else if self.seen.contains(&id) { wire::reply_ok(Value::obj(vec![("accepted", Value::Bool(true)), ("duplicate", Value::Bool(true))])) }
                         else { match self.append(&ev) { Ok(seq) => { self.seen.insert(id); wire::reply_ok(Value::obj(vec![("accepted", Value::Bool(true)), ("seq", Value::Int(seq))])) }
-                            Err("capacity") => wire::reply_err("audit-loss", "capacity_exhausted", &format!("lost={}", self.lost)), Err(e) => wire::reply_err(wire::CLASS_UNAVAILABLE, e, "") } }
+                            Err("capacity") => wire::reply_err("audit-loss", "capacity_exhausted", &format!("lost={}", self.lost)),
+                            Err("session_capacity") => wire::reply_err("audit-loss", "session_capacity_exhausted", ev.get("authorization_id").and_then(|x| x.as_str()).unwrap_or("")),
+                            Err(e) => wire::reply_err(wire::CLASS_UNAVAILABLE, e, "") } }
                     }
                 }
             }
+            // constructor (root) reserves a session's event budget before commit and reads back what was installed
+            Ok(r) if r.op == "reserve" && conn.peer.uid == 0 => match (r.body.get("authorization_id").and_then(|x| x.as_str()), r.body.get("capacity").and_then(|x| x.as_int())) {
+                (Some(az), Some(c)) if c > 0 => { let inst = c.min(self.capacity - self.seq).max(0); if inst == 0 { wire::reply_err("audit-loss", "capacity_exhausted", "no headroom for a session budget") } else { self.sessions.insert(az.to_string(), (inst, 0, 0)); wire::reply_ok(Value::obj(vec![("authorization_id", Value::s(az)), ("installed", Value::Int(inst))])) } }
+                _ => wire::reply_err(wire::CLASS_INVALID, "body", "authorization_id, capacity") },
+            Ok(r) if r.op == "release" && conn.peer.uid == 0 => { let az = r.body.get("authorization_id").and_then(|x| x.as_str()).unwrap_or(""); let s = self.sessions.remove(az); wire::reply_ok(Value::obj(vec![("released", Value::Bool(s.is_some())), ("used", Value::Int(s.map(|x| x.1).unwrap_or(0))), ("lost", Value::Int(s.map(|x| x.2).unwrap_or(0)))])) }
             Ok(r) if r.op == "status" => wire::reply_ok(Value::obj(vec![("capacity", Value::Int(self.capacity)), ("head", Value::s(&self.prev)), ("lost", Value::Int(self.lost as i64)), ("seq", Value::Int(self.seq))])),
             Ok(r) if r.op == "query" => { // by authorization_id or launch_record_digest; CLI-facing
                 let (k, v) = if let Some(a) = r.body.get("authorization_id").and_then(|x| x.as_str()) { ("authorization_id", a) } else { ("launch_record_digest", r.body.get("launch_record_digest").and_then(|x| x.as_str()).unwrap_or("")) };

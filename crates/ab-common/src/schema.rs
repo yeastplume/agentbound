@@ -254,7 +254,11 @@ pub fn validate_binding(v: &Value) -> R<Binding<'_>> {
     for (i, g) in arr(v, "credential_grants", p, 32)?.iter().enumerate() { closed(g, &format!("binding.credential_grants[{i}]"), &["grant_intent_id", "issued_handle"], &[])?; }
     let rp = obj(v.get("resource_projection").unwrap(), "binding.resource_projection")?; closed(rp, "binding.resource_projection", &RESOURCE_CLASSES, &[])?;
     for c in RESOURCE_CLASSES { let x = rp.get(c).unwrap(); let path = format!("binding.resource_projection.{c}");
-        if x.get("status").and_then(|s| s.as_str()) == Some("absent") { closed(x, &path, &["enforcement_owner", "status"], &[])?; } else { closed(x, &path, &["enforcement_owner", "installed_value", "unit"], &[])?; int(x, "installed_value", &path)?; } }
+        if x.get("status").and_then(|s| s.as_str()) == Some("absent") { closed(x, &path, &["enforcement_owner", "status"], &[])?; }
+        // `installed_value` MUST be a kernel read-back by the constructor (R-RES-2, WP3.1). A class enforced by another component
+        // (policy, audit, gateway) is recorded as `declared_by_owner`: the constructor attests the declaration, not an installation.
+        else if x.get("declared_by_owner").is_some() { closed(x, &path, &["declared_by_owner", "enforcement_owner", "unit"], &[])?; int(x, "declared_by_owner", &path)?; if ["cgroup", "rlimit", "session-image"].contains(&x.get("enforcement_owner").and_then(|o| o.as_str()).unwrap_or("")) { return Err(e("declared-not-installed", &path, "constructor-owned class must carry a kernel read-back installed_value")); } }
+        else { closed(x, &path, &["enforcement_owner", "installed_value", "unit"], &[])?; int(x, "installed_value", &path)?; } }
     let cs = obj(v.get("constructor").unwrap(), "binding.constructor")?; closed(cs, "binding.constructor", &["agentbound_launch_version_digest", "invocation_profile_digest", "key_id"], &[])?;
     Ok(Binding { v, authorization_id, manifest_digest, allocation_id: str_(ei, "allocation_id", "binding.execution_identity")?, uid, gids,
         scope_id: str_(hb, "scope_id", "binding.host_binding")?, pid_namespace_id: str_(hb, "pid_namespace_id", "binding.host_binding")?, host_id: str_(hb, "host_id", "binding.host_binding")?, boot_id: str_(hb, "boot_id", "binding.host_binding")? })

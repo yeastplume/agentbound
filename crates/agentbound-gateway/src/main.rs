@@ -15,7 +15,11 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 pub struct Config { pub lifecycle_sock: String, pub socket_dir: String, pub catalogue: Value, pub git_root: String, pub credential: String, pub quarantine: String, pub audit: ab_common::audit::Sink, pub max_conns_per_session: usize }
 
 /// A projected session: its listener, admission flag and grants (loaded from the committed record).
-pub struct Projection { pub authorization_id: String, pub allocation_id: String, pub uid: u32, pub gid: u32, pub path: String, pub listener: OwnedFd, pub lrd: Option<String>, pub admission: bool, pub record: Option<Value>, pub ops: Vec<Value>, pub bytes_used: u64, pub op_count: u64 }
+pub struct Projection { pub authorization_id: String, pub allocation_id: String, pub uid: u32, pub gid: u32, pub path: String, pub listener: OwnedFd, pub lrd: Option<String>, pub admission: bool, pub record: Option<Value>, pub ops: Vec<Value>, pub bytes_used: u64, pub op_count: u64,
+    /// per-operation-id consumption (operations admitted, payload bytes accepted): the budget state that R-GW-7 enforces. It is
+    /// persisted to the lifecycle record store after every admitted operation and restored on reconstruct, so a gateway restart
+    /// can never reset a session's budget (WP3.1 item 3).
+    pub used: std::collections::BTreeMap<String, (u64, u64)> }
 
 pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn>, pub inherited: Vec<(String, OwnedFd)> }
 
@@ -29,7 +33,7 @@ pub fn requirement_for(rule: &str) -> &'static str {
         // admission state of the launch record (D4: revocation, deny_admission)
         "admission_closed" | "unknown_record" => "R-GW-2",
         // resource bounds (D1/R-GW-7)
-        "budget_bytes" | "budget_operations" | "connection_limit" | "oversize_packet" | "payload_overrun" => "R-GW-7",
+        "budget_bytes" | "budget_operations" | "budget_persist" | "connection_limit" | "oversize_packet" | "payload_overrun" => "R-GW-7",
         // upstream mediation: bundle import, object budget, push refusal (D3/R-GW-5)
         "bundle_invalid" | "bundle_fetch" | "fsck" | "tip_mismatch" | "budget_objects" | "upstream_rejected" | "payload_digest" | "payload_missing" => "R-GW-5",
         // typed-envelope validity: the session spoke something that is not the protocol (R-GW-1)
@@ -89,7 +93,7 @@ impl Gateway {
             if g(&["authorization_manifest", "gateway", "channel_topology"]) != "local-socket" { continue; }
             let (az, aid) = (g(&["authorization_manifest", "authorization_id"]), g(&["launch_binding", "execution_identity", "allocation_id"]));
             let uid = b.get("launch_binding").and_then(|x| x.get("execution_identity")).and_then(|x| x.get("uid")).and_then(|x| x.as_int()).unwrap_or(0) as u32;
-            if let Ok(p) = self.project(&az, &aid, uid, uid) { let pr = self.by_alloc.get_mut(&aid).unwrap(); pr.lrd = Some(lrd.to_string()); pr.record = Some(b.clone()); pr.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default(); pr.admission = st == "active" || st == "degraded"; let _ = p; }
+            if let Ok(p) = self.project(&az, &aid, uid, uid) { let used = Self::budget_from_record(&rec); let pr = self.by_alloc.get_mut(&aid).unwrap(); pr.lrd = Some(lrd.to_string()); pr.record = Some(b.clone()); pr.used = used.clone(); pr.op_count = used.values().map(|u| u.0).sum(); pr.bytes_used = used.values().map(|u| u.1).sum(); pr.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default(); pr.admission = st == "active" || st == "degraded"; let _ = p; }
         }
         let stale: Vec<String> = self.inherited.drain(..).map(|(n, _)| n).collect();
         for n in &stale { wire::fdstore_remove(n); let _ = std::fs::remove_file(format!("{}/{n}.sock", self.cfg.socket_dir)); }
@@ -103,7 +107,7 @@ impl Gateway {
         // allocation suffix); projection state itself is rebuilt from the launch-record store, never from the fd.
         if let Some(pos) = self.inherited.iter().position(|(n, _)| *n == suffix) {
             let (_, listener) = self.inherited.remove(pos);
-            self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0 });
+            self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0, used: Default::default() });
             return Ok(path);
         }
         let _ = std::fs::remove_file(&path);
@@ -112,7 +116,7 @@ impl Gateway {
         // one session; the establishment check (auth.rs) refuses any peer UID other than the allocation's.
         let listener = wire::listen(&path, 0o666).map_err(|e| e.to_string())?;
         if let Err(e) = wire::fdstore_push(&suffix, listener.as_raw_fd()) { eprintln!("gateway: fd store unavailable ({e}); a restart will orphan this session's socket node"); }
-        self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0 });
+        self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0, used: Default::default() });
         Ok(path)
     }
     /// D7 item 8: audit loss follows the manifest's `audit.loss_behaviour`. The gateway cannot stop a session itself; on `quarantine`
@@ -155,6 +159,20 @@ impl Gateway {
         };
         let _ = c.send(&reply);
     }
+    /// The latest `budget` record for a session, as lifecycle returns it with the binding: {operation_id: {operations, bytes}}.
+    fn budget_from_record(rec: &Value) -> std::collections::BTreeMap<String, (u64, u64)> {
+        rec.get("budget").and_then(|b| b.as_obj()).map(|m| m.iter().map(|(k, v)| (k.0.clone(), (v.get("operations").and_then(|x| x.as_int()).unwrap_or(0) as u64, v.get("bytes").and_then(|x| x.as_int()).unwrap_or(0) as u64))).collect()).unwrap_or_default()
+    }
+    /// Persist a projection's budget consumption to the lifecycle record store (durable, hash-chained). Failure to persist closes
+    /// admission: an operation whose consumption cannot be recorded must not be followed by another.
+    pub fn persist_budget(&mut self, aid: &str) -> bool {
+        let Some(p) = self.by_alloc.get(aid) else { return false };
+        let Some(lrd) = p.lrd.clone() else { return true };
+        let body = Value::obj(p.used.iter().map(|(k, (o, b))| (k.as_str(), Value::obj(vec![("bytes", Value::Int(*b as i64)), ("operations", Value::Int(*o as i64))]))).collect());
+        let ok = self.lc("record_budget", Value::obj(vec![("launch_record_digest", Value::s(&lrd)), ("budget", body)])).is_some();
+        if !ok { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.admission_denied", "ok", &cr, Value::obj(vec![("reason", Value::s("budget_persist_failed"))])); self.by_alloc.get_mut(aid).unwrap().admission = false; }
+        ok
+    }
     fn by_lrd_mut(&mut self, lrd: &str) -> Option<&mut Projection> { self.by_alloc.values_mut().find(|p| p.lrd.as_deref() == Some(lrd)) }
     /// Grants exist only as the committed record says (D4.7): fetch it from lifecycle, never from the caller.
     fn activate(&mut self, lrd: &str) -> Value {
@@ -163,6 +181,7 @@ impl Gateway {
         let aid = b.get("launch_binding").and_then(|x| x.get("execution_identity")).and_then(|x| x.get("allocation_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
         let Some(p) = self.by_alloc.get_mut(&aid) else { return wire::reply_err(wire::CLASS_INVALID, "not_projected", &aid) };
         p.lrd = Some(lrd.to_string()); p.record = Some(b.clone()); p.admission = true;
+        p.used = Self::budget_from_record(&rec); p.op_count = p.used.values().map(|u| u.0).sum(); p.bytes_used = p.used.values().map(|u| u.1).sum();
         p.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default();
         let (n, cr) = (p.ops.len(), Self::corr(p));
         self.emit("gateway.grants_loaded", "ok", &cr, Value::obj(vec![("operations", Value::Int(n as i64)), ("source", Value::s("launch-record-store"))]));
@@ -221,7 +240,7 @@ mod tests {
         for r in ["process_mismatch", "scope_mismatch", "uid_mismatch", "credential_count", "peer_gone", "one_connection", "descriptor_transfer",
                   "operation_not_granted", "scope_repository", "args_schema", "ref_tail_grammar", "ref_tail_marker", "ref_tail_charset",
                   "ref_tail_empty_or_long", "ref_tail_names_ref", "tip_grammar", "admission_closed", "unknown_record", "budget_bytes",
-                  "budget_operations", "connection_limit", "oversize_packet", "payload_overrun", "bundle_invalid", "bundle_fetch", "fsck",
+                  "budget_operations", "budget_persist", "connection_limit", "oversize_packet", "payload_overrun", "bundle_invalid", "bundle_fetch", "fsck",
                   "tip_mismatch", "budget_objects", "upstream_rejected", "payload_digest", "payload_missing", "parse", "envelope", "version", "send",
                   "unknown_op", "peer_not_permitted", "not_projected"] {
             assert_ne!(super::requirement_for(r), "R-GW-0-unmapped", "rule {r} is not mapped to a requirement");

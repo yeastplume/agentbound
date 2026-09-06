@@ -198,6 +198,10 @@ impl Service {
         // §5 step 6: release gateway grant records and indexed connections; the gateway MUST acknowledge zero connections
         // before identity release. A projection that was never made (topology none) releases as `released:false, remaining:0`.
         let gw = gateway_call(&self.cfg.gateway_sock, "release", lrd, &format!("{lrd}/release/{}", monotonic_ns()));
+        // release the session's audit event budget (R-RES-2 audit_capacity) — after the gateway, before this record's final events
+        if let Some(az) = self.sessions.get(lrd).map(|s| s.authorization_id.clone()) {
+            if let Ok(c) = wire::connect(&std::env::var("AGENTBOUND_AUDIT_SOCKET").unwrap_or_else(|_| "/run/agentbound/audit.sock".into())) { let _ = c.call(&wire::request("release", &format!("{lrd}/audit-release"), Value::obj(vec![("authorization_id", Value::s(&az))]))); }
+        }
         let gw_remaining = gw.as_ref().and_then(|b| b.get("remaining")).and_then(|x| x.as_int());
         let gw_ok = gw_remaining == Some(0) || (gw.is_none() && self.sessions.get(lrd).map(|s| s.topology != "local-socket").unwrap_or(true));
         let grants = match &gw { Some(b) => Value::obj(vec![("connections_closed", b.get("connections_closed").cloned().unwrap_or(Value::Int(0))), ("released", b.get("released").cloned().unwrap_or(Value::Bool(false))), ("remaining", b.get("remaining").cloned().unwrap_or(Value::Null))]), None => Value::s("gateway unreachable") };

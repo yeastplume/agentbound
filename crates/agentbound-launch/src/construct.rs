@@ -34,16 +34,19 @@ fn call(sock: &str, op: &str, idem: &str, body: Value, fds: &[RawFd], step: u32)
 
 /// D-Bus `StartTransientUnit` for a delegated scope around a placeholder, via busctl (libsystemd binding is a WP3 item).
 /// `TimeoutStopUSec` is only settable here (WP1 finding); PIDs/Memory/CPU limits are installed as scope properties.
-fn start_scope(name: &str, pids: Option<i64>, mem: Option<i64>, cpu_milli: Option<i64>) -> Result<(String, i32), String> {
+fn start_scope(name: &str, pids: Option<i64>, mem: Option<i64>, cpu_milli: Option<i64>, io_bps: Option<(i64, String)>) -> Result<(String, i32), String> {
     // a holder process keeps the scope alive until our init is cloned into it; it is killed after clone3
     let holder = unsafe { libc::fork() };
     if holder == 0 { unsafe { libc::setsid(); loop { libc::pause(); } } }
     if holder < 0 { return Err("fork holder".into()); }
     let mut props = vec![format!("Delegate b true"), format!("TimeoutStopUSec t 10000000"), format!("PIDs au 1 {holder}"), format!("CollectMode s inactive-or-failed")];
     if let Some(p) = pids { props.push(format!("TasksMax t {p}")); } if let Some(m) = mem { props.push(format!("MemoryMax t {m}")); } if let Some(c) = cpu_milli { props.push(format!("CPUQuotaPerSecUSec t {}", c * 1000)); }
+    // io.max on the block device backing the session's writable storage (R-RES-2): systemd resolves the path to MAJ:MIN
+    if let Some((b, ref dev)) = io_bps { props.push(format!("IOReadBandwidthMax a(st) 1 {dev} {b}")); props.push(format!("IOWriteBandwidthMax a(st) 1 {dev} {b}")); }
     // busctl signature: ssa(sv)a(sa(sv))
     let mut args = vec!["call".into(), "org.freedesktop.systemd1".into(), "/org/freedesktop/systemd1".into(), "org.freedesktop.systemd1.Manager".into(), "StartTransientUnit".into(), "ssa(sv)a(sa(sv))".into(), format!("{name}.scope"), "fail".into(), props.len().to_string()];
     for p in &props { let mut it = p.splitn(3, ' '); args.push(it.next().unwrap().into()); args.push(it.next().unwrap().into()); for v in it.next().unwrap().split(' ') { args.push(v.into()); } }
+    // (`a(st) 1 <path> <bytes>` splits on spaces into exactly the busctl tokens: count, string, uint64)
     args.push("0".into());
     let out = std::process::Command::new("busctl").args(&args).output().map_err(|e| e.to_string())?;
     if !out.status.success() { unsafe { libc::kill(holder, libc::SIGKILL); libc::waitpid(holder, std::ptr::null_mut(), 0); } return Err(String::from_utf8_lossy(&out.stderr).trim().to_string()); }
@@ -89,7 +92,9 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     led.allocation_id = Some(aid.clone()); led.state_seq = alloc.get("state_seq").and_then(|x| x.as_int()).unwrap_or(1); led.note(0, "reserve_identity", &format!("{aid} uid={uid}"));
     // transient delegated scope
     let scope_name = format!("agentbound-{}", aid.trim_start_matches("allocation:"));
-    let (cgpath, holder) = start_scope(&scope_name, lv("pids"), lv("memory_bytes"), lv("cpu")).map_err(|e| Fail { step: 0, rule: "scope_start", detail: e })?;
+    // io_bandwidth applies to the device backing the workspace roots (the only persistent writable storage a session reaches)
+    let io_dev = m.mount_intents.iter().filter_map(|mi| cfg.catalogue.get("mount_sources").and_then(|s| s.get(mi.catalogue_id)).and_then(|s| s.get("base")).and_then(|b| b.as_str())).next().unwrap_or("/var/lib/agentbound").to_string();
+    let (cgpath, holder) = start_scope(&scope_name, lv("pids"), lv("memory_bytes"), lv("cpu"), lv("io_bandwidth").map(|b| (b, io_dev.clone()))).map_err(|e| Fail { step: 0, rule: "scope_start", detail: e })?;
     led.scope = Some(format!("{scope_name}.scope")); led.note(0, "scope", &cgpath);
     let cgfd = unsafe { libc::open(c(&format!("/sys/fs/cgroup/{cgpath}")).as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) };
     if cgfd < 0 { return fail(0, "scope_cgroup_open", errno().to_string()); }
@@ -157,18 +162,20 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     let pid = clone3(&mut ca).map_err(|e| Fail { step: 1, rule: "clone3", detail: format!("errno={e}") })?;
     if pid == 0 {
         unsafe { libc::close(sp[0]); libc::close(bp[1]); }
-        crate::child::run(ChildPlan { rootfs_fd: rootfs, mounts, uid, gids: gids.clone(), argv, env: envv, status_w: sp[1], barrier_r: bp[0], keep_fds: vec![0, 1, 2], tmpfs_size: "16m".into(), workspace_uid_chown: true,
+        crate::child::run(ChildPlan { rootfs_fd: rootfs, mounts, uid, gids: gids.clone(), argv, env: envv, status_w: sp[1], barrier_r: bp[0], keep_fds: vec![0, 1, 2], tmpfs_size: lv("disk_bytes").map(|b| b.to_string()).unwrap_or_else(|| "64m".into()), tmpfs_inodes: lv("disk_inodes").map(|n| n.to_string()), workspace_uid_chown: true,
             nproc_limit: lv("pids").map(|n| n as u64), nofile_limit: lv("file_descriptors").map(|n| n as u64), stdio: (devnull, console) });
     }
     unsafe { libc::close(sp[1]); libc::close(bp[0]); libc::kill(holder, libc::SIGKILL); libc::waitpid(holder, std::ptr::null_mut(), 0); }
     led.child_pid = pid; led.child_pidfd = Some(unsafe { OwnedFd::from_raw_fd(pidfd) }); led.note(1, "clone3", &format!("pid={pid}"));
     let pidns = std::fs::read_link(format!("/proc/{pid}/ns/pid")).map(|p| p.to_string_lossy().trim_start_matches("pid:[").trim_end_matches(']').to_string()).unwrap_or_default();
     // ---- steps 2, 4, 5, 6, 7 reported by the child; the parent verifies each before proceeding ----
-    let mut fdlist = String::new();
+    let mut fdlist = String::new(); let mut observed: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for expect in [2u32, 4, 5, 6, 7] {
         loop {
             let line = read_line_fd(sp[0], 15_000).ok_or(Fail { step: expect, rule: "child_silent", detail: "no status within bound".into() })?;
             if let Some(rest) = line.strip_prefix("fds ") { fdlist = rest.to_string(); continue; }
+            // `obs <class> <value>`: a limit the child read back from the kernel after installing it (statfs / getrlimit)
+            if let Some(rest) = line.strip_prefix("obs ") { let mut it = rest.split_whitespace(); if let (Some(k), Some(v)) = (it.next(), it.next().and_then(|v| v.parse::<i64>().ok())) { observed.insert(k.to_string(), v); } continue; }
             if let Some(rest) = line.strip_prefix("sub ") { led.note(expect, "sub", rest); continue; }
             let parts: Vec<&str> = line.splitn(4, ' ').collect();
             if parts.len() < 3 || parts[0] != "step" || parts[1].parse::<u32>().ok() != Some(expect) { return fail(expect, "child_protocol", line); }
@@ -183,9 +190,33 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     // loginuid for kernel audit correlation (writable on this baseline per WP1)
     let _ = std::fs::write(format!("/proc/{pid}/loginuid"), uid.to_string());
     if fault("pre-commit-crash") { return fail(7, "fault_injected", "pre-commit-crash"); }
+    // ---- step 7b: read every cgroup-owned limit back from the kernel (never from the manifest) ----
+    let cg = |f: &str| std::fs::read_to_string(format!("/sys/fs/cgroup/{}/{f}", cgpath.trim_start_matches('/'))).unwrap_or_default();
+    let first_num = |s: &str| s.split(|c: char| !c.is_ascii_digit()).find(|t| !t.is_empty()).and_then(|t| t.parse::<i64>().ok());
+    if let Some(v) = first_num(&cg("pids.max")) { observed.insert("pids".into(), v); }
+    if let Some(v) = first_num(&cg("memory.max")) { observed.insert("memory_bytes".into(), v); }
+    if let Some(q) = cg("cpu.max").split_whitespace().next().and_then(|q| q.parse::<i64>().ok()) { let period = cg("cpu.max").split_whitespace().nth(1).and_then(|p| p.parse::<i64>().ok()).unwrap_or(100_000); observed.insert("cpu".into(), q * 1000 / period); }
+    if let Some(w) = cg("io.max").lines().next().and_then(|l| l.split_whitespace().find_map(|t| t.strip_prefix("wbps=")).and_then(|v| v.parse::<i64>().ok())) { observed.insert("io_bandwidth".into(), w); }
+    // classes owned by another component are installed *by that component* and read back over its authenticated socket:
+    //   audit_capacity  — the receiver reserves a per-session event budget and reports the figure it installed (may be lower than asked)
+    //   delegation_fanout — enforced by policy: Phase 1 has no delegation operation, so the installed fan-out is 0 by construction and
+    //                       is attested by the policy service (the catalogue value must also be 0; anything else is unsupported)
+    if let Some(cap) = lv("audit_capacity") {
+        let r = call("/run/agentbound/audit.sock", "reserve", &format!("{authorization_id}:audit"), Value::obj(vec![("authorization_id", Value::s(authorization_id)), ("capacity", Value::Int(cap))]), &[], 7)?;
+        if let Some(i) = r.get("installed").and_then(|x| x.as_int()) { observed.insert("audit_capacity".into(), i); }
+    }
+    if let Some(f) = lv("delegation_fanout") { if f != 0 { return fail(7, "unsupported_limit", "delegation_fanout > 0 has no enforcement owner in Phase 1".to_string()); } observed.insert("delegation_fanout".into(), 0); }
+    // anything else that is `enforced` but has no installer here is recorded `declared_by_owner` and is NOT an installation claim.
     // ---- step 8: assemble, sign, and commit the binding ----
+    // R-RES-2: an `enforced` class the constructor owns (or that must be visible in the session) with no kernel read-back is a
+    // construction failure — the binding MUST NOT attest an installation that was not observed.
+    const KERNEL_OBSERVED: [&str; 7] = ["pids", "memory_bytes", "cpu", "io_bandwidth", "file_descriptors", "disk_bytes", "disk_inodes"];
+    for cls in KERNEL_OBSERVED { if lv(cls).is_some() && !observed.contains_key(cls) { return fail(7, "limit_not_observed", format!("{cls} declared enforced but no kernel read-back")); } }
     let rp = Value::obj(schema::RESOURCE_CLASSES.iter().map(|cls| { let l = lim.iter().find(|l| l.class == *cls).unwrap();
-        (*cls, if l.enforced { Value::obj(vec![("enforcement_owner", Value::s(l.owner)), ("installed_value", Value::Int(l.limit)), ("unit", Value::s(l.unit))]) } else { Value::obj(vec![("enforcement_owner", Value::s("none")), ("status", Value::s("absent"))]) }) }).collect());
+        (*cls, if !l.enforced { Value::obj(vec![("enforcement_owner", Value::s("none")), ("status", Value::s("absent"))]) }
+               else if let Some(v) = observed.get(*cls) { Value::obj(vec![("enforcement_owner", Value::s(l.owner)), ("installed_value", Value::Int(*v)), ("unit", Value::s(l.unit))]) }
+               else { Value::obj(vec![("declared_by_owner", Value::Int(l.limit)), ("enforcement_owner", Value::s(l.owner)), ("unit", Value::s(l.unit))]) }) }).collect());
+    for (k, v) in observed.iter() { led.note(7, "limit_observed", &format!("{k}={v}")); }
     let binding = Value::obj(vec![
         ("authorization_id", Value::s(authorization_id)), ("authorization_manifest_digest", Value::s(&mdigest)),
         ("constructor", Value::obj(vec![("agentbound_launch_version_digest", Value::s(&cfg.self_digest)), ("invocation_profile_digest", Value::s(&profile_digest)), ("key_id", Value::s(&cfg.signer.key_id))])),

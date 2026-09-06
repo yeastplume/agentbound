@@ -57,13 +57,21 @@ pub fn handle(gw: &mut Gateway, i: usize, pk: wire::Packet) -> Result<(), Deny> 
     let granted = gw.by_alloc[&aid].ops.iter().any(|o| o.get("operation_id").and_then(|x| x.as_str()) == Some(&opid) && o.get("operation").and_then(|x| x.as_str()) == Some(&op));
     if !granted { return Err((wire::CLASS_UNAUTHORIZED, "operation_not_granted", format!("{opid} {op}"), false)); }
     let budgets = gw.by_alloc[&aid].ops.iter().find(|o| o.get("operation_id").and_then(|x| x.as_str()) == Some(&opid)).and_then(|o| o.get("budgets").cloned()).unwrap_or(Value::obj(vec![]));
+    // R-GW-7 budgets, per operation id: `operations` (count), `bytes_per_operation` (largest single payload), `bytes` (total payload
+    // across the session). All three are checked BEFORE the operation is counted, from durable counters (see Gateway::persist_budget).
     let per_op = budgets.get("bytes_per_operation").and_then(|x| x.as_int()).unwrap_or(8 << 20) as usize;
     let max_ops = budgets.get("operations").and_then(|x| x.as_int()).unwrap_or(i64::MAX) as u64;
-    if gw.by_alloc[&aid].op_count >= max_ops { return Err((wire::CLASS_UNAUTHORIZED, "budget_operations", format!("{max_ops}"), false)); }
-    gw.by_alloc.get_mut(&aid).unwrap().op_count += 1; gw.conns[i].ops += 1;
-    let op_seq = gw.by_alloc[&aid].op_count as i64;
+    let max_bytes = budgets.get("bytes").and_then(|x| x.as_int()).map(|b| b as u64);
+    let (used_ops, used_bytes) = gw.by_alloc[&aid].used.get(&opid).copied().unwrap_or((0, 0));
+    if used_ops >= max_ops { return Err((wire::CLASS_UNAUTHORIZED, "budget_operations", format!("{used_ops} of {max_ops} used"), false)); }
     let plen = v.get("payload_len").and_then(|x| x.as_int()).unwrap_or(0) as usize;
-    if plen > per_op { return Err((wire::CLASS_UNAUTHORIZED, "budget_bytes", format!("{plen} > {per_op}"), false)); }
+    if plen > per_op { return Err((wire::CLASS_UNAUTHORIZED, "budget_bytes", format!("{plen} > {per_op} per operation"), false)); }
+    if let Some(mb) = max_bytes { if used_bytes + plen as u64 > mb { return Err((wire::CLASS_UNAUTHORIZED, "budget_bytes", format!("{used_bytes}+{plen} > {mb} total"), false)); } }
+    { let p = gw.by_alloc.get_mut(&aid).unwrap(); p.op_count += 1; let e = p.used.entry(opid.clone()).or_insert((0, 0)); e.0 += 1; e.1 += plen as u64; p.bytes_used += plen as u64; }
+    gw.conns[i].ops += 1;
+    // consumption is durable before the operation proceeds; if it cannot be recorded the operation is refused and admission closes
+    if !gw.persist_budget(&aid) { return Err((wire::CLASS_UNAVAILABLE, "budget_persist", "consumption could not be recorded".into(), false)); }
+    let op_seq = gw.by_alloc[&aid].op_count as i64;
     if plen > 0 {
         let Some(sha) = s("payload_sha256") else { return Err((wire::CLASS_INVALID, "envelope", "payload_sha256".into(), false)) };
         gw.conns[i].pending = Some(Pending { op: v.clone(), op_seq, expect_len: plen, sha, buf: Vec::with_capacity(plen) });
@@ -78,7 +86,6 @@ fn execute(gw: &mut Gateway, i: usize, op: Value, op_seq: i64, payload: Option<V
     let name = op.get("operation").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let inst = gw.conns[i].inst.clone(); let bytes = payload.as_ref().map(|p| p.len()).unwrap_or(0);
     gw.emit("gateway.operation_admitted", "ok", &cr, Value::obj(vec![("credential_pid", Value::Int(inst.pid as i64)), ("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("payload_bytes", Value::Int(bytes as i64)), ("pidfs_inode", Value::Int(inst.pidfs_ino as i64))]));
-    if let Some(p) = gw.by_alloc.get_mut(&aid) { p.bytes_used += bytes as u64; }
     let trace = gw.by_alloc[&aid].record.as_ref().and_then(|b| b.get("authorization_manifest")).and_then(|b| b.get("session_trace")).and_then(|b| b.get("trace_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let session_id = gw.by_alloc[&aid].record.as_ref().and_then(|b| b.get("authorization_manifest")).and_then(|b| b.get("session_trace")).and_then(|b| b.get("session_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let res = adapters::run(gw, &aid, &name, &op, payload.as_deref(), &session_id, &trace);

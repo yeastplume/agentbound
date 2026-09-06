@@ -27,6 +27,13 @@ fn main() {
         println!("rlimit_cur={} rlimit_max={} opened={opened} errno={errno}", rl.rlim_cur, rl.rlim_max);
         return;
     }
+    if a.get(1).map(String::as_str) == Some("--memhog") { // T-6.9-003: touch <MiB> of anonymous memory; the cgroup must refuse
+        let mib: usize = a.get(2).and_then(|x| x.parse().ok()).unwrap_or(512);
+        let mut held: Vec<Vec<u8>> = Vec::new();
+        for i in 0..mib { let p = unsafe { libc::malloc(1 << 20) } as *mut u8; if p.is_null() { println!("touched_mib={i} errno=12"); std::process::exit(12); }
+            unsafe { for off in (0..(1 << 20)).step_by(4096) { *p.add(off) = 1; } held.push(Vec::from_raw_parts(p, 1 << 20, 1 << 20)); } }
+        println!("touched_mib={mib} errno=0"); return;
+    }
     if a.get(1).map(String::as_str) == Some("--fds") { // T-6.3-003: enumerate inherited descriptors
         for e in std::fs::read_dir("/proc/self/fd").unwrap().flatten() { let n = e.file_name().to_string_lossy().to_string(); if let Ok(t) = std::fs::read_link(e.path()) { println!("{n} {}", t.display()); } }
         return;

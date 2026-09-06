@@ -14,7 +14,7 @@ pub struct ChildPlan {
     pub argv: Vec<String>, pub env: Vec<String>,
     pub status_w: RawFd, pub barrier_r: RawFd,
     pub keep_fds: Vec<RawFd>,           // stdin/stdout/stderr (0,1,2) per descriptor allowlist
-    pub tmpfs_size: String, pub workspace_uid_chown: bool,
+    pub tmpfs_size: String, pub tmpfs_inodes: Option<String>, pub workspace_uid_chown: bool,
     pub nproc_limit: Option<u64>, pub nofile_limit: Option<u64>,
     pub stdio: (RawFd, RawFd),                // (stdin source, console sink) dup'd onto 0 and 1/2 so the harness pipe is never inherited
 }
@@ -31,7 +31,8 @@ pub fn run(p: ChildPlan) -> ! {
     step!(w, 2, if unsafe { libc::mount(c("none").as_ptr(), c("/").as_ptr(), std::ptr::null(), libc::MS_REC | libc::MS_PRIVATE, std::ptr::null()) } == 0 { Ok(()) } else { Err(errno()) });
     // 4 — tmpfs root; image and intents attached by mount fd; pivot; detach old root
     step!(w, 4, (|| -> Result<(), i32> {
-        let root = fsmount("tmpfs", &[("size", &p.tmpfs_size), ("mode", "0755")], &[], MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV)?;
+        // the root tmpfs is root-owned and unwritable by the session: it only carries mount points
+        let root = fsmount("tmpfs", &[("size", "16m"), ("mode", "0755")], &[], MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV)?;
         let stage = "/tmp"; // staging directory exists on any Debian host; becomes invisible after pivot
         move_mount(root, libc::AT_FDCWD, stage)?; unsafe { libc::close(root) };
         let sd = unsafe { libc::open(c(stage).as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) }; if sd < 0 { return Err(errno()); }
@@ -53,7 +54,9 @@ pub fn run(p: ChildPlan) -> ! {
             let tfd = unsafe { libc::openat(sd, c(&format!("dev/{n}")).as_ptr(), libc::O_CREAT | libc::O_WRONLY | libc::O_CLOEXEC, 0o666) }; if tfd < 0 { return Err(errno()); } unsafe { libc::close(tfd) };
             let t = open_tree_clone(hfd)?; unsafe { libc::close(hfd) }; move_mount(t, sd, &format!("dev/{n}"))?; unsafe { libc::close(t) };
         }
-        let tmp = fsmount("tmpfs", &[("size", "64m"), ("mode", "1777")], &[], MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV)?; move_mount(tmp, sd, "tmp")?; unsafe { libc::close(tmp) };
+        // /tmp is the session's bounded volatile storage (R-RES-2 disk_bytes / disk_inodes: manifest values, read back below)
+        let mut topts: Vec<(&str, &str)> = vec![("size", &p.tmpfs_size), ("mode", "1777")]; if let Some(n) = p.tmpfs_inodes.as_deref() { topts.push(("nr_inodes", n)); }
+        let tmp = fsmount("tmpfs", &topts, &[], MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV)?; move_mount(tmp, sd, "tmp")?; unsafe { libc::close(tmp) };
         // /bin,/lib,... resolve through the image: symlinks in the tmpfs root pointing into /image
         for (link, target) in [("bin", "image/bin"), ("usr", "image/usr"), ("lib", "image/lib"), ("lib64", "image/lib64"), ("sbin", "image/sbin")] { let _ = unsafe { libc::symlinkat(c(target).as_ptr(), sd, c(link).as_ptr()) }; }
         if unsafe { libc::chdir(c(stage).as_ptr()) } != 0 { return Err(errno()); }
@@ -79,6 +82,9 @@ pub fn run(p: ChildPlan) -> ! {
         let e = |tag: &str| -> i32 { write_all_fd(w, format!("sub {tag}\n").as_bytes()); errno() };
         if let Some(n) = p.nproc_limit { let l = libc::rlimit { rlim_cur: n, rlim_max: n }; if unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &l) } != 0 { return Err(e("rlimit_nproc")); } }
         if let Some(n) = p.nofile_limit { let l = libc::rlimit { rlim_cur: n, rlim_max: n }; if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &l) } != 0 { return Err(e("rlimit_nofile")); } }
+        // read-back for the binding (R-RES-2): what the kernel now enforces, not what we asked for
+        let mut rl = libc::rlimit { rlim_cur: 0, rlim_max: 0 }; if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) } == 0 { write_all_fd(w, format!("obs file_descriptors {}\n", rl.rlim_cur).as_bytes()); }
+        let mut sf: libc::statfs = unsafe { std::mem::zeroed() }; if unsafe { libc::statfs(c("/tmp").as_ptr(), &mut sf) } == 0 { write_all_fd(w, format!("obs disk_bytes {}\nobs disk_inodes {}\n", sf.f_blocks as u64 * sf.f_frsize as u64, sf.f_files).as_bytes()); }
         // bounding and ambient sets need CAP_SETPCAP: drop them while still root; the UID change then clears the rest
         drop_caps().map_err(|_| e("drop_caps"))?;
         let gids: Vec<libc::gid_t> = p.gids.iter().map(|g| *g as libc::gid_t).collect();

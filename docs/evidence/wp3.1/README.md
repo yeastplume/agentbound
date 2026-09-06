@@ -64,3 +64,44 @@ Construction: an in-scope session-uid client establishes a connection and exits 
 **Outcome:** the gateway polls each connection's peer pidfd, so the establisher's exit **closes the connection before the recycled process exists**. The holder never reaches the packet check. The row asserts that composite defence — connection closed on establisher exit, and no operation admitted for that pid afterwards — and says so in its evidence. The packet-level inode comparison is now a pure function `session::instance_mismatch` with unit tests, including `recycled_pid_rejected`: identical pid, uid, cgroup **and start time**, differing only in pidfs inode. That is the same-tick reuse case the catalogue asks for, covered deterministically rather than by a corpus grep. The row is no longer WEAK.
 
 **Result** ([raw/run-03-credential-and-pid-reuse.md](raw/run-03-credential-and-pid-reuse.md)): 130 PASS, 3 WEAK, 4 RECORDED, 0 FAIL; catalogue 85/121 PASS, 30 NOT-EXECUTED; run verdict FAIL. Remaining WEAK: T-6.9-006 (cooperative fan-out), T-6.4-012 (no TLS upstream), D-12 (presence check pending item 5).
+
+## Round 4 — implementation defects (item 3)
+
+Three defects the review named, each now fixed **and** covered by a row that would have failed against the previous binaries.
+
+### 1. `installed_value` was manifest intent, not installation
+
+`agentbound-launch` wrote the manifest's `limit` straight into the binding's `resource_projection.installed_value` for every enforced class. Now:
+
+| Class | Installed by | Read back from |
+|---|---|---|
+| `pids`, `memory_bytes`, `cpu` | scope properties (as before) | `pids.max`, `memory.max`, `cpu.max` in the scope cgroup, after the child is in it |
+| `io_bandwidth` | **new**: `IOReadBandwidthMax`/`IOWriteBandwidthMax` on the device backing the mount-intent base | `io.max` (`wbps=`) |
+| `disk_bytes`, `disk_inodes` | **new**: `size=` and `nr_inodes=` on the session's `/tmp` tmpfs (its bounded volatile storage) | `statfs("/tmp")` inside the child → `f_blocks × f_frsize`, `f_files` |
+| `file_descriptors` | `setrlimit` (as before) | `getrlimit(RLIMIT_NOFILE)` inside the child |
+| `audit_capacity` | **new**: the receiver reserves a per-session event budget (`reserve` op, root only; enforced per `authorization_id` in `append`; released by lifecycle at cleanup) | the figure the receiver reports it installed (may be lower than requested) |
+| `delegation_fanout` | policy: no delegation operation exists in Phase 1 | `0` by construction; a non-zero manifest value is a construction failure (`unsupported_limit`) |
+
+A constructor-owned class declared `enforced` with no kernel read-back is now a **construction failure** (`limit_not_observed`, step 7), and the schema refuses a constructor-owned class recorded as `declared_by_owner` — so the binding cannot attest an installation that was not observed. The first launch after this change failed exactly this way (the read-back path was wrong), which is the behaviour wanted.
+
+Host-side cross-check `T-6.9-004.readback`: fetches the committed binding from the lifecycle store and compares all seven kernel-observed classes against the live cgroup files and, through `nsenter`, `statfs`/`ulimit` inside the session: `pids=64/64 memory_bytes=268435456/268435456 cpu=1000/1000 io_bandwidth=52428800/52428800 disk_bytes=268435456/268435456 disk_inodes=65536/65536 file_descriptors=1024/1024` (binding/kernel).
+
+### 2. Gateway budgets reset on restart; total bytes never checked
+
+`Projection.bytes_used` was accumulated after execution and compared with nothing; both counters were zeroed on reconstruct. Now the gateway keeps **per-operation-id** consumption `(operations, bytes)`, checks `operations`, `bytes_per_operation` and a new total `bytes` budget *before* counting, and persists the counters to the lifecycle record store (new gateway-only op `record_budget`, new record kind `budget`, hash-chained with the rest of the session's record, monotonic — a lower figure is refused `budget_regression`) **before the operation proceeds**. If persistence fails the operation is refused and admission closes. `record` now returns the latest `budget` alongside the binding, and both `activate` and `reconstruct` restore from it. The catalogue's two push operations gained `bytes` totals (64 MiB / 16 MiB).
+
+`T-6.9-005.budget-persist`: 5 pings admitted (store: 43 → shows the counter that existed before the row began); **gateway restarted**; op_count restored to 52, not 0; 21 more admitted and 49 refused `budget_operations` (read from the gateway's own denial events for this allocation); stored `op:gateway-ping.operations = 64 = budget`, and 43 + 21 = 64. A reset would have admitted 64 more.
+
+### 3. T-6.9-003 / T-6.9-004 did not exhaust anything
+
+- `T-6.9-004.inodes`: creates files in `/tmp` until refused — `nr_inodes=65536; creation refused after 65529 files, IFree=0`.
+- `T-6.9-004.bytes`: writes past capacity — stopped at 264 155 136 bytes (capacity 268 435 456) **by the memory cgroup, not by tmpfs**. **Finding:** tmpfs pages are charged to the writer's memory cgroup, so with `disk_bytes == memory_bytes` (both 256 MiB in this catalogue) the memory limit fires first. The write is still bounded at or below the installed capacity, and the row records *which* mechanism stopped it; it does not accept an unbounded write. A deployment that wants ENOSPC semantics must set `disk_bytes < memory_bytes`. This belongs in the manifest-schema guidance for §3.5.
+- `T-6.9-003.memory`: `ab-gwclient --memhog 512` touching pages under `memory.max=256 MiB` is SIGKILLed (rc 137) — refused, never served.
+- `T-6.9-003.cpu`: `cpu.max` read back as 1000 milli-cpu; `cpu.stat nr_throttled=76` during the probe's fan-out (accounted; throttling is contention-dependent and the row says so).
+- `T-6.9-003.owners`: `audit_capacity` installed by the receiver (10 000), `delegation_fanout` 0.
+
+Two probe-side facts learned the hard way and now written into `probe.sh`: a failed redirection on a special builtin aborts busybox `sh` (the inode loop must create in a subshell), and an OOM kill must land on a subshell, not the probe shell. Both had silently ended the probe on the first attempt — the runner now waits for `PROBE-END` rather than a fixed 8 s.
+
+**Result** ([raw/run-04-implementation-defects.md](raw/run-04-implementation-defects.md)): 136 PASS, 3 WEAK, 4 RECORDED, 0 FAIL; catalogue 86/121 PASS, **29 NOT-EXECUTED**; run verdict FAIL. Unit tests: 25 (was 19).
+
+**R-CON-8 watch:** direct privileged SLOC 2 417 (launch 494, lifecycle 826, ab-common 1 097; was 2 124 at WP3, +293 for read-back, audit reservation and budget records) — 40 % of the 6 000 ceiling. Gateway 424 (was 317+107).

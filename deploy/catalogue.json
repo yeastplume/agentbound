@@ -160,6 +160,7 @@
     "op:git-push-staging": {
       "adapter_catalogue_id": "adapter:git-staging",
       "budgets": {
+        "bytes": 67108864,
         "bytes_per_operation": 8388608,
         "objects": 10000,
         "operations": 32
@@ -173,6 +174,7 @@
     "op:git-push-staging-force": {
       "adapter_catalogue_id": "adapter:git-staging",
       "budgets": {
+        "bytes": 16777216,
         "bytes_per_operation": 8388608,
         "objects": 10000,
         "operations": 4

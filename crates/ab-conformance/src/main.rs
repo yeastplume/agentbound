@@ -103,14 +103,39 @@ fn main() {
     let (rc, v, out) = g.launch("runtime:probe", "task:redwood-analysis");
     let lrd = js(&v, "launch_record_digest"); let scope = js(&v, "scope_id"); let uid = js(&v, "uid");
     g.rec("D-01", rc == 0 && !lrd.is_empty(), format!("rc={rc} lrd={lrd} {}", out.lines().last().unwrap_or("").chars().take(200).collect::<String>()));
-    let console = js(&v, "console"); std::thread::sleep(std::time::Duration::from_secs(8));
-    let probe = std::fs::read_to_string(&console).unwrap_or_default();
+    // wait for the probe to finish (it now exhausts inodes and memory, which takes several seconds); bounded at 60 s
+    let console = js(&v, "console"); let mut probe = String::new();
+    for _ in 0..120 { std::thread::sleep(std::time::Duration::from_millis(500)); probe = std::fs::read_to_string(&console).unwrap_or_default(); if probe.contains("PROBE PROBE-END") { break; } }
     let mut seen_end = false;
     for l in probe.lines().filter(|l| l.starts_with("PROBE ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "PROBE-END" { seen_end = true; continue; } g.put(p[1], CLASSES.iter().find(|c| **c == p[2]).copied().unwrap_or("FAIL"), p.get(3).copied().unwrap_or("")); }
     g.fixture("PROBE-COMPLETE", seen_end, format!("probe lines={}", probe.lines().count()));
     let st = lc("status", Value::obj(vec![("launch_record_digest", Value::s(&lrd))]));
     g.rec("D-01.status", js(&st, "body.state") == "active" && js(&st, "body.identity_state") == "in-use", js(&st, "body"));
     let procs = cgprocs(&scope); g.rec("D-06", procs >= 2, format!("scope procs={procs} (init + workload + orphan/fan-out survivors)"));
+    // ---- T-6.9-003 / T-6.9-004 (host view): every enforced class in the committed binding is a KERNEL read-back, and it equals what the
+    // kernel enforces now. The binding is fetched from the lifecycle store; the kernel figures come from the scope's cgroup files and,
+    // for the tmpfs/rlimit classes, from inside the session (statfs / getrlimit via nsenter). A manifest value copied into
+    // `installed_value` without installation would disagree with at least one of these.
+    let rec = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&lrd))]));
+    let rp = rec.get("body").and_then(|b| b.get("binding")).and_then(|b| b.get("launch_binding")).and_then(|b| b.get("resource_projection")).cloned().unwrap_or(Value::Null);
+    let iv = |c: &str| rp.get(c).and_then(|x| x.get("installed_value")).and_then(|x| x.as_int());
+    let cgf = |f: &str| sh(&format!("cat /sys/fs/cgroup/system.slice/{scope}/{f}")).1.trim().to_string();
+    let k_pids: Option<i64> = cgf("pids.max").parse().ok(); let k_mem: Option<i64> = cgf("memory.max").parse().ok();
+    let k_cpu: Option<i64> = { let c = cgf("cpu.max"); let mut it = c.split_whitespace(); match (it.next().and_then(|q| q.parse::<i64>().ok()), it.next().and_then(|p| p.parse::<i64>().ok())) { (Some(q), Some(p)) => Some(q * 1000 / p), _ => None } };
+    let k_io: Option<i64> = cgf("io.max").split_whitespace().find_map(|t| t.strip_prefix("wbps=")).and_then(|v| v.parse().ok());
+    let ipid = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scope}/cgroup.procs")).1.trim().to_string();
+    let inside = sh(&format!("nsenter -t {ipid} -m -p -- sh -c 'stat -f -c \"%b %S %c\" /tmp; ulimit -n' 2>/dev/null")).1;
+    let (k_disk, k_ino, k_fd) = { let mut l = inside.lines(); let a = l.next().unwrap_or("").split_whitespace().map(|x| x.parse::<i64>().unwrap_or(-1)).collect::<Vec<_>>(); (a.get(0).zip(a.get(1)).map(|(b, f)| b * f), a.get(2).copied(), l.next().and_then(|x| x.trim().parse::<i64>().ok())) };
+    let pairs = [("pids", iv("pids"), k_pids), ("memory_bytes", iv("memory_bytes"), k_mem), ("cpu", iv("cpu"), k_cpu), ("io_bandwidth", iv("io_bandwidth"), k_io), ("disk_bytes", iv("disk_bytes"), k_disk), ("disk_inodes", iv("disk_inodes"), k_ino), ("file_descriptors", iv("file_descriptors"), k_fd)];
+    let bad: Vec<String> = pairs.iter().filter(|(_, b, k)| b.is_none() || k.is_none() || b != k).map(|(c, b, k)| format!("{c}: binding={b:?} kernel={k:?}")).collect();
+    let all: Vec<String> = pairs.iter().map(|(c, b, k)| format!("{c}={}/{}", b.map(|x| x.to_string()).unwrap_or("-".into()), k.map(|x| x.to_string()).unwrap_or("-".into()))).collect();
+    g.rec("T-6.9-004.readback", bad.is_empty(), format!("binding installed_value vs kernel (binding/kernel): {} {}", all.join(" "), if bad.is_empty() { String::new() } else { format!("MISMATCH {bad:?}") }));
+    // owner-installed classes: the audit receiver reports the budget it reserved for this session; delegation fan-out is 0 by construction
+    let (_, aud) = sh(&format!("python3 -c \"import socket,json;s=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET);s.connect('/run/agentbound/audit.sock');s.send(json.dumps({{'body':{{}},'idempotency_key':'c','op':'status','v':'agentbound.wire.v0.1'}},separators=(',',':'),sort_keys=True).encode());print(s.recv(65536).decode())\""));
+    g.rec("T-6.9-003.owners", iv("audit_capacity").is_some() && iv("delegation_fanout") == Some(0) && aud.contains("\"ok\":true"), format!("audit_capacity installed_value={:?} (reserved with the receiver, which is reachable), delegation_fanout installed_value={:?}", iv("audit_capacity"), iv("delegation_fanout")));
+    // CPU throttling evidence: cpu.stat must show the quota being applied while the probe's fan-out runs
+    let cpustat = cgf("cpu.stat"); let throttled: i64 = cpustat.lines().find_map(|l| l.strip_prefix("nr_throttled ")).and_then(|v| v.trim().parse().ok()).unwrap_or(-1);
+    g.rec("T-6.9-003.cpu", k_cpu == Some(1000) && throttled >= 0, format!("cpu.max quota={:?} milli-cpu (read back); cpu.stat nr_throttled={throttled} (quota installed and accounted; throttling occurs only under contention, which this probe does not guarantee)", k_cpu));
     let (_, outside) = sh(&format!("for p in $(ps -eo pid,uid | awk '$2=={uid}{{print $1}}'); do grep -q {scope} /proc/$p/cgroup || echo $p; done | wc -l"));
     g.rec("D-04.host-view", outside.trim() == "0", format!("uid {uid} processes outside scope={}", outside.trim()));
     // D-08 / F-T-*: terminate with descendants present
@@ -336,15 +361,46 @@ fn main() {
     // enter the session's scope cgroup first (host root may move itself), then its namespaces and identity: a legitimate in-scope peer
     let (_, after_ping) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- sh -c \"sleep 0.3; ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}}\"' 2>&1 | head -c 200"));
     g.rec("D4.7-reconstruct", before.trim() == "1" && recs_after == recs_before + 1 && projections >= 1 && after_ping.contains("\"pong\":true"), format!("socket before restart={}; chained reconstruction events {recs_before}→{recs_after} (exactly one for this restart); event: {}; ping from an in-scope session peer after restart: {}", before.trim(), rec_ev.trim(), after_ping.replace('\n', " ")));
-    // ---- T-6.4-009: PID reuse against the per-operation check (catalogue: "including reuse within one CLK_TCK tick") ----
+
+    // ---- T-6.9-005 / R-GW-7: budget consumption survives a gateway restart (WP3.1 item 3) ----
+    // The gateway reports per-record op_count via `status`. Pings from an in-scope peer raise it; after a restart the figure must
+    // be restored from the lifecycle record store, not reset to 0 — and the ping budget (64 operations) must then be exhausted with
+    // `budget_operations` at the SAME cumulative count it would have hit without the restart. Every figure below is read back.
+    let gwst = |lrd: &str| -> Value { match wire::connect("/run/agentbound/gateway.sock") { Ok(c) => c.call(&wire::request("status", &format!("conf-{}", ab_common::sig::monotonic_ns()), Value::obj(vec![("launch_record_digest", Value::s(lrd))]))).unwrap_or(Value::Null), Err(_) => Value::Null } };
+    let ops_before: i64 = js(&gwst(&lrd2), "body.operations").parse().unwrap_or(-1);
+    let refused_at_start: usize = sh(&format!("grep -h gateway.operation_denied /var/lib/agentbound/audit/events.jsonl | grep {} | grep -c '\"rule\":\"budget_operations\"'", js(&v2, "allocation_id"))).1.trim().parse().unwrap_or(0);
+    // the loop runs inside the session (busybox sh); it is placed in the session's /tmp so no host-shell quoting is involved
+    // the session's /tmp is a private tmpfs: reach it through the session's mount namespace, never a host path
+    std::fs::write("/tmp/pings.sh", "i=0; while [ $i -lt $1 ]; do ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' 2>&1 | tail -c 120; echo; i=$((i+1)); done\n").unwrap();
+    sh(&format!("nsenter -t {ipid2} -m -- sh -c 'cat > /tmp/pings.sh' < /tmp/pings.sh"));
+    let ping = |n: usize| -> String { sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- sh /tmp/pings.sh {n}' 2>&1")).1 };
+    let first = ping(5);
+    let ops_mid: i64 = js(&gwst(&lrd2), "body.operations").parse().unwrap_or(-1);
+    // the per-operation-id consumption as the lifecycle store holds it (this is what a restarted gateway restores)
+    let stored = |lrd: &str| -> (i64, String) { let r = lc("record", Value::obj(vec![("launch_record_digest", Value::s(lrd))])); let b = r.get("body").and_then(|b| b.get("budget")).cloned().unwrap_or(Value::Null); (b.get("op:gateway-ping").and_then(|x| x.get("operations")).and_then(|x| x.as_int()).unwrap_or(-1), String::from_utf8_lossy(&json::canonical(&b)).chars().take(160).collect()) };
+    let (stored_mid, budget_rec) = stored(&lrd2);
+    sh("systemctl restart agentbound-gateway"); std::thread::sleep(std::time::Duration::from_secs(3));
+    let ops_after_restart: i64 = js(&gwst(&lrd2), "body.operations").parse().unwrap_or(-1);
+    // exhaust: the ping budget is 64 operations for this task; keep pinging until refused and check the refusal count matches
+    let out = ping(70);
+    // refusals are read from the gateway's own denial events for this allocation (the client output is truncated per line)
+    let admitted = out.matches("\"pong\":true").count();
+    let refused: usize = sh(&format!("grep -h gateway.operation_denied /var/lib/agentbound/audit/events.jsonl | grep {} | grep -c '\"rule\":\"budget_operations\"'", js(&v2, "allocation_id"))).1.trim().parse::<usize>().unwrap_or(0).saturating_sub(refused_at_start);
+    let ops_final: i64 = js(&gwst(&lrd2), "body.operations").parse().unwrap_or(-1);
+    let ping_budget: i64 = 64;
+    let (stored_final, _) = stored(&lrd2);
+    // pings admitted before the restart + pings admitted after it must equal the per-op budget exactly; a reset would admit 64 more
+    let first_ok = first.matches("\"pong\":true").count() == 5;
+    g.rec("T-6.9-005.budget-persist", first_ok && ops_mid == ops_before + 5 && ops_after_restart == ops_mid && stored_mid >= 5 && refused > 0 && stored_final == ping_budget && (stored_mid as usize) + admitted == ping_budget as usize,
+        format!("5 pings admitted (session op_count {ops_before}->{ops_mid}); lifecycle budget record then held op:gateway-ping operations={stored_mid} [{budget_rec}]; gateway restarted: session op_count restored to {ops_after_restart} (not reset); then {admitted} more pings admitted and {refused} refused budget_operations (gateway.operation_denied events for this allocation); stored op:gateway-ping operations={stored_final} == budget {ping_budget}, and {stored_mid}+{admitted}={}", stored_mid as usize + admitted));    // ---- T-6.4-009: PID reuse against the per-operation check (catalogue: "including reuse within one CLK_TCK tick") ----
     // Construction: an in-scope session-uid client establishes a connection and *exits immediately*, leaving a forked holder with the
     // connected descriptor. The driver then recycles the establishing PID inside the session's pid namespace via ns_last_pid — a
     // capability no session has (measured: the session uid gets EIO/EACCES on that file, and even root needs CAP_SYS_ADMIN in the
     // owning userns) — so the adversary here is *stronger* than the threat model's session. The recycled process has the same pid,
     // uid and cgroup as the establisher; only the pidfs inode differs. The holder's packet must then be denied `process_mismatch`
     // naming the inode, and no operation may be admitted on that connection.
-    let trig = format!("/var/lib/agentbound/sessions/{}/rootfs/tmp/t9", js(&v2, "allocation_id").rsplit(':').next().unwrap_or(""));
-    sh(&format!("rm -f {trig}"));
+    // the trigger file lives in the session's private /tmp and is created through its mount namespace
+    sh(&format!("nsenter -t {ipid2} -m -- rm -f /tmp/t9"));
     let (_, hold) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}} --hold-fd /tmp/t9' 2>&1 | head -c 200"));
     let est_pid: i32 = hold.split("establishing_pid=").nth(1).and_then(|x| x.split_whitespace().next()).and_then(|x| x.parse().ok()).unwrap_or(-1);
     // recycle the establishing pid inside the session pidns: drive ns_last_pid to est_pid-1 and fork until the pid comes round
@@ -355,7 +411,8 @@ fn main() {
     let aid2 = js(&v2, "allocation_id");
     let mismatch_count = || -> i32 { sh(&format!("grep -h process_mismatch /var/lib/agentbound/audit/events.jsonl | grep -c {aid2}")).1.trim().parse().unwrap_or(0) };
     let denials_before = mismatch_count();
-    sh(&format!("touch {trig}; sleep 2"));
+    sh(&format!("nsenter -t {ipid2} -m -- touch /tmp/t9; sleep 2"));
+    let (_, holder_spoke) = sh(&format!("grep -h 'gateway.connection_refused\\|gateway.operation_denied\\|gateway.connection_closed' /var/lib/agentbound/audit/events.jsonl | grep {aid2} | tail -3 | grep -oE '\"(rule|reason)\":\"[a-z_]*\"' | tr '\\n' ' '"));
     let (_, den) = sh(&format!("grep -h process_mismatch /var/lib/agentbound/audit/events.jsonl | grep {aid2} | tail -1 | grep -oE {DETAIL_RE}"));
     let denials_after = mismatch_count();
     let recycled_same = rc9.contains("same_pid_as_establisher");
@@ -366,7 +423,7 @@ fn main() {
     // test `session::tests::recycled_pid_rejected` (same pid, uid, cgroup and start time; only the pidfs inode differs).
     let closed_ev: i32 = sh(&format!("grep -h gateway.connection_closed /var/lib/agentbound/audit/events.jsonl | grep -c {aid2}")).1.trim().parse().unwrap_or(0);
     let holder_ops: i32 = sh(&format!("grep -h gateway.operation_admitted /var/lib/agentbound/audit/events.jsonl | grep {aid2} | grep -c 'establishing_pid\\\":{est_pid}'")).1.trim().parse().unwrap_or(0);
-    g.rec("T-6.4-009", est_pid > 0 && recycled_same && closed_ev >= 1 && holder_ops == 0 && (denials_after == denials_before || den.contains("pidfs inode")), format!("PID reuse construction succeeded: establishing pid {est_pid} was recycled inside the session pidns [{}] with the same pid, uid and scope cgroup. Outcome: the connection was closed on establisher exit ({closed_ev} connection_closed events for this allocation) and NO operation was admitted for the establishing pid afterwards (holder ops={holder_ops}); process_mismatch denials {denials_before}->{denials_after} {}. The gateway's peer-pidfd poll closes the connection before a recycled instance can present itself, so the packet-level inode comparison is not reached live; that branch is covered deterministically by the unit test session::tests::recycled_pid_rejected", rc9.replace('\n', " ").chars().take(80).collect::<String>(), den.trim()));
+    g.rec("T-6.4-009", est_pid > 0 && recycled_same && closed_ev >= 1 && holder_ops == 0 && (denials_after == denials_before || den.contains("pidfs inode")), format!("PID reuse construction succeeded: establishing pid {est_pid} was recycled inside the session pidns [{}] with the same pid, uid and scope cgroup. Outcome: the connection was closed on establisher exit ({closed_ev} connection_closed events for this allocation) and NO operation was admitted for the establishing pid afterwards (holder ops={holder_ops}); process_mismatch denials {denials_before}->{denials_after} {}; last gateway events for this allocation after the holder was triggered: {holder_spoke}. The gateway's peer-pidfd poll closes the connection before a recycled instance can present itself, so the packet-level inode comparison is not reached live; that branch is covered deterministically by the unit test session::tests::recycled_pid_rejected", rc9.replace('\n', " ").chars().take(80).collect::<String>(), den.trim()));
     // ---- T-6.4-012: upstream identity — the operation's scoped repository resolves to the catalogue URL only; a caller cannot redirect it ----
     let redir_args = format!(r#"{{"expect_old":null,"ref_tail":"x","repository_id":"repo:demo","tip":"{}","url":"/tmp/evil.git"}}"#, "3".repeat(40));
     let (_, redir) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging {} /image/probe.sh' 2>&1 | grep -o \"rule[^,]*\" | head -2 | tr \"\\n\" \" \"", redir_args.replace('"', "\\\"")));

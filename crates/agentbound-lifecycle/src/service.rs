@@ -32,7 +32,7 @@ fn closed(b: &Value, want: &[&str]) -> Result<(), (&'static str, &'static str, S
 const CONSTRUCTOR_OPS: [&str; 5] = ["reserve_identity", "commit_binding", "register_session", "report_activation", "report_construction_failed"];
 const OBSERVER_OPS: [&str; 5] = ["status", "list", "terminate", "quiesce", "revocation_signal"];
 /// Gateway (ADR-0002 D4.7): reads only; reconstructs grants from the signed launch-record store.
-const GATEWAY_OPS: [&str; 4] = ["status", "list", "record", "revocation_signal"];
+const GATEWAY_OPS: [&str; 5] = ["status", "list", "record", "revocation_signal", "record_budget"];
 
 impl Service {
     /// Handle one connection: one request, one reply (descriptors only on `register_session`).
@@ -58,6 +58,7 @@ impl Service {
             "report_construction_failed" => self.report_failed(body),
             "status" => self.status(body),
             "record" => self.record(body),
+            "record_budget" => self.record_budget(body),
             "list" => self.list(),
             "terminate" | "quiesce" | "revocation_signal" => self.lifecycle_action(op, body, uid),
             _ => err(wire::CLASS_INVALID, "unknown_op", op),
@@ -169,7 +170,26 @@ impl Service {
         let binding = recs.iter().find(|(k, _)| k == "binding").map(|(_, v)| v.clone()).ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;
         let sealed = recs.iter().any(|(k, _)| k == "seal");
         let (state, ident) = match self.sessions.get(lrd) { Some(s) => (s.state.clone(), self.store.latest(&s.allocation_id).map_err(store_err)?.map(|a| a.state).unwrap_or_default()), None => ("unknown".into(), String::new()) };
-        Ok(Value::obj(vec![("binding", binding), ("identity_state", Value::s(&ident)), ("sealed", Value::Bool(sealed)), ("state", Value::s(&state))]))
+        // the latest gateway budget-consumption record travels with the binding so a restarted gateway restores it (R-GW-7, D4.7)
+        let budget = recs.iter().rev().find(|(k, _)| k == "budget").map(|(_, v)| v.clone()).unwrap_or(Value::obj(vec![]));
+        Ok(Value::obj(vec![("binding", binding), ("budget", budget), ("identity_state", Value::s(&ident)), ("sealed", Value::Bool(sealed)), ("state", Value::s(&state))]))
+    }
+    /// Gateway-only: append the session's budget consumption {operation_id: {bytes, operations}} to its hash-chained record.
+    /// Monotonic: a figure lower than the last recorded one is refused (a restarted gateway must not un-spend).
+    fn record_budget(&mut self, b: &Value) -> Reply {
+        let lrd = b.get("launch_record_digest").and_then(|x| x.as_str()).ok_or((wire::CLASS_INVALID, "body", "launch_record_digest".to_string()))?;
+        let budget = b.get("budget").filter(|x| x.as_obj().is_some()).ok_or((wire::CLASS_INVALID, "body", "budget object".to_string()))?;
+        let recs = self.store.records(lrd).map_err(store_err)?;
+        let (aid, az) = recs.iter().find(|(k, _)| k == "binding").map(|(_, v)| { let g = |p: &[&str]| { let mut c = Some(v); for k in p { c = c.and_then(|x| x.get(k)); } c.and_then(|x| x.as_str()).unwrap_or("").to_string() }; (g(&["launch_binding", "execution_identity", "allocation_id"]), g(&["authorization_manifest", "authorization_id"])) }).ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;
+        if let Some((_, prev)) = recs.iter().rev().find(|(k, _)| k == "budget") {
+            for (k, pv) in prev.as_obj().map(|m| m.iter().collect::<Vec<_>>()).unwrap_or_default() {
+                let n = |v: Option<&Value>, f: &str| v.and_then(|x| x.get(f)).and_then(|x| x.as_int()).unwrap_or(0);
+                let cur = budget.get(&k.0);
+                if n(cur, "operations") < n(Some(pv), "operations") || n(cur, "bytes") < n(Some(pv), "bytes") { return err(wire::CLASS_CONFLICT, "budget_regression", format!("{} would decrease", k.0)); }
+            }
+        }
+        let seq = self.store.append_record("budget", &aid, lrd, &az, budget).map_err(store_err)?;
+        Ok(Value::obj(vec![("recorded", Value::Bool(true)), ("seq", Value::Int(seq))]))
     }
     fn status_prebinding(&mut self, az: &str) -> Reply {
         let a = self.store.by_authorization(az).map_err(store_err)?.ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;

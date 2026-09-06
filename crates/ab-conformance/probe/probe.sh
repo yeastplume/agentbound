@@ -55,14 +55,42 @@ if [ -z "$cur" ] || [ -z "$op" ]; then r T-6.9-002 FAIL "fd measurement missing:
 elif [ "$op" -lt "$cur" ] && [ "$er" = 24 ]; then r T-6.9-002 PASS "opened=$op stopped at RLIMIT_NOFILE=$cur with EMFILE(24)"
 else r T-6.9-002 FAIL "opened=$op rlimit_cur=$cur errno=$er (expected EMFILE below the limit)"; fi
 
+# T-6.9-004: disk bytes AND inodes — exhaust the root tmpfs the constructor installed (disk_bytes / disk_inodes read back from the kernel)
+# and confirm the failure arrives at the installed boundary, not merely "somewhere". The bounded volatile storage is /tmp (the root
+# tmpfs is root-owned and carries only mount points).
+# NOTE: runs before the fork bomb for the same reason as T-6.9-002 (command substitution needs fork).
+# bytes: statfs-reported size must equal the binding's installed_value (the driver cross-checks); dd must stop with ENOSPC below it
+cap=$(df -k /tmp | awk 'NR==2{print $2}'); mkdir -p /tmp/fill
+# FINDING (WP3.1): tmpfs pages are charged to the session's memory cgroup, so with disk_bytes == memory_bytes the memory limit fires
+# (OOM kill of dd) before tmpfs returns ENOSPC. Either way the write must stop at or below the installed capacity; the row records
+# which mechanism stopped it, and the driver checks that the file never exceeded capacity. It does NOT accept an unbounded write.
+( dd if=/dev/zero of=/tmp/fill/big bs=1M count=$(( cap / 1024 + 64 )) ) 2>/tmp/dd.err; ddrc=$?; got=$(stat -c %s /tmp/fill/big 2>/dev/null || echo 0)
+if [ "$ddrc" -ne 0 ] && [ "$got" -le $(( cap * 1024 + 1048576 )) ]; then
+  if grep -q "No space" /tmp/dd.err; then how="ENOSPC from tmpfs"; elif [ "$ddrc" = 137 ]; then how="SIGKILL by memory cgroup (tmpfs pages charged to memory.max; disk bound not reached first)"; else how="rc=$ddrc"; fi
+  r T-6.9-004.bytes PASS "/tmp tmpfs capacity=${cap}KiB; write stopped at $got bytes: $how"
+else r T-6.9-004.bytes FAIL "ddrc=$ddrc cap=${cap}KiB written=$got err=$(head -c 80 /tmp/dd.err)"; fi
+rm -f /tmp/fill/big
+# inodes: create files until the kernel refuses; the count reached must be below the installed nr_inodes (df -i reports it)
+icap=$(df -i /tmp | awk 'NR==2{print $2}'); n=0; mkdir -p /tmp/ifill
+# a failed redirection on a special builtin aborts busybox sh (POSIX); run the create in a subshell so the loop sees the failure
+while [ $n -lt $(( icap + 100 )) ]; do ( : > /tmp/ifill/f$n ) 2>/dev/null || break; n=$((n+1)); done
+ileft=$(df -i /tmp | awk 'NR==2{print $4}')
+if [ "$n" -lt $(( icap + 100 )) ] && [ "$ileft" = 0 ]; then r T-6.9-004.inodes PASS "nr_inodes=$icap; creation refused after $n files, IFree=0"
+else r T-6.9-004.inodes FAIL "nr_inodes=$icap created=$n ifree=$ileft"; fi
+rm -rf /tmp/ifill
+# T-6.9-003: memory — allocate past memory.max; the kernel must refuse (OOM-kill of the allocator or ENOMEM), never serve it.
+# Uses ab-gwclient --memhog <MiB>: touches pages until killed or the request is met; prints the outcome. Also CPU: cpu.max is
+# read back by the constructor and cross-checked by the driver; a throttling measurement is recorded there (host-side, cpu.stat).
+memlim=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "not-visible-in-session (read back by the driver)")
+mh=$( (ab-gwclient --memhog 512) 2>&1 ); mrc=$?  # subshell: the OOM kill lands on the allocator, not this shell
+if [ "$mrc" -ne 0 ] || echo "$mh" | grep -q "errno=12"; then r T-6.9-003.memory PASS "512 MiB request against memory.max=$memlim: refused (rc=$mrc $(echo $mh | head -c 60))"
+else r T-6.9-003.memory FAIL "512 MiB allocated and touched under memory.max=$memlim: $(echo $mh | head -c 80)"; fi
 # NOTE: T-6.9-002 MUST run before the T-6.9-001 fork bomb — at TasksMax the shell cannot fork, so command substitution
 # returns empty and any later measurement would be missing rather than bounded.
 # fork failures (EAGAIN at TasksMax) abort a busybox sh loop, so fan out from a subshell and count survivors
 ( i=0; while [ $i -lt 400 ]; do sleep 1000 & i=$((i+1)); done ) 2>/dev/null
 live=0; for d in /proc/[0-9]*; do live=$((live+1)); done; [ "$live" -gt 0 ] && [ "$live" -lt 400 ] && r T-6.9-001 PASS "procs=$live (TasksMax bound)" || r T-6.9-001 FAIL "procs=$live"
 # leave the survivors running: D-06/D-07 verify at termination that they die with the scope
-# T-6.9-004: disk bound (root tmpfs 16m)
-dd if=/dev/zero of=/tmp/big bs=1M count=100 2>/dev/null; ok T-6.9-004 $? "dd 100M into tmpfs"
 r PROBE-END PASS done
 sync
 while :; do sleep 1; done
