@@ -33,6 +33,24 @@ ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --fork >/tmp/o 2
 # T-6.4-010: stream connect to the gateway path
 # T-6.4-001: socket() for INET/INET6/PACKET/NETLINK/VSOCK → seccomp EPERM (1)
 fam=$(ab-gwclient --families 2>&1); echo "$fam" | grep -q OPENED && r T-6.4-001 FAIL "$(echo $fam)" || r T-6.4-001 PASS "$(echo $fam)"
+# T-6.4-008 (in-session, session uid, in-scope): packets with zero, two, forged or truncated SCM_CREDENTIALS.
+# What the kernel permits is measured, not assumed (see the WP3.1 register): with SO_PASSCRED on the receiver the kernel
+# ALWAYS delivers exactly one credential; an unprivileged sender cannot forge pid/uid (EPERM at sendmsg) and two cmsgs
+# collapse into one. So the row asserts the composite outcome: each case either fails to leave the sender (kernel refusal,
+# with its errno) or is answered by the gateway from the TRUE credential of this process — and never produces an accepted
+# operation under another identity. Cases that the kernel prevents are reported as such, not as gateway denials.
+for cs in none two forged short; do
+  out=$(ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --creds $cs 2>&1)
+  errno=$(echo "$out" | sed -n 's/.*sendmsg_errno=\([0-9]*\).*/\1/p'); pong=$(echo "$out" | grep -c '"pong":true')
+  case "$cs:$errno:$pong" in
+    none:0:1)   r T-6.4-008.none PASS "no SCM_CREDENTIALS sent: kernel synthesised the true credential and the gateway answered as this process (SO_PASSCRED guarantees exactly one; the count!=1 branch is unreachable from a session peer)";;
+    two:0:1)    r T-6.4-008.two PASS "two SCM_CREDENTIALS cmsgs collapsed to one true credential by the kernel; gateway answered as this process, no identity substitution";;
+    forged:1:0) r T-6.4-008.forged PASS "forged pid=1/uid=0 refused by the kernel at sendmsg (EPERM=1): an unprivileged session peer cannot even emit a false credential";;
+    short:22:0) r T-6.4-008.short PASS "truncated ucred refused by the kernel at sendmsg (EINVAL=22)";;
+    *)          r T-6.4-008.$cs FAIL "case=$cs sendmsg_errno=$errno pong=$pong out=$(echo $out | head -c 120)";;
+  esac
+done
+
 # T-6.3-003: inherited descriptors are exactly 0/1/2 → console/null; nothing else (no socket, no credential file)
 fds=$(ab-gwclient --fds 2>&1 | grep -v "^3 /proc" ); extra=$(echo "$fds" | awk '$1>2' | grep -v "/proc/.*/fd" | wc -l); [ "$extra" = 0 ] && r T-6.3-003 PASS "fds: $(echo $fds | tr '\n' ' ')" || r T-6.3-003 FAIL "$(echo $fds)"
 # T-6.3-004: a child process inherits no credential (env/fds); it can only use the authenticated socket itself as a fresh peer

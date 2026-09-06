@@ -32,6 +32,24 @@ fn lc(op: &str, body: Value) -> Value { match wire::connect("/run/agentbound/lif
 fn audit_rows(key: &str) -> Vec<Value> { let c = wire::connect("/run/agentbound/audit.sock").unwrap(); let k = if key.starts_with("sha256:") { "launch_record_digest" } else { "authorization_id" }; c.call(&wire::request("query", "q", Value::obj(vec![(k, Value::s(key))]))).ok().and_then(|r| jget(&r, "body.rows").and_then(|x| x.as_arr()).cloned()).unwrap_or_default() }
 fn kinds(rows: &[Value]) -> Vec<String> { rows.iter().map(|r| js(r, "event.event")).collect() }
 fn sig(lrd: &str, trigger: &str) -> Value { lc("revocation_signal", Value::obj(vec![("launch_record_digest", Value::s(lrd)), ("source", Value::s("conformance")), ("trigger", Value::s(trigger))])) }
+/// grep -oE pattern for the `detail` member of an event line (kept out of format! strings: braces and quotes fight the macro).
+/// T-6.4-009: recycle a specific pid inside the caller's pid namespace (requires CAP_SYS_ADMIN — more power than a session has)
+/// and report whether the recycled process got the same pid as the establisher, plus its pid-namespace inode.
+const RECYCLE_PY: &str = r#"
+import os, sys, time, subprocess
+t = int(sys.argv[1])
+open("/proc/sys/kernel/ns_last_pid", "w").write(str(t - 1))
+p = os.fork()
+if p == 0:
+    time.sleep(4)
+    os._exit(0)
+print("recycled_pid", p)
+if p == t:
+    print("same_pid_as_establisher")
+    subprocess.run(["stat", "-c", "%i", "/proc/" + str(p) + "/ns/pid"])
+os.waitpid(p, 0)
+"#;
+const DETAIL_RE: &str = "'\"detail\":\"[^\"]*\"'";
 fn cgprocs(scope: &str) -> i32 { sh(&format!("cat /sys/fs/cgroup/system.slice/{scope}/cgroup.procs 2>/dev/null | wc -l")).1.trim().parse().unwrap_or(0) }
 
 impl Rig {
@@ -318,15 +336,37 @@ fn main() {
     // enter the session's scope cgroup first (host root may move itself), then its namespaces and identity: a legitimate in-scope peer
     let (_, after_ping) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- sh -c \"sleep 0.3; ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}}\"' 2>&1 | head -c 200"));
     g.rec("D4.7-reconstruct", before.trim() == "1" && recs_after == recs_before + 1 && projections >= 1 && after_ping.contains("\"pong\":true"), format!("socket before restart={}; chained reconstruction events {recs_before}→{recs_after} (exactly one for this restart); event: {}; ping from an in-scope session peer after restart: {}", before.trim(), rec_ev.trim(), after_ping.replace('\n', " ")));
-    // ---- T-6.4-009: PID reuse against the per-operation check — a PID recycled to another process instance must not be accepted.
-    // Host-side: two connections whose SCM_CREDENTIALS pid names the *establishing* pid but from a different process instance
-    // (the forge helper's own process, running with the pid of a dead session process cannot be arranged deterministically; the
-    // check under test is the pidfs-inode comparison, exercised by forging the establishing pid from a different instance).
-    // Host-side: the forge helper claims the session init's pid from a different process instance; the gateway compares pidfs inodes
-    // of the credential pid and the establishing pid. Evidence: a `process_mismatch` whose detail names both instances.
-    let (_, pr) = sh("grep -c 'process_mismatch' /var/lib/agentbound/gateway/audit-gateway.jsonl");
-    let (_, pr_detail) = sh("grep 'process_mismatch' /var/lib/agentbound/gateway/audit-gateway.jsonl | grep -o '\"detail\":\"[^\"]*\"' | sort | uniq -c | sort -rn | head -3 | tr '\\n' ';'");
-    g.weak("T-6.4-009", pr.trim().parse::<i32>().unwrap_or(0) >= 1 && pr_detail.contains("credential pid"), format!("process-instance denials={}; classes: {} (pidfs inode is the instance key; start time corroborating; a same-tick PID reuse is not reproducible on demand — the check is inode-based so the tick is irrelevant)", pr.trim(), pr_detail.trim()));
+    // ---- T-6.4-009: PID reuse against the per-operation check (catalogue: "including reuse within one CLK_TCK tick") ----
+    // Construction: an in-scope session-uid client establishes a connection and *exits immediately*, leaving a forked holder with the
+    // connected descriptor. The driver then recycles the establishing PID inside the session's pid namespace via ns_last_pid — a
+    // capability no session has (measured: the session uid gets EIO/EACCES on that file, and even root needs CAP_SYS_ADMIN in the
+    // owning userns) — so the adversary here is *stronger* than the threat model's session. The recycled process has the same pid,
+    // uid and cgroup as the establisher; only the pidfs inode differs. The holder's packet must then be denied `process_mismatch`
+    // naming the inode, and no operation may be admitted on that connection.
+    let trig = format!("/var/lib/agentbound/sessions/{}/rootfs/tmp/t9", js(&v2, "allocation_id").rsplit(':').next().unwrap_or(""));
+    sh(&format!("rm -f {trig}"));
+    let (_, hold) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}} --hold-fd /tmp/t9' 2>&1 | head -c 200"));
+    let est_pid: i32 = hold.split("establishing_pid=").nth(1).and_then(|x| x.split_whitespace().next()).and_then(|x| x.parse().ok()).unwrap_or(-1);
+    // recycle the establishing pid inside the session pidns: drive ns_last_pid to est_pid-1 and fork until the pid comes round
+    // helper written to a file: recycle a given pid inside the session's pid namespace and report whether the pid came round
+    std::fs::write("/tmp/t9-recycle.py", RECYCLE_PY).unwrap();
+    let recycle = format!("nsenter -t {ipid2} -p -- python3 /tmp/t9-recycle.py {est_pid} 2>&1");
+    let (_, rc9) = sh(&recycle);
+    let aid2 = js(&v2, "allocation_id");
+    let mismatch_count = || -> i32 { sh(&format!("grep -h process_mismatch /var/lib/agentbound/audit/events.jsonl | grep -c {aid2}")).1.trim().parse().unwrap_or(0) };
+    let denials_before = mismatch_count();
+    sh(&format!("touch {trig}; sleep 2"));
+    let (_, den) = sh(&format!("grep -h process_mismatch /var/lib/agentbound/audit/events.jsonl | grep {aid2} | tail -1 | grep -oE {DETAIL_RE}"));
+    let denials_after = mismatch_count();
+    let recycled_same = rc9.contains("same_pid_as_establisher");
+    // What actually happens (measured, not assumed): the gateway polls each connection's peer pidfd, so the establisher's exit closes
+    // the connection *before* the recycled process exists. The holder therefore cannot present the recycled instance at all. The row
+    // asserts that composite defence: the connection is closed on establisher exit AND no operation is admitted on it afterwards. The
+    // inode comparison that would refuse a recycled instance if the connection had survived is covered deterministically by the unit
+    // test `session::tests::recycled_pid_rejected` (same pid, uid, cgroup and start time; only the pidfs inode differs).
+    let closed_ev: i32 = sh(&format!("grep -h gateway.connection_closed /var/lib/agentbound/audit/events.jsonl | grep -c {aid2}")).1.trim().parse().unwrap_or(0);
+    let holder_ops: i32 = sh(&format!("grep -h gateway.operation_admitted /var/lib/agentbound/audit/events.jsonl | grep {aid2} | grep -c 'establishing_pid\\\":{est_pid}'")).1.trim().parse().unwrap_or(0);
+    g.rec("T-6.4-009", est_pid > 0 && recycled_same && closed_ev >= 1 && holder_ops == 0 && (denials_after == denials_before || den.contains("pidfs inode")), format!("PID reuse construction succeeded: establishing pid {est_pid} was recycled inside the session pidns [{}] with the same pid, uid and scope cgroup. Outcome: the connection was closed on establisher exit ({closed_ev} connection_closed events for this allocation) and NO operation was admitted for the establishing pid afterwards (holder ops={holder_ops}); process_mismatch denials {denials_before}->{denials_after} {}. The gateway's peer-pidfd poll closes the connection before a recycled instance can present itself, so the packet-level inode comparison is not reached live; that branch is covered deterministically by the unit test session::tests::recycled_pid_rejected", rc9.replace('\n', " ").chars().take(80).collect::<String>(), den.trim()));
     // ---- T-6.4-012: upstream identity — the operation's scoped repository resolves to the catalogue URL only; a caller cannot redirect it ----
     let redir_args = format!(r#"{{"expect_old":null,"ref_tail":"x","repository_id":"repo:demo","tip":"{}","url":"/tmp/evil.git"}}"#, "3".repeat(40));
     let (_, redir) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- ab-gwclient /run/gateway.sock op:git-push-staging git.push_staging {} /image/probe.sh' 2>&1 | grep -o \"rule[^,]*\" | head -2 | tr \"\\n\" \" \"", redir_args.replace('"', "\\\"")));

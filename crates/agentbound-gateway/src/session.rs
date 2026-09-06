@@ -13,6 +13,16 @@ impl Conn { pub fn describe(&self) -> Value { Value::obj(vec![("cgroup", Value::
 
 pub type Deny = (&'static str, &'static str, String, bool); // class, rule, detail, close
 
+/// Compare the establishing process instance with the instance now behind the credential PID. `None` = same instance.
+/// Keyed on the pidfs inode (never reused within a boot), with pidns and start time corroborating: a recycled PID therefore
+/// fails here even when the pid, uid and cgroup all match. Pure so it can be tested without a live peer.
+pub fn instance_mismatch(est: &ProcInstance, now: &ProcInstance) -> Option<String> {
+    if now.pidfs_ino != est.pidfs_ino { return Some(format!("pidfs inode {} vs establishing {} (pid {} recycled to another process instance)", now.pidfs_ino, est.pidfs_ino, est.pid)); }
+    if now.pidns != est.pidns { return Some(format!("pidns {} vs establishing {}", now.pidns, est.pidns)); }
+    if now.start_time != est.start_time { return Some(format!("start time {} vs establishing {} (inode equal — kernel invariant violated)", now.start_time, est.start_time)); }
+    None
+}
+
 /// Every packet: exactly one kernel credential, no descriptors, same process instance as establishment.
 pub fn handle(gw: &mut Gateway, i: usize, pk: wire::Packet) -> Result<(), Deny> {
     if pk.rights_fds > 0 { return Err((wire::CLASS_INVALID, "descriptor_transfer", format!("{} descriptors", pk.rights_fds), true)); }
@@ -22,7 +32,9 @@ pub fn handle(gw: &mut Gateway, i: usize, pk: wire::Packet) -> Result<(), Deny> 
     let est = gw.conns[i].inst.clone();
     if cred.pid != est.pid || cred.uid != gw.conns[i].uid { return Err((wire::CLASS_UNAUTHENTICATED, "process_mismatch", format!("credential pid {} uid {} vs establishing {} {}", cred.pid, cred.uid, est.pid, gw.conns[i].uid), true)); }
     let (_pf, now) = wire::proc_instance(cred.pid).map_err(|_| (wire::CLASS_UNAUTHENTICATED, "process_mismatch", "credential process gone".to_string(), true))?;
-    if now.pidfs_ino != est.pidfs_ino || now.pidns != est.pidns { return Err((wire::CLASS_UNAUTHENTICATED, "process_mismatch", format!("instance {} vs {}", now.pidfs_ino, est.pidfs_ino), true)); }
+    // The instance comparison is the PID-reuse defence (T-6.4-009, WP1 F-1): the pid may be identical after recycling, so the
+    // pidfs inode — unique per process instance, never reused — decides, with pidns and start time corroborating.
+    if let Some(d) = instance_mismatch(&est, &now) { return Err((wire::CLASS_UNAUTHENTICATED, "process_mismatch", d, true)); }
     // per-operation status re-check (D4): the record must still admit operations
     let aid = gw.conns[i].allocation_id.clone();
     let adm = gw.by_alloc.get(&aid).map(|p| p.admission).unwrap_or(false);
@@ -77,3 +89,21 @@ fn execute(gw: &mut Gateway, i: usize, op: Value, op_seq: i64, payload: Option<V
 }
 
 fn reply(gw: &mut Gateway, i: usize, v: Value) -> Result<(), Deny> { wire::send_raw(gw.conns[i].fd.as_raw_fd(), &json::canonical(&v)).map_err(|e| (wire::CLASS_INTERNAL, "send", e.to_string(), true)) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn inst(pid: i32, ino: u64, start: u64, ns: u64) -> ProcInstance { ProcInstance { pid, pidfs_ino: ino, start_time: start, pidns: ns, cgroup: "/system.slice/agentbound-a.scope".into() } }
+    #[test]
+    fn same_instance_accepted() { assert!(instance_mismatch(&inst(42, 700, 900, 4), &inst(42, 700, 900, 4)).is_none()); }
+    #[test]
+    fn recycled_pid_rejected() {
+        // identical pid, uid, cgroup and even start time: only the pidfs inode differs. This is the same-tick PID-reuse case.
+        let d = instance_mismatch(&inst(42, 700, 900, 4), &inst(42, 701, 900, 4)).expect("recycled pid must be rejected");
+        assert!(d.contains("pidfs inode 701 vs establishing 700"), "{d}");
+    }
+    #[test]
+    fn pidns_change_rejected() { assert!(instance_mismatch(&inst(42, 700, 900, 4), &inst(42, 700, 900, 5)).is_some()); }
+    #[test]
+    fn start_time_change_rejected() { assert!(instance_mismatch(&inst(42, 700, 900, 4), &inst(42, 700, 901, 4)).is_some()); }
+}

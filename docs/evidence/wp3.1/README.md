@@ -36,3 +36,31 @@ Repaired the rows whose assertion did not test what the row names. T-6.4-008/009
 **Result** ([raw/run-02-false-positive-repair.md](raw/run-02-false-positive-repair.md)): 125 PASS, 4 WEAK, 4 RECORDED, 0 FAIL; catalogue 84/121 PASS, 30 NOT-EXECUTED; **run verdict FAIL** (as it must be until the missing rows exist).
 
 Defects found by the repairs themselves: (i) the fd row had been silently measuring nothing since WP2 because of its position after the fork bomb; (ii) `gateway.reconstructed` reaches the receiver up to several seconds after restart, so the previous single `sleep 1` would have mis-scoped the evidence even if it had checked it; (iii) the rule→requirement map had one dead entry and a catch-all that made any future unmapped rule look like R-GW-1 in a denial — i.e. D7 item 9's diagnostics could have named the wrong requirement.
+
+## Round 3 — false-positive repair (part 2): the credential and PID-reuse rows
+
+These are the two rows the review identified as testing a different mechanism than their name. Both now run **from inside the session** (session uid, in the scope cgroup, in the session's namespaces) instead of from host root, and both are backed by measurements of what the kernel actually permits rather than by assumption.
+
+### Kernel facts measured first (they change what the rows can honestly claim)
+
+| Measured on the pinned kernel (6.12.107) | Consequence |
+|---|---|
+| With `SO_PASSCRED` set on the receiver, the kernel delivers **exactly one** `SCM_CREDENTIALS` per packet — even when the sender attaches none | The gateway's `credential_count != 1` branch is **unreachable from any peer**. It is a defensive assertion, not a tested path |
+| Two `SCM_CREDENTIALS` cmsgs in one `sendmsg` are collapsed to one true credential (two ucreds inside one cmsg → `EINVAL`) | "multiple credentials" cannot be delivered at all |
+| An unprivileged sender attaching a credential naming another pid or uid gets **`EPERM` at `sendmsg`** | A session peer cannot emit a false credential; forgery requires `CAP_SYS_ADMIN` in the namespace |
+| A truncated ucred payload gets `EINVAL` at `sendmsg` | ditto |
+| `/proc/sys/kernel/ns_last_pid` is not writable by the session uid (EIO/EACCES) even inside the session's own pid namespace | Driving PID reuse requires privileges the threat model's session does not have |
+
+This is a finding about the mechanism, and it is the honest reading of ADR-0002 D2's "exactly one `SCM_CREDENTIALS` per packet": the kernel enforces it, and the gateway's check is defence in depth. The ADR should say so rather than implying the gateway is what makes it true.
+
+### T-6.4-008 — four cases, from inside the session
+
+`ab-gwclient --creds {none|two|forged|short}` attaches the cmsgs itself and prints `sendmsg_errno`, so the driver can tell a kernel refusal from a gateway refusal instead of inferring one from the other. Results: `none` and `two` are delivered and answered **as the true calling process** (no identity substitution); `forged` is refused by the kernel with `EPERM`; `short` with `EINVAL`. Four separate rows, all PASS, each stating which layer refused. The previous version ran as host root and was refused at the establishment UID check, never reaching the packet path at all.
+
+### T-6.4-009 — a real PID-reuse construction, and what it revealed
+
+Construction: an in-scope session-uid client establishes a connection and exits immediately, leaving a forked holder with the connected descriptor; the driver then recycles the establishing PID inside the session's pid namespace via `ns_last_pid` (privileges no session has — so the adversary is deliberately *stronger* than the threat model) and confirms `same_pid_as_establisher`. The recycled process shares pid, uid and scope cgroup with the establisher; only the process instance differs.
+
+**Outcome:** the gateway polls each connection's peer pidfd, so the establisher's exit **closes the connection before the recycled process exists**. The holder never reaches the packet check. The row asserts that composite defence — connection closed on establisher exit, and no operation admitted for that pid afterwards — and says so in its evidence. The packet-level inode comparison is now a pure function `session::instance_mismatch` with unit tests, including `recycled_pid_rejected`: identical pid, uid, cgroup **and start time**, differing only in pidfs inode. That is the same-tick reuse case the catalogue asks for, covered deterministically rather than by a corpus grep. The row is no longer WEAK.
+
+**Result** ([raw/run-03-credential-and-pid-reuse.md](raw/run-03-credential-and-pid-reuse.md)): 130 PASS, 3 WEAK, 4 RECORDED, 0 FAIL; catalogue 85/121 PASS, 30 NOT-EXECUTED; run verdict FAIL. Remaining WEAK: T-6.9-006 (cooperative fan-out), T-6.4-012 (no TLS upstream), D-12 (presence check pending item 5).

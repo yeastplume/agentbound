@@ -33,6 +33,14 @@ fn main() {
     }
     if a.len() < 5 { eprintln!("usage"); std::process::exit(2); }
     let (fork, rights) = (a.iter().any(|x| x == "--fork"), a.iter().any(|x| x == "--scm-rights"));
+    // T-6.4-008 credential cases, sent from *inside* the session (session uid, in-scope). `--creds <case>`:
+    //   none    — send with no SCM_CREDENTIALS at all (SO_PASSCRED then makes the kernel synthesise the true one)
+    //   two     — attach two SCM_CREDENTIALS cmsgs in one sendmsg
+    //   forged  — attach one SCM_CREDENTIALS naming pid 1 / uid 0
+    //   short   — attach a truncated ucred payload
+    // Each case prints `case=<name> sendmsg_errno=<n>` so the driver can distinguish "the kernel refused the send" from
+    // "the gateway refused the packet", and never has to infer one from the other.
+    let creds_case = a.iter().position(|x| x == "--creds").and_then(|i| a.get(i + 1)).cloned();
     let hold = a.iter().any(|x| x == "--hold"); // keep the connection open after the first reply, send the next packet on stdin EOF (T-6.4-014)
     let sock_type = if a.iter().any(|x| x == "--stream") { libc::SOCK_STREAM } else if a.iter().any(|x| x == "--dgram") { libc::SOCK_DGRAM } else { libc::SOCK_SEQPACKET };
     let payload = a.get(5).filter(|p| !p.starts_with("--")).map(|p| std::fs::read(p).expect("payload")).unwrap_or_default();
@@ -43,11 +51,50 @@ fn main() {
     let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() }; addr.sun_family = libc::AF_UNIX as u16;
     for (i, b) in a[1].bytes().enumerate() { addr.sun_path[i] = b as libc::c_char; }
     if unsafe { libc::connect(fd, &addr as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_un>() as u32) } != 0 { eprintln!("connect errno={}", std::io::Error::last_os_error()); std::process::exit(4); }
+    // T-6.4-009: the establishing process exits immediately, leaving a forked holder with the connected descriptor. The holder waits
+    // for `--trigger <file>` to appear, then sends its packet. This lets the driver recycle the establishing PID (with privileges no
+    // session has) and prove that a packet arriving on the connection afterwards is never accepted as the establishing instance.
+    if let Some(i) = a.iter().position(|x| x == "--hold-fd") {
+        let trigger = a.get(i + 1).cloned().unwrap_or_else(|| "/tmp/gw-trigger".into());
+        let est_pid = unsafe { libc::getpid() };
+        let pid = unsafe { libc::fork() };
+        if pid > 0 { println!("establishing_pid={est_pid} holder_pid={pid}"); std::process::exit(0); } // establisher exits at once
+        // holder: keep the inherited connected fd, wait for the trigger, then speak
+        for _ in 0..600 { if std::path::Path::new(&trigger).exists() { break; } std::thread::sleep(std::time::Duration::from_millis(100)); }
+    }
     if fork { // T-6.4-007: a child inherits the connected descriptor and speaks first
         let pid = unsafe { libc::fork() };
         if pid > 0 { let mut st = 0; unsafe { libc::waitpid(pid, &mut st, 0) }; std::process::exit(libc::WEXITSTATUS(st)); }
     }
     let send = |bytes: &[u8]| -> bool {
+        if let Some(case) = creds_case.as_deref() {
+            let me = unsafe { libc::ucred { pid: libc::getpid(), uid: libc::getuid(), gid: libc::getgid() } };
+            let forged = libc::ucred { pid: 1, uid: 0, gid: 0 };
+            let mut iov = libc::iovec { iov_base: bytes.as_ptr() as *mut _, iov_len: bytes.len() };
+            let mut cbuf = [0u8; 128]; let mut m: libc::msghdr = unsafe { std::mem::zeroed() };
+            m.msg_iov = &mut iov; m.msg_iovlen = 1;
+            let ucred_len = std::mem::size_of::<libc::ucred>();
+            let n_cmsg = match case { "none" => 0, "two" => 2, _ => 1 };
+            if n_cmsg > 0 {
+                m.msg_control = cbuf.as_mut_ptr() as *mut _;
+                let each = unsafe { libc::CMSG_SPACE(ucred_len as u32) } as usize;
+                m.msg_controllen = each * n_cmsg;
+                unsafe {
+                    let mut c = libc::CMSG_FIRSTHDR(&m);
+                    for i in 0..n_cmsg {
+                        let payload_len = if case == "short" { 3 } else { ucred_len };
+                        (*c).cmsg_level = libc::SOL_SOCKET; (*c).cmsg_type = libc::SCM_CREDENTIALS; (*c).cmsg_len = libc::CMSG_LEN(payload_len as u32) as usize;
+                        let src = if case == "forged" { &forged } else { &me };
+                        std::ptr::copy_nonoverlapping(src as *const libc::ucred as *const u8, libc::CMSG_DATA(c), payload_len.min(ucred_len));
+                        if i + 1 < n_cmsg { c = libc::CMSG_NXTHDR(&m, c); }
+                    }
+                }
+            }
+            let n = unsafe { libc::sendmsg(fd, &m, 0) };
+            let e = if n < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+            println!("case={case} cmsgs={n_cmsg} sendmsg_errno={e}");
+            return n >= 0;
+        }
         if rights { // T-6.4-006: attach a descriptor with SCM_RIGHTS
             let mut iov = libc::iovec { iov_base: bytes.as_ptr() as *mut _, iov_len: bytes.len() };
             let mut cbuf = [0u8; 24]; let mut m: libc::msghdr = unsafe { std::mem::zeroed() };
