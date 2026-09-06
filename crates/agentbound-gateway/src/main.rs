@@ -19,7 +19,11 @@ pub struct Projection { pub authorization_id: String, pub allocation_id: String,
     /// per-operation-id consumption (operations admitted, payload bytes accepted): the budget state that R-GW-7 enforces. It is
     /// persisted to the lifecycle record store after every admitted operation and restored on reconstruct, so a gateway restart
     /// can never reset a session's budget (WP3.1 item 3).
-    pub used: std::collections::BTreeMap<String, (u64, u64)> }
+    pub used: std::collections::BTreeMap<String, (u64, u64)>,
+    /// completed-operation state per (operation_id, idempotency_key), so a repeated key returns the original outcome instead of
+    /// repeating a non-idempotent action (component-interfaces §5). In-memory only: a gateway restart drops the session's
+    /// connections anyway, so no replay can span one.
+    pub idem: std::collections::BTreeMap<(String, String), (String, i64, Value)> }
 
 pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn>, pub inherited: Vec<(String, OwnedFd)> }
 
@@ -79,7 +83,7 @@ fn main() {
 impl Gateway {
     /// Bounded: lifecycle may itself be calling back into this process (`deny_admission`/`release`), and both daemons serve one
     /// request at a time. A timeout here surfaces as a fail-closed refusal, never as a wedged gateway.
-    fn lc(&self, op: &str, body: Value) -> Option<Value> { wire::connect_bounded(&self.cfg.lifecycle_sock, 4_000).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
+    fn lc(&self, op: &str, body: Value) -> Option<Value> { wire::connect_bounded(&self.cfg.lifecycle_sock, ab_common::wire::CROSS_DAEMON_MS).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
     /// D4.7: on start, rebuild projections only for records lifecycle still reports live; no connection survives.
     fn reconstruct(&mut self) {
         // boot ordering: lifecycle is Type=simple, so After= does not imply its socket is bound yet — retry for up to ~10 s
@@ -109,7 +113,7 @@ impl Gateway {
         // allocation suffix); projection state itself is rebuilt from the launch-record store, never from the fd.
         if let Some(pos) = self.inherited.iter().position(|(n, _)| *n == suffix) {
             let (_, listener) = self.inherited.remove(pos);
-            self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0, used: Default::default() });
+            self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, idem: Default::default(), ops: vec![], bytes_used: 0, op_count: 0, used: Default::default() });
             return Ok(path);
         }
         let _ = std::fs::remove_file(&path);
@@ -118,7 +122,7 @@ impl Gateway {
         // one session; the establishment check (auth.rs) refuses any peer UID other than the allocation's.
         let listener = wire::listen(&path, 0o666).map_err(|e| e.to_string())?;
         if let Err(e) = wire::fdstore_push(&suffix, listener.as_raw_fd()) { eprintln!("gateway: fd store unavailable ({e}); a restart will orphan this session's socket node"); }
-        self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, ops: vec![], bytes_used: 0, op_count: 0, used: Default::default() });
+        self.by_alloc.insert(aid.to_string(), Projection { authorization_id: az.into(), allocation_id: aid.into(), uid, gid, path: path.clone(), listener, lrd: None, admission: false, record: None, idem: Default::default(), ops: vec![], bytes_used: 0, op_count: 0, used: Default::default() });
         Ok(path)
     }
     /// D7 item 8: audit loss follows the manifest's `audit.loss_behaviour`. The gateway cannot stop a session itself; on `quarantine`
@@ -222,7 +226,7 @@ impl Gateway {
         let outcome = session::handle(self, i, pk);
         if let Err((class, rule, detail, close)) = outcome {
             let cr = self.by_alloc.get(&self.conns[i].allocation_id).map(Self::corr).unwrap_or_default();
-            self.emit(if rule == "process_mismatch" { "gateway.process_mismatch" } else if rule == "descriptor_transfer" { "gateway.descriptor_transfer_rejected" } else if class == wire::CLASS_INVALID || rule == "process_mismatch" { "gateway.packet_rejected" } else { "gateway.operation_denied" }, "deny", &cr, if class == wire::CLASS_INVALID || rule == "process_mismatch" { Value::obj(vec![("class", Value::s(class)), ("credential_pid", Value::Int(self.conns[i].last_cred_pid as i64)), ("detail", Value::s(&detail)), ("establishing_pid", Value::Int(self.conns[i].inst.pid as i64)), ("rule", Value::s(rule))]) } else { Value::obj(vec![("class", Value::s(class)), ("credential_pid", Value::Int(self.conns[i].last_cred_pid as i64)), ("detail", Value::s(&detail)), ("establishing_pid", Value::Int(self.conns[i].inst.pid as i64)), ("operation", Value::s(&detail.split(' ').nth(1).unwrap_or("").to_string())), ("operation_seq", Value::Int(0)), ("rule", Value::s(rule))]) });
+            self.emit(if rule == "process_mismatch" { "gateway.process_mismatch" } else if rule == "descriptor_transfer" { "gateway.descriptor_transfer_rejected" } else if class == wire::CLASS_INVALID || rule == "process_mismatch" { "gateway.packet_rejected" } else { "gateway.operation_denied" }, "deny", &cr, if class == wire::CLASS_INVALID || rule == "process_mismatch" { Value::obj(vec![("class", Value::s(class)), ("credential_pid", Value::Int(self.conns[i].last_cred_pid as i64)), ("detail", Value::s(&detail)), ("establishing_pid", Value::Int(self.conns[i].inst.pid as i64)), ("rule", Value::s(rule))]) } else { Value::obj(vec![("class", Value::s(class)), ("credential_pid", Value::Int(self.conns[i].last_cred_pid as i64)), ("detail", Value::s(&detail)), ("establishing_pid", Value::Int(self.conns[i].inst.pid as i64)), ("idempotency_key", Value::s(&self.conns[i].last_idem)), ("operation", Value::s(&detail.split(' ').nth(1).unwrap_or("").to_string())), ("operation_seq", Value::Int(0)), ("rule", Value::s(rule))]) });
             // D7 item 9: a denial names the requirement, the authorization, the launch record and the trace — of this session only
             let mut reply = wire::reply_err(class, rule, &detail);
             let mut b = reply.get("body").cloned().unwrap_or(Value::Null);

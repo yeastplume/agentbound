@@ -1,5 +1,5 @@
 //! Session-side gateway client (statically linked into the workload image). Not privileged code.
-//! ab-gwclient <socket> <operation_id> <operation> <args-canonical-json> [payload-file] [--fork] [--scm-rights]
+//! ab-gwclient <socket> <operation_id> <operation> <args-canonical-json> [payload-file] [--idem <key>] [--fork] [--scm-rights]
 //! One packet = one message; payload follows in ≤128 KiB chunks; every packet carries the kernel credential.
 use sha2::{Digest, Sha256};
 use std::io::Write;
@@ -91,11 +91,24 @@ fn main() {
     let sock_type = if a.iter().any(|x| x == "--stream") { libc::SOCK_STREAM } else if a.iter().any(|x| x == "--dgram") { libc::SOCK_DGRAM } else { libc::SOCK_SEQPACKET };
     let payload = a.get(5).filter(|p| !p.starts_with("--")).map(|p| std::fs::read(p).expect("payload")).unwrap_or_default();
     let sha = format!("sha256:{}", hex::encode(Sha256::digest(&payload)));
-    let msg = format!("{{\"args\":{},\"operation\":\"{}\",\"operation_id\":\"{}\",\"payload_len\":{},\"payload_sha256\":\"{}\",\"v\":\"agentbound.gateway.v0.1\"}}", a[4], a[3], a[2], payload.len(), sha);
+    // component-interfaces §5: the request carries an idempotency key. It is the workload's own handle on the effect, so it comes
+    // from the caller (--idem <key>) and defaults to a unique value when the caller does not care.
+    let idem = a.iter().position(|x| x == "--idem").and_then(|i| a.get(i + 1)).cloned()
+        .unwrap_or_else(|| { let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut t) };
+            format!("gw-{}-{}{:09}", std::process::id(), t.tv_sec, t.tv_nsec) });
+    let msg = format!("{{\"args\":{},\"idempotency_key\":\"{}\",\"operation\":\"{}\",\"operation_id\":\"{}\",\"payload_len\":{},\"payload_sha256\":\"{}\",\"v\":\"agentbound.gateway.v0.1\"}}", a[4], idem, a[3], a[2], payload.len(), sha);
     let fd = unsafe { libc::socket(libc::AF_UNIX, sock_type | libc::SOCK_CLOEXEC, 0) };
     if fd < 0 { eprintln!("socket errno={}", std::io::Error::last_os_error()); std::process::exit(3); }
     let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() }; addr.sun_family = libc::AF_UNIX as u16;
     for (i, b) in a[1].bytes().enumerate() { addr.sun_path[i] = b as libc::c_char; }
+    // The gateway serves one request at a time, so a busy gateway can leave a client waiting. An unbounded recv here would make a
+    // slow gateway indistinguishable from a hung workload (WP3.1 round 5 found the same class of bug between the two daemons), so the
+    // client is bounded and reports a timeout as a timeout. 30 s is far longer than any operation this deployment performs.
+    let tv = libc::timeval { tv_sec: 30, tv_usec: 0 };
+    for opt in [libc::SO_RCVTIMEO, libc::SO_SNDTIMEO] {
+        unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, opt, &tv as *const _ as *const libc::c_void, std::mem::size_of::<libc::timeval>() as u32) };
+    }
     if unsafe { libc::connect(fd, &addr as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_un>() as u32) } != 0 { eprintln!("connect errno={}", std::io::Error::last_os_error()); std::process::exit(4); }
     // T-6.4-009: the establishing process exits immediately, leaving a forked holder with the connected descriptor. The holder waits
     // for `--trigger <file>` to appear, then sends its packet. This lets the driver recycle the establishing PID (with privileges no
@@ -150,7 +163,9 @@ fn main() {
         }
         let n = unsafe { libc::send(fd, bytes.as_ptr() as *const _, bytes.len(), libc::MSG_NOSIGNAL) }; n >= 0
     };
-    let recv = || -> Option<String> { let mut b = vec![0u8; 1 << 17]; let n = unsafe { libc::recv(fd, b.as_mut_ptr() as *mut _, b.len(), 0) }; if n <= 0 { None } else { Some(String::from_utf8_lossy(&b[..n as usize]).into_owned()) } };
+    let recv = || -> Option<String> { let mut b = vec![0u8; 1 << 17]; let n = unsafe { libc::recv(fd, b.as_mut_ptr() as *mut _, b.len(), 0) };
+        if n < 0 { let e = std::io::Error::last_os_error(); if e.raw_os_error() == Some(libc::EAGAIN) || e.raw_os_error() == Some(libc::EWOULDBLOCK) { eprintln!("recv timeout after 30s"); } return None; }
+        if n == 0 { None } else { Some(String::from_utf8_lossy(&b[..n as usize]).into_owned()) } };
     let out = std::io::stdout(); let mut out = out.lock();
     if !send(msg.as_bytes()) { eprintln!("send errno={}", std::io::Error::last_os_error()); std::process::exit(5); }
     let Some(r) = recv() else { eprintln!("closed by gateway"); std::process::exit(6) }; let _ = writeln!(out, "{r}");

@@ -256,3 +256,78 @@ the assertions ran, not that they discriminate.
 The three WEAK rows and four RECORDED deviations are unchanged from WP3 and are listed there: T-6.9-006 (cooperative fan-out),
 T-6.4-012 (no TLS upstream in this deployment), D-12 (presence check), D-02/T-6.1-003 (no PTY path exists to deny), T-6.2-008
 (loader inventory), D-15 (no delegation operation exists to narrow).
+
+## Item 5 — D-12 as pre-registered: three blocking findings
+
+D-12's register entry has read `WEAK — presence check only` since WP3. Item 5 was to replace it with the metric the frozen
+catalogue pre-registers in §5: 8 concurrent sessions × 230 atomic effects across three ontology classes, ten seeded repetitions,
+a 30 s correlation deadline, ≥ 99 % over all classes and 100 % over the finite gateway-operation corpus.
+
+The harness is built (`crates/ab-conformance/probe/d12-worker.sh` emits the ground truth, `d12-correlate.py` computes `|C|/|G|`,
+`d12-run.py` drives one seeded repetition), and it was deliberately built to be able to return a number below 1.0. It does. The
+metric is **not met**, and three separate findings stand in the way. None of them is a harness artefact.
+
+### 1. The gateway protocol had no idempotency key at all (fixed)
+
+Test-catalogue §5 defines an atomic effect as an *idempotency-keyed* workload event, and a reconstruction is correct only when it
+matches the ground-truth class, outcome **and idempotency key**. Component-interfaces §5 requires *every* component request to
+carry a key scoped to the receiving component, caller identity, operation and target record, and requires receivers to retain
+enough completed-operation state to return the original outcome rather than repeat a non-idempotent action.
+
+The gateway's own protocol (`agentbound.gateway.v0.1`) had no such field. Its requests carried `operation`, `operation_id`,
+`payload_len` and `payload_sha256` and nothing else, so no gateway effect could be matched to a workload's own log by key, and a
+retried Git push would have been executed twice. The correlator scored the gateway class at **0 %** for exactly this reason.
+
+Fixed rather than narrated: the protocol now carries `idempotency_key`, the gateway scopes it to (allocation, operation_id, key),
+a repeated key with the same operation returns the original reply and emits `gateway.operation_replayed`, a repeated key with a
+different operation is a `conflict`, and the key appears on `gateway.operation_admitted`, `_completed` and `_denied`. Denials
+carry it too, because §5 counts a denied operation as an in-scope effect — that required stashing the key on the connection
+before the grant check, since the generic denial path never sees the parsed request. After the fix the gateway-operation corpus
+reconstructs at **100 %** (15/15 in the last partial run, 88/88 gateway records in the run before it).
+
+### 2. Two of the three effect classes have no telemetry path (open, unfixed)
+
+R-AUD-2 (1B) requires `agentbound-audit` to reconstruct `initiator → agent → session → process → effect` for the whole ontology:
+local objects in the session's world, process lifecycle events, and gateway operations. Only the third exists. The audit store
+contains gateway events and session-lifecycle events and nothing else: no record names an individual file the workload created,
+and none names an individual fork/exec/exit. 220 of every 230 effects — **95.7 % of the metric's denominator** — are therefore
+unattributable, and the measured completeness is **3.5 %** (8/230 for a single session; the eight permitted gateway operations
+were the only effects reconstructed).
+
+This is a design gap, not a bug. Nothing in the implementation was ever built to ingest classes (a) and (b), and the WP2/WP3
+registers never noticed because D-12 was scored by a presence check that only ever looked at event kinds already being emitted.
+Kernel audit is enabled on the host and a path watch on a session workspace does capture syscall records carrying pid, uid and
+the syscall number, so a path to class (a) and (b) ingestion exists on the pinned baseline — but building an audit-netlink
+shipper, deciding how per-session rules are installed and removed, and reconciling the host-global `lost` counter of R-AUD-3 is
+a work package, not a WP3.1 repair. **D-12 cannot be met at 1B without it.**
+
+### 3. The platform cannot currently admit 8 concurrent sessions (open)
+
+The pre-registered profile requires 8 concurrent sessions. Launched together, only 2–3 of 8 succeed. The failures are real and
+of two kinds:
+
+- `gateway_rejected: unavailable:lifecycle:record unavailable` at constructor step 8 — the gateway must fetch the committed
+  record from `agentbound-lifecycle` to activate a projection, and lifecycle is busy serving another construction.
+- `lifecycle_rejected: invalid:constructor_envelope:Stale` at step 8 — the launch binding must be verified within
+  `BINDING_MAX_AGE_S` (60 s) of signing, and the queue ahead of it is longer than that.
+
+The cause is that `agentbound-lifecycle` serves **one request at a time** and its handlers do blocking work inside that
+serialization: `terminate` alone holds the daemon through a 2 s SIGTERM grace plus a bounded wait for cgroup emptiness and init
+exit. Measured on this host: a single construction held the daemon for **17.4 s**, one session took **123 s** from authorization
+to activation, and one termination held it for **61 s**. Component-interfaces §3.6 requires lifecycle to *decide, serialize and
+record* transitions — serializing the *decision* is the requirement; serializing the *waiting* is an implementation choice, and
+it is the one that makes the pre-registered profile unreachable.
+
+This also corrected a fix from round 5. Bounding cross-daemon calls at 4 s was right in kind and wrong in value: 4 s is *below*
+the peer's legitimate service time under load, so it turned a busy peer into a failed launch. The bound now lives in one place
+(`wire::CROSS_DAEMON_MS`, 60 s) with the reasoning that it must exceed the slowest legitimate service time, because its purpose
+is to stop an indefinite wait and not to impose a latency budget. The same class of bug was found and fixed in the in-session
+client: `ab-gwclient`'s `recv` was unbounded, so a slow gateway was indistinguishable from a hung workload — it is now bounded
+at 30 s and reports a timeout as a timeout.
+
+### Consequence for the WP3.1 verdict
+
+D-12 stays **WEAK**, and the honest statement is stronger than that: *the attribution-completeness metric of R-AUD-2 cannot be
+met by this implementation*, because two of its three effect classes are not collected at all. This is the first finding in
+WP3.1 that a repair inside the work package cannot close, and it belongs in the go/no-go as a **narrow-or-defer** recommendation
+on R-AUD-2 rather than as a residual note.

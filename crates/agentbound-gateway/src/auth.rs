@@ -14,6 +14,6 @@ pub fn establish(c: &wire::Conn, p: &Projection, existing: usize, max: usize) ->
     // one connection per process instance
     wire::set_passcred(c.fd.as_raw_fd()).map_err(|e| ("passcred", e.to_string()))?;
     let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(libc::dup(c.fd.as_raw_fd())) };
-    Ok(Conn { fd, pidfd, inst, allocation_id: p.allocation_id.clone(), uid: c.peer.uid, gid: c.peer.gid, ops: 0, last_cred_pid: 0, pending: None })
+    Ok(Conn { last_idem: String::new(), fd, pidfd, inst, allocation_id: p.allocation_id.clone(), uid: c.peer.uid, gid: c.peer.gid, ops: 0, last_cred_pid: 0, pending: None })
 }
 use std::os::fd::{AsRawFd, FromRawFd};

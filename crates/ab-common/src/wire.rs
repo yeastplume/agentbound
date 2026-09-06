@@ -55,6 +55,12 @@ pub fn peercred(fd: RawFd) -> io::Result<Peer> {
     Ok(Peer { pid: uc.pid, uid: uc.uid, gid: uc.gid })
 }
 
+/// The bound used for every call between two daemons. It must EXCEED the slowest legitimate service time of the peer, because each
+/// daemon serves one request at a time: with eight concurrent constructions a single `commit_binding` was measured holding
+/// `agentbound-lifecycle` for 17.4 s (WP3.1 item 5), so an earlier 4 s bound made a busy peer indistinguishable from a hung one and
+/// failed launches that would otherwise have succeeded. This value exists to stop an indefinite wait, not to impose a latency budget.
+pub const CROSS_DAEMON_MS: i64 = 60_000;
+
 /// Connect with a bounded receive/send timeout. Required for any call between two daemons that can each call the other: both
 /// `agentbound-lifecycle` and `agentbound-gateway` serve one request at a time, so a mutual call (lifecycle→gateway `release` while
 /// the gateway is in a lifecycle `record_budget`) would otherwise wedge both processes and every session with them. With a bound the

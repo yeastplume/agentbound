@@ -85,6 +85,16 @@
     }
   },
   "invocation_profiles": {
+    "profile:d12-worker": {
+      "argv": [
+        "/bin/sh",
+        "/image/d12-worker.sh"
+      ],
+      "env": [
+        "PATH=/bin:/usr/bin",
+        "HOME=/workspace"
+      ]
+    },
     "profile:git-worker": {
       "argv": [
         "/bin/sh",
@@ -206,10 +216,11 @@
         "resource:workspace-eng"
       ],
       "runtimes": [
-        "runtime:sh",
-        "runtime:scripted-loop",
+        "runtime:d12-worker",
+        "runtime:git-worker",
         "runtime:probe",
-        "runtime:git-worker"
+        "runtime:scripted-loop",
+        "runtime:sh"
       ]
     },
     "agent:finance-agent": {
@@ -346,6 +357,10 @@
     }
   },
   "runtimes": {
+    "runtime:d12-worker": {
+      "artifact_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "invocation_profile": "profile:d12-worker"
+    },
     "runtime:git-worker": {
       "artifact_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "invocation_profile": "profile:git-worker"
@@ -432,6 +447,7 @@
         "task_cancelled": "terminate"
       },
       "runtimes": [
+        "runtime:d12-worker",
         "runtime:git-worker",
         "runtime:probe"
       ],

@@ -23,10 +23,13 @@ fn detail_members(kind: &str) -> Option<&'static [&'static str]> {
         "gateway.connection_established" => &["cgroup", "establishing_pid", "pidfd", "pidfs_inode", "pidns", "start_time", "uid"],
         "gateway.connection_refused" => &["detail", "peer_pid", "peer_uid", "rule"], "gateway.connection_closed" => &["establishing_pid", "operations", "reason"],
         "gateway.process_mismatch" | "gateway.descriptor_transfer_rejected" | "gateway.packet_rejected" => &["class", "credential_pid", "detail", "establishing_pid", "rule"],
-        "gateway.operation_admitted" => &["credential_pid", "operation", "operation_seq", "payload_bytes", "pidfs_inode"],
-        "gateway.operation_completed" => &["operation", "operation_seq", "result"],
+        "gateway.operation_admitted" => &["credential_pid", "idempotency_key", "operation", "operation_seq", "payload_bytes", "pidfs_inode"],
+        "gateway.operation_completed" => &["idempotency_key", "operation", "operation_seq", "result"],
+        // a repeated idempotency key returns the original outcome without repeating the action (component-interfaces §5); the replay
+        // is recorded so a reconstruction can tell one intended effect from its retries (test-catalogue §5 dedup rule)
+        "gateway.operation_replayed" => &["idempotency_key", "operation", "operation_seq"],
         "gateway.upstream_rejected" => &["detail", "operation", "operation_seq", "rule"],
-        "gateway.operation_denied" => &["class", "credential_pid", "detail", "establishing_pid", "operation", "operation_seq", "rule"],
+        "gateway.operation_denied" => &["class", "credential_pid", "detail", "establishing_pid", "idempotency_key", "operation", "operation_seq", "rule"],
         _ => return None,
     })
 }
