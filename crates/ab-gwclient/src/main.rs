@@ -15,6 +15,18 @@ fn main() {
         }
         return;
     }
+    if a.get(1).map(String::as_str) == Some("--fdbound") { // T-6.9-002: RLIMIT_NOFILE read back from the kernel, then opened until EMFILE
+        let mut rl = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) } != 0 { println!("rlimit_error errno={}", std::io::Error::last_os_error().raw_os_error().unwrap_or(0)); std::process::exit(1); }
+        let ceiling = 200_000usize; let mut opened = 0usize; let mut errno = 0;
+        // hold the descriptors so the count is the real simultaneous bound, and report from this process (a shell subprocess at the
+        // ceiling cannot write its own result anywhere — that is what made the previous measurement silently empty).
+        let mut held: Vec<i32> = Vec::new();
+        while opened < ceiling { let fd = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDONLY) }; if fd < 0 { errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0); break; } held.push(fd); opened += 1; }
+        for fd in held { unsafe { libc::close(fd) }; }
+        println!("rlimit_cur={} rlimit_max={} opened={opened} errno={errno}", rl.rlim_cur, rl.rlim_max);
+        return;
+    }
     if a.get(1).map(String::as_str) == Some("--fds") { // T-6.3-003: enumerate inherited descriptors
         for e in std::fs::read_dir("/proc/self/fd").unwrap().flatten() { let n = e.file_name().to_string_lossy().to_string(); if let Ok(t) = std::fs::read_link(e.path()) { println!("{n} {}", t.display()); } }
         return;

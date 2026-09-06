@@ -237,8 +237,17 @@ fn main() {
     let (_, ifc) = ns("ls /sys/class/net 2>&1; cat /proc/net/dev | tail -n +3 | cut -d: -f1"); g.rec("T-6.4-002", !ifc.contains("eth") && !ifc.contains("ens") && ifc.lines().filter(|l| !l.trim().is_empty()).all(|l| l.contains("lo") || l.contains("No such")), format!("session netns interfaces: {}", ifc.replace('\n', " ").trim()));
     let (_, hs) = ns("ls /run/agentbound /var/run/agentbound 2>&1 | head -2"); g.rec("T-6.4-003", hs.contains("No such"), format!("host socket dir from session: {}", hs.trim()));
     let (_, gwls) = ns("ls -la /run/gateway.sock; ls /run | wc -l"); g.rec("T-6.4-003.only", gwls.contains("srw") && gwls.trim().ends_with('1'), format!("exactly one socket node in /run: {}", gwls.replace('\n', " ")));
-    let (_, py) = sh(&format!("nsenter -t {ipid} -n -- python3 -c \"import socket\ns=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\ntry:\n s.connect(chr(0)+'agentbound-host-abstract'); print('connected')\nexcept OSError as e: print('err',e.errno)\n\" 2>&1"));
-    g.rec("T-6.4-004", py.contains("err"), format!("abstract socket from session netns: {}", py.trim()));
+    // positive control: bind a real abstract socket in the host netns, prove it is reachable from the host, then prove the
+    // session netns cannot reach it. Without the control, an unbound name yields ECONNREFUSED for the wrong reason.
+    std::fs::write("/tmp/abs-listen.py", "import socket,sys,time\ns=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\ns.bind(chr(0)+'agentbound-host-abstract')\ns.listen(8)\nprint('bound',flush=True)\ntime.sleep(30)\n").unwrap();
+    let probe_abs = "import socket,sys\ns=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\ns.settimeout(2)\ntry:\n s.connect(chr(0)+'agentbound-host-abstract'); print('connected')\nexcept OSError as e: print('err',e.errno)";
+    std::fs::write("/tmp/abs-probe.py", probe_abs).unwrap();
+    sh("setsid python3 /tmp/abs-listen.py >/tmp/abs.out 2>&1 & sleep 1");
+    let (_, host_reach) = sh("python3 /tmp/abs-probe.py 2>&1");
+    let (_, py) = sh(&format!("nsenter -t {ipid} -n -- python3 /tmp/abs-probe.py 2>&1"));
+    let bound = sh("cat /tmp/abs.out").1.contains("bound");
+    g.rec("T-6.4-004", bound && host_reach.contains("connected") && py.contains("err 111"), format!("positive control: host abstract socket bound={bound} reachable from host={}; from session netns={} (ECONNREFUSED=111: abstract namespace is per-netns)", host_reach.trim(), py.trim()));
+    sh("pkill -f abs-listen.py");
     // ---- T-6.4-005: a process in the session's namespaces but outside its scope cgroup (host nsenter as the session uid) is refused at establishment ----
     let (_, sm) = sh(&format!("nsenter -t {ipid} -m -n -p -S {guid} -G {guid} -- ab-gwclient /run/gateway.sock x gateway.ping '{{}}' 2>&1 | head -c 120; sleep 1; grep -c scope_mismatch /var/lib/agentbound/gateway/audit-gateway.jsonl"));
     g.rec("T-6.4-005", sm.contains("closed by gateway") && sm.lines().last().unwrap_or("0").trim().parse::<i32>().unwrap_or(0) >= 1, format!("outside-scope peer with session uid: {}", sm.replace('\n', " ")));
@@ -246,6 +255,13 @@ fn main() {
     std::fs::write("/tmp/gw-forge.py", GW_FORGE).unwrap();
     let (_, forge) = sh(&format!("python3 /tmp/gw-forge.py /run/agentbound/gw/{}.sock {ipid} 2>&1", js(&v, "allocation_id").rsplit(':').next().unwrap_or("")));
     g.rec("T-6.4-008", forge.lines().filter(|l| l.starts_with("DENY")).count() >= 3 && !forge.contains("ACCEPT"), forge.replace('\n', " | "));
+    // Control for the new-connection half of T-6.4-014: the same peer, twice. `establish` tests admission before peer identity, so the
+    // host-root forge client refused `uid_mismatch` while the session admits must be refused `admission_closed` once quiesced. The rule
+    // is read from the gateway's own `gateway.connection_refused` event for this allocation, not from the client's output text.
+    let alloc_suffix = js(&v, "allocation_id").rsplit(':').next().unwrap_or("").to_string();
+    let alloc_id = js(&v, "allocation_id");
+    let refused_rule = || -> String { sh(&format!("python3 /tmp/gw-forge.py /run/agentbound/gw/{alloc_suffix}.sock {ipid} >/dev/null 2>&1; sleep 1; grep -h connection_refused /var/lib/agentbound/audit/events.jsonl | grep '{alloc_id}' | tail -1 | grep -oE '\"rule\":\"[a-z_]*\"'")).1.trim().to_string() };
+    let rule_open = refused_rule();
     // ---- T-6.4-014 / T-6.3-007: the worker holds an established connection (GW-HELD); revoke while held; its next packet must be refused ----
     let held_out = format!("/var/lib/agentbound/sessions/{}/rootfs/workspace/held-{guid}.out", js(&v, "allocation_id").rsplit(':').next().unwrap_or(""));
     let _ = &held_out;
@@ -257,17 +273,23 @@ fn main() {
     sh(&format!("touch {ws}/revoked-{guid}")); // marker lands while frozen; the client reads it when thawed
     std::thread::sleep(std::time::Duration::from_millis(500));
     let gst_q = { match wire::connect("/run/agentbound/gateway.sock") { Ok(c) => c.call(&wire::request("status", "conf-gwq", Value::obj(vec![("launch_record_digest", Value::s(&glrd))]))).unwrap_or(Value::Null), Err(_) => Value::Null } };
-    let (_, frozen_new) = sh(&format!("python3 /tmp/gw-forge.py /run/agentbound/gw/{}.sock {ipid} 2>&1 | head -1", js(&v, "allocation_id").rsplit(':').next().unwrap_or("")));
+    // a *legitimate* new peer (session uid, inside the session's scope cgroup and namespaces) must be refused while quiesced, and
+    // refused for admission — not for uid/scope. The frozen session's own processes cannot run, so the driver joins the scope itself.
+    let frozen_new = refused_rule();
     let r = sig(&glrd, "authority_revoked"); let beh = js(&r, "body.behaviour");
+    let sig_reply: String = json::canonical(&r).iter().map(|b| *b as char).collect::<String>().chars().take(200).collect();
     std::thread::sleep(std::time::Duration::from_secs(3));
     let (_, late) = sh(&format!("cat {ws}/held-{guid}.out 2>&1 | head -c 1200; rm -f {ws}/revoked-{guid}"));
     let gst = { match wire::connect("/run/agentbound/gateway.sock") { Ok(c) => c.call(&wire::request("status", "conf-gw", Value::obj(vec![("launch_record_digest", Value::s(&glrd))]))).unwrap_or(Value::Null), Err(_) => Value::Null } };
-    g.rec("T-6.4-014", qst == "quiescing" && js(&gst_q, "body.admission") == "false" && beh == "terminate" && late.contains("\"ok\":true") && (late.contains("admission_closed") || late.contains("closed by gateway")), format!("quiesce state={qst} gateway admission={} new-conn-while-quiesced={} behaviour={beh}; held connection's post-denial packet: {} ; status after seal: {}", js(&gst_q, "body.admission"), frozen_new.trim(), late.lines().last().unwrap_or("").chars().take(120).collect::<String>(), js(&gst, "body.rule")));
+    g.rec("T-6.4-014", qst == "quiescing" && js(&gst_q, "body.admission") == "false" && beh == "terminate" && late.contains("\"ok\":true") && late.contains("admission_closed") && rule_open.contains("uid_mismatch") && frozen_new.contains("admission_closed"), format!("quiesce state={qst} gateway admission={} new-conn-while-quiesced={} (control: the identical peer got {} while the session was admitting, so the refusal is by admission state, not peer identity) behaviour={beh}; held connection's post-denial packet: {} ; revocation reply: {sig_reply}; status after seal: {}", js(&gst_q, "body.admission"), frozen_new.trim(), rule_open.trim(), late.lines().last().unwrap_or("").chars().take(120).collect::<String>(), js(&gst, "body.rule")));
     std::thread::sleep(std::time::Duration::from_secs(4));
     let (_, chain) = sh(&format!("grep '{glrd}' /var/lib/agentbound/audit/events.jsonl | grep -o '\"event\":\"[a-z._]*\"' | sort -u | tr -d '\"' | sed 's/event://' | tr '\\n' ' '"));
     let need = ["session.launch_record_committed", "gateway.grants_loaded", "session.activated", "gateway.connection_established", "gateway.operation_admitted", "gateway.operation_completed", "gateway.operation_denied", "session.revocation_received", "session.termination_started", "gateway.admission_denied", "session.terminated", "gateway.released", "session.cleanup_completed", "session.identity_released", "session.sealed"];
     let missing: Vec<&str> = need.iter().copied().filter(|k| !chain.contains(k)).collect();
-    g.rec("D-12", missing.is_empty(), format!("completeness: {}/{} required kinds on record; missing={:?}", need.len() - missing.len(), need.len(), missing));
+    // NOT the pre-registered D-12 metric (catalogue §5: 8 sessions × 230 effects × 10 seeded repetitions, correlation deadlines,
+    // denied operations, ≥99% overall and 100% gateway attribution). This is a single-record presence check and is recorded WEAK
+    // under that name until WP3.1 item 5 implements the metric; it must not be read as attribution completeness.
+    g.weak("D-12", missing.is_empty(), format!("presence check only, NOT the pre-registered metric: {}/{} required kinds on one launch record; missing={:?}", need.len() - missing.len(), need.len(), missing));
     g.rec("T-6.3-007", chain.contains("gateway.released") && chain.contains("session.sealed"), "post-termination: projection released, record sealed, socket node removed with the mount namespace");
     let (_, sockleft) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
     g.rec("T-6.3-007.socket", sockleft.trim() == "0", format!("host-side socket nodes left for this allocation: {}", sockleft.trim()));
@@ -282,12 +304,20 @@ fn main() {
     let (_, refs2) = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git for-each-ref' | grep -c steal");
     g.rec("T-6.4-013", rc2 == 0 && refs2.trim() == "0" && rep.contains("\"rule\"") && !rep.contains(&format!("refs/agentbound/{sid}/")), format!("caller-supplied session/trace refused (closed argument set); no ref under the other session's namespace: {}", rep.replace('\n', " ")));
     // ---- D4.7: gateway restart reconstructs projections from the launch-record store; the live session keeps working, no caller state consulted ----
+    // Evidence is scoped to THIS restart: the hash-chained receiver must gain exactly one `gateway.reconstructed` (the component spool
+    // alone would also hold events the receiver rejected), that event must report >= 1 projection, and a legitimate in-scope peer must
+    // complete an operation afterwards. A run where reconstruction produced nothing can no longer pass.
     let (_, before) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v2, "allocation_id").rsplit(':').next().unwrap_or("x")));
-    sh("systemctl restart agentbound-gateway; sleep 1");
-    let (_, rec_ev) = sh("grep gateway.reconstructed /var/lib/agentbound/gateway/audit-gateway.jsonl | tail -1 | grep -o '\"projections\":[0-9]*'");
+    let chain_recs = || -> i32 { sh("grep -hc gateway.reconstructed /var/lib/agentbound/audit/events.jsonl").1.trim().parse().unwrap_or(0) };
+    let recs_before = chain_recs();
+    sh("systemctl restart agentbound-gateway");
+    let mut recs_after = recs_before;
+    for _ in 0..20 { std::thread::sleep(std::time::Duration::from_millis(500)); recs_after = chain_recs(); if recs_after > recs_before { break; } }
+    let (_, rec_ev) = sh("grep -h gateway.reconstructed /var/lib/agentbound/audit/events.jsonl | tail -1 | grep -oE '\"(projections|stale_descriptors_dropped)\":[0-9]+' | tr '\n' ' '");
+    let projections: i32 = rec_ev.split("\"projections\":").nth(1).and_then(|x| x.split(|c: char| !c.is_ascii_digit()).next().and_then(|d| d.parse().ok())).unwrap_or(-1);
     // enter the session's scope cgroup first (host root may move itself), then its namespaces and identity: a legitimate in-scope peer
     let (_, after_ping) = sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scope2}/cgroup.procs; exec nsenter -t {ipid2} -m -n -p -S {uid2} -G {uid2} -- sh -c \"sleep 0.3; ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping {{}}\"' 2>&1 | head -c 200"));
-    g.rec("D4.7-reconstruct", before.trim() == "1" && after_ping.contains("\"pong\":true") && !rec_ev.contains(":0"), format!("socket before restart={} {} ping after restart: {}", before.trim(), rec_ev.trim(), after_ping.replace('\n', " ")));
+    g.rec("D4.7-reconstruct", before.trim() == "1" && recs_after == recs_before + 1 && projections >= 1 && after_ping.contains("\"pong\":true"), format!("socket before restart={}; chained reconstruction events {recs_before}→{recs_after} (exactly one for this restart); event: {}; ping from an in-scope session peer after restart: {}", before.trim(), rec_ev.trim(), after_ping.replace('\n', " ")));
     // ---- T-6.4-009: PID reuse against the per-operation check — a PID recycled to another process instance must not be accepted.
     // Host-side: two connections whose SCM_CREDENTIALS pid names the *establishing* pid but from a different process instance
     // (the forge helper's own process, running with the pid of a dead session process cannot be arranged deterministically; the

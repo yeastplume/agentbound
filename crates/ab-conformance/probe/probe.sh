@@ -47,12 +47,20 @@ cat /proc/net/dev 2>/dev/null | grep -qv '^ *lo\|Inter\|face' ; ok T-6.2-002.net
 # T-6.2-005 / D-07: double-fork orphan (reaped by init later; lifecycle proves at termination)
 (sleep 1000 &) ; r T-6.2-005 FIXTURE "orphan spawned; asserted by D-07 at termination"
 # T-6.9-001: pid fan-out bound (TasksMax from manifest)
+# T-6.9-002: fd bound
+# T-6.9-002 measured in-process by the static client: RLIMIT_NOFILE is read back from the kernel with getrlimit and descriptors are
+# opened until EMFILE. A missing/unparsable measurement is a FAIL (never treated as 0), and the count must stop at the kernel bound.
+m=$(ab-gwclient --fdbound 2>&1); cur=$(echo "$m" | sed -n 's/.*rlimit_cur=\([0-9]*\).*/\1/p'); op=$(echo "$m" | sed -n 's/.*opened=\([0-9]*\).*/\1/p'); er=$(echo "$m" | sed -n 's/.*errno=\([0-9]*\).*/\1/p')
+if [ -z "$cur" ] || [ -z "$op" ]; then r T-6.9-002 FAIL "fd measurement missing: '$m'"
+elif [ "$op" -lt "$cur" ] && [ "$er" = 24 ]; then r T-6.9-002 PASS "opened=$op stopped at RLIMIT_NOFILE=$cur with EMFILE(24)"
+else r T-6.9-002 FAIL "opened=$op rlimit_cur=$cur errno=$er (expected EMFILE below the limit)"; fi
+
+# NOTE: T-6.9-002 MUST run before the T-6.9-001 fork bomb — at TasksMax the shell cannot fork, so command substitution
+# returns empty and any later measurement would be missing rather than bounded.
 # fork failures (EAGAIN at TasksMax) abort a busybox sh loop, so fan out from a subshell and count survivors
 ( i=0; while [ $i -lt 400 ]; do sleep 1000 & i=$((i+1)); done ) 2>/dev/null
 live=0; for d in /proc/[0-9]*; do live=$((live+1)); done; [ "$live" -gt 0 ] && [ "$live" -lt 400 ] && r T-6.9-001 PASS "procs=$live (TasksMax bound)" || r T-6.9-001 FAIL "procs=$live"
 # leave the survivors running: D-06/D-07 verify at termination that they die with the scope
-# T-6.9-002: fd bound
-i=$( ( i=0; while [ $i -lt 2000 ]; do eval "exec $((i+10))</dev/null" 2>/dev/null || break; i=$((i+1)); done; echo $i ) 2>/dev/null ); [ "${i:-0}" -lt 2000 ] && r T-6.9-002 PASS "fds_opened=$i" || r T-6.9-002 FAIL "fds_opened=$i"
 # T-6.9-004: disk bound (root tmpfs 16m)
 dd if=/dev/zero of=/tmp/big bs=1M count=100 2>/dev/null; ok T-6.9-004 $? "dd 100M into tmpfs"
 r PROBE-END PASS done

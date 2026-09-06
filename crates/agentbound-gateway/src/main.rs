@@ -22,13 +22,22 @@ pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>,
 /// Requirement named in a denial (D7 item 9). Rules map to the R-GW / R-ISO requirement whose check produced them.
 pub fn requirement_for(rule: &str) -> &'static str {
     match rule {
-        "process_mismatch" | "scope_mismatch" | "uid_mismatch" | "creds_count" | "peer_gone" | "attribution" => "R-GW-3",
-        "descriptor_transfer" => "R-GW-3",
+        // authentication of the peer process instance and of every packet's credential (D2/D3)
+        "process_mismatch" | "scope_mismatch" | "uid_mismatch" | "credential_count" | "peer_gone" | "one_connection" | "descriptor_transfer" => "R-GW-3",
+        // authorization of the named operation and its arguments against the record's grants (D3)
         "operation_not_granted" | "scope_repository" | "args_schema" | "ref_tail_grammar" | "ref_tail_marker" | "ref_tail_charset" | "ref_tail_empty_or_long" | "ref_tail_names_ref" | "tip_grammar" => "R-GW-4",
-        "admission_closed" => "R-GW-2",
-        "budget_bytes" | "budget_operations" | "connection_limit" | "packet_truncated" => "R-GW-7",
-        "bundle_invalid" | "bundle_fetch" | "fsck" | "tip_mismatch" | "budget_objects" | "upstream_rejected" | "payload_missing" | "payload_sha256" => "R-GW-5",
-        _ => "R-GW-1",
+        // admission state of the launch record (D4: revocation, deny_admission)
+        "admission_closed" | "unknown_record" => "R-GW-2",
+        // resource bounds (D1/R-GW-7)
+        "budget_bytes" | "budget_operations" | "connection_limit" | "oversize_packet" | "payload_overrun" => "R-GW-7",
+        // upstream mediation: bundle import, object budget, push refusal (D3/R-GW-5)
+        "bundle_invalid" | "bundle_fetch" | "fsck" | "tip_mismatch" | "budget_objects" | "upstream_rejected" | "payload_digest" | "payload_missing" => "R-GW-5",
+        // typed-envelope validity: the session spoke something that is not the protocol (R-GW-1)
+        "parse" | "envelope" | "version" | "send" | "unknown_op" => "R-GW-1",
+        // control-socket rules (lifecycle-facing, never reachable by a session)
+        "peer_not_permitted" | "not_projected" => "R-GW-6",
+        // an unmapped rule is a defect, not an R-GW-1 catch-all: name it so it is visible in the denial and in tests.
+        _ => "R-GW-0-unmapped",
     }
 }
 
@@ -200,5 +209,23 @@ impl Gateway {
             if close { self.close_conn(i, rule); return false }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every rule string the gateway can emit MUST map to a requirement; `R-GW-0-unmapped` is a defect marker.
+    /// The list is maintained by hand and cross-checked by `grep -o 'CLASS_[A-Z]*, "[a-z_]*"' src/*.rs` when a rule is added.
+    #[test]
+    fn every_rule_maps() {
+        for r in ["process_mismatch", "scope_mismatch", "uid_mismatch", "credential_count", "peer_gone", "one_connection", "descriptor_transfer",
+                  "operation_not_granted", "scope_repository", "args_schema", "ref_tail_grammar", "ref_tail_marker", "ref_tail_charset",
+                  "ref_tail_empty_or_long", "ref_tail_names_ref", "tip_grammar", "admission_closed", "unknown_record", "budget_bytes",
+                  "budget_operations", "connection_limit", "oversize_packet", "payload_overrun", "bundle_invalid", "bundle_fetch", "fsck",
+                  "tip_mismatch", "budget_objects", "upstream_rejected", "payload_digest", "payload_missing", "parse", "envelope", "version", "send",
+                  "unknown_op", "peer_not_permitted", "not_projected"] {
+            assert_ne!(super::requirement_for(r), "R-GW-0-unmapped", "rule {r} is not mapped to a requirement");
+        }
+        assert_eq!(super::requirement_for("creds_count"), "R-GW-0-unmapped", "the pre-WP3.1 typo must no longer resolve");
     }
 }

@@ -36,7 +36,16 @@ fam=$(ab-gwclient --families 2>&1); echo "$fam" | grep -q OPENED && r T-6.4-001 
 # T-6.3-003: inherited descriptors are exactly 0/1/2 → console/null; nothing else (no socket, no credential file)
 fds=$(ab-gwclient --fds 2>&1 | grep -v "^3 /proc" ); extra=$(echo "$fds" | awk '$1>2' | grep -v "/proc/.*/fd" | wc -l); [ "$extra" = 0 ] && r T-6.3-003 PASS "fds: $(echo $fds | tr '\n' ' ')" || r T-6.3-003 FAIL "$(echo $fds)"
 # T-6.3-004: a child process inherits no credential (env/fds); it can only use the authenticated socket itself as a fresh peer
-c=$(sh -c 'env | grep -ciE "token|secret|passw|credential"; ls /proc/self/fd | wc -l'); r T-6.3-004 PASS "child env credential hits=$(echo $c | cut -d" " -f1) fds=$(echo $c | cut -d" " -f2)"
+# assertion: (a) the child's environment carries no credential-like variable, (b) the child inherits no descriptor beyond 0/1/2,
+# (c) a child that inherits the *parent's connected socket* cannot use it (per-packet credential names the parent instance:
+# process_mismatch), and (d) the child can still establish its own authenticated connection. Any missing measurement is a FAIL.
+ch=$(sh -c 'env | grep -ciE "token|secret|passw|credential"' 2>/dev/null); cfd=$(sh -c 'ls /proc/self/fd | wc -l' 2>/dev/null)
+ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' --fork >/tmp/c4fork 2>&1; forked=$(cat /tmp/c4fork 2>/dev/null)
+ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping '{}' >/tmp/c4own 2>&1; own=$(cat /tmp/c4own 2>/dev/null)
+case "$ch$cfd" in ''|*[!0-9]*) r T-6.3-004 FAIL "child measurement missing (env='$ch' fds='$cfd')";; *)
+  if [ "$ch" -eq 0 ] && [ "$cfd" -le 5 ] && echo "$forked" | grep -q 'process_mismatch\|closed by gateway' && echo "$own" | grep -q '"pong":true'; then
+    r T-6.3-004 PASS "child env credential hits=$ch fds=$cfd; inherited connection refused ($(echo "$forked" | grep -o '\"rule\":\"[a-z_]*\"' | head -1)); child's own connection authenticated"
+  else r T-6.3-004 FAIL "env=$ch fds=$cfd forked='$(echo $forked | head -c 80)' own='$(echo $own | head -c 60)'"; fi;; esac
 # T-6.3-006: gateway error replies and the adapter's porcelain never echo the credential (scan every reply captured so far)
 grep -hiE "password|authorization:|token" /tmp/o /tmp/out 2>/dev/null | grep -v '"rule"' | head -1 | grep -q . && r T-6.3-006 FAIL "credential-like text in replies" || r T-6.3-006 PASS "no credential-like text in gateway replies/adapter output"
 # T-6.4-010: SOCK_STREAM / SOCK_DGRAM connect to the gateway path (SEQPACKET listener refuses both with EPROTOTYPE/ECONNREFUSED)
