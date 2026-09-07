@@ -264,8 +264,25 @@ catalogue pre-registers in §5: 8 concurrent sessions × 230 atomic effects acro
 a 30 s correlation deadline, ≥ 99 % over all classes and 100 % over the finite gateway-operation corpus.
 
 The harness is built (`crates/ab-conformance/probe/d12-worker.sh` emits the ground truth, `d12-correlate.py` computes `|C|/|G|`,
-`d12-run.py` drives one seeded repetition), and it was deliberately built to be able to return a number below 1.0. It does. The
-metric is **not met**, and three separate findings stand in the way. None of them is a harness artefact.
+`d12-run.py` drives one seeded repetition, `d12-all.sh` drives the ten), and it was deliberately built to be able to return a number
+below 1.0. It does. The metric is **not met**, and three separate findings stand in the way. None of them is a harness artefact.
+
+**The independent validation found the harness itself unfaithful to the profile, and it was right.** What is measured now, and what
+was wrong before:
+
+| §5 requires | Was | Now |
+|---|---|---|
+| 20 effects/s aggregate | unpaced — as fast as the shell could go | 0.4 s per effect per session = 2.5/s × 8 = 20/s, verified at 63 lines in 25 s |
+| 300 s duration | no window; the driver waited up to 1 200 s | 300 s from last launch; a repetition that has not declared every end marker inside it is `valid: false` |
+| 10 Git gateway ops: 8 permitted `push-staging-ref`, 2 denied | 10 × `gateway.ping` | 8 real `git.push_staging` to distinct staging refs + 2 denials (out-of-scope repository; force-push operation not held) |
+| 230 effects per session | as emitted | verified per repetition: 200 local-object + 20 process-lifecycle + 8 permitted + 2 denied = 230, denominator exactly 1 840 |
+| 30 s correlation deadline | correlator ran immediately | driver sleeps exactly 30 s after the end marker, then correlates, and records both wall times |
+| N = 10 seeded repetitions | 1 | 10, seed = SHA-256("D-12" ‖ n)[:16], recorded in each result |
+| the number itself | **hard-coded in the register's prose** | computed by the D-12 row from the retained result files; no valid measurement is a FAIL, not a pass |
+| aborted attempts | overwritten silently | retained as `valid: false` with launch errors and incomplete sessions, never re-run in place, never scored |
+
+Every input of the measurement is retained next to its result under `/var/lib/agentbound/evidence/d12/`: the eight ground-truth
+logs, the eight launch replies, the correlator manifest, the driver log, and the audit-loss counter observed at correlation time.
 
 ### 1. The gateway protocol had no idempotency key at all (fixed)
 
@@ -283,7 +300,18 @@ a repeated key with the same operation returns the original reply and emits `gat
 different operation is a `conflict`, and the key appears on `gateway.operation_admitted`, `_completed` and `_denied`. Denials
 carry it too, because §5 counts a denied operation as an in-scope effect — that required stashing the key on the connection
 before the grant check, since the generic denial path never sees the parsed request. After the fix the gateway-operation corpus
-reconstructs at **100 %** (15/15 in the last partial run, 88/88 gateway records in the run before it).
+reconstructs at **100 %**: 80/80 on the first *valid* full-profile repetition (8 sessions × 10 keyed gateway effects).
+
+The independent validation then found that the fix was incomplete in a way no single-session run could reveal: the outcome map was
+**in memory only**, so a session that survived a gateway restart and retried a key would have its non-idempotent adapter operation
+executed a second time. Completed outcomes are now persisted to the session's hash-chained lifecycle record (as `outcomes`, in the
+same `record_budget` call that makes consumption durable, *before* the reply is released) and restored in both `activate` and
+`reconstruct`. "Same authenticated input" is now defined and enforced rather than assumed: the input digest is the SHA-256 of the
+canonical request minus the key, so a retry that changed its arguments is a `conflict` instead of being silently answered with the
+old result. Verified end to end on the VM — operation → `operation_seq:32`; same key and input → identical reply; different input →
+`idempotency_conflict`; `systemctl restart agentbound-gateway`; same key from a *new* connection → still `operation_seq:32`, with
+one `operation_completed` and no second execution. Row `D4.7-idempotency-persist`, plus a negative control that removes the
+restore and confirms the row fails.
 
 ### 2. Two of the three effect classes have no telemetry path (open, unfixed)
 
@@ -291,8 +319,9 @@ R-AUD-2 (1B) requires `agentbound-audit` to reconstruct `initiator → agent →
 local objects in the session's world, process lifecycle events, and gateway operations. Only the third exists. The audit store
 contains gateway events and session-lifecycle events and nothing else: no record names an individual file the workload created,
 and none names an individual fork/exec/exit. 220 of every 230 effects — **95.7 % of the metric's denominator** — are therefore
-unattributable, and the measured completeness is **3.5 %** (8/230 for a single session; the eight permitted gateway operations
-were the only effects reconstructed).
+unattributable, and the measured completeness on a valid full-profile repetition is **4.3 %** (80/1 840 — the ten keyed gateway
+operations per session, and nothing else). The earlier figure of 3.5 % was hand-computed from a single session and stated in prose;
+the register now computes the number from the retained per-repetition result files and fails if there is no valid measurement.
 
 This is a design gap, not a bug. Nothing in the implementation was ever built to ingest classes (a) and (b), and the WP2/WP3
 registers never noticed because D-12 was scored by a presence check that only ever looked at event kinds already being emitted.
@@ -301,29 +330,79 @@ the syscall number, so a path to class (a) and (b) ingestion exists on the pinne
 shipper, deciding how per-session rules are installed and removed, and reconciling the host-global `lost` counter of R-AUD-3 is
 a work package, not a WP3.1 repair. **D-12 cannot be met at 1B without it.**
 
-### 3. The platform cannot currently admit 8 concurrent sessions (open)
+### 3. Eight concurrent sessions: diagnosed wrongly here, then found and fixed (closed)
 
-The pre-registered profile requires 8 concurrent sessions. Launched together, only 2–3 of 8 succeed. The failures are real and
-of two kinds:
+**This section previously concluded that the platform "cannot currently admit 8 concurrent sessions" because
+`agentbound-lifecycle` serialises blocking work.** That conclusion was wrong, and the way it was wrong is worth recording: it
+took a *symptom* (2–3 of 8 launches succeed, the rest fail `unavailable:lifecycle:record unavailable` or
+`invalid:constructor_envelope:Stale`) and attributed it to a *design property that was genuinely present* (lifecycle serialises,
+and its handlers do block). The attribution was plausible, it named a real defect, and it was still not the cause. It also had the
+convenient shape of an architectural limitation rather than a bug — which is exactly the kind of conclusion that deserves the most
+suspicion. The independent validation was right to refuse it.
 
-- `gateway_rejected: unavailable:lifecycle:record unavailable` at constructor step 8 — the gateway must fetch the committed
-  record from `agentbound-lifecycle` to activate a projection, and lifecycle is busy serving another construction.
-- `lifecycle_rejected: invalid:constructor_envelope:Stale` at step 8 — the launch binding must be verified within
-  `BINDING_MAX_AGE_S` (60 s) of signing, and the queue ahead of it is longer than that.
+Three distinct defects were behind the symptom. Each was found by instrumenting rather than reasoning, and all three are fixed.
 
-The cause is that `agentbound-lifecycle` serves **one request at a time** and its handlers do blocking work inside that
-serialization: `terminate` alone holds the daemon through a 2 s SIGTERM grace plus a bounded wait for cgroup emptiness and init
-exit. Measured on this host: a single construction held the daemon for **17.4 s**, one session took **123 s** from authorization
-to activation, and one termination held it for **61 s**. Component-interfaces §3.6 requires lifecycle to *decide, serialize and
-record* transitions — serializing the *decision* is the requirement; serializing the *waiting* is an implementation choice, and
-it is the one that makes the pre-registered profile unreachable.
+**(a) A genuine deadlock between the two daemons.** Simultaneous `strace` of both processes during an 8-way launch:
 
-This also corrected a fix from round 5. Bounding cross-daemon calls at 4 s was right in kind and wrong in value: 4 s is *below*
-the peer's legitimate service time under load, so it turned a busy peer into a failed launch. The bound now lives in one place
-(`wire::CROSS_DAEMON_MS`, 60 s) with the reasoning that it must exceed the slowest legitimate service time, because its purpose
-is to stop an indefinite wait and not to impose a latency budget. The same class of bug was found and fixed in the in-session
-client: `ab-gwclient`'s `recv` was unbounded, so a slow gateway was indistinguishable from a hung workload — it is now bounded
-at 30 s and reports a timeout as a timeout.
+```
+lifecycle  11:25:12.936855 recvfrom(8, …)  = -1 EAGAIN   ← waiting on /run/agentbound/gateway.sock
+gateway    11:25:12.624055 recvfrom(10, …) = -1 EAGAIN   ← waiting on /run/agentbound/lifecycle.sock
+both released 11:26:12.9                                 ← 60 s, i.e. the bound, not the work
+```
+
+The gateway was serving `activate` and had called lifecycle `record` to load grants from the committed launch record. Lifecycle
+was inside `poll_sessions` → `terminate` for an *unrelated* session whose init had exited, and had called gateway
+`deny_admission`. Each daemon serves one request at a time, so each waited out the full `CROSS_DAEMON_MS`. The visible damage was
+not the stall: a 60 s stall exceeds `BINDING_MAX_AGE_S` (60 s), so the *other six* concurrent constructions' launch bindings went
+stale and were correctly refused. The "2–3 of 8" figure was this deadlock, measured.
+
+Fixing it needed three changes, and the first two alone were not enough:
+
+1. asymmetric bounds. `GATEWAY_TO_LIFECYCLE_MS` = 2 s, on the side whose fail-closed action is cheap and correct. Result: 2 → 6
+   of 8 launches.
+2. a deadline-based retry of `activate`, since the failure is now transient and the wait to cover is set by the peer's queue, not
+   by a guessed attempt count.
+3. equal short bounds on *both* directions converted the deadlock into a **livelock** — each side gave up at 2 s and collided
+   with the other's retry. What actually breaks the cycle is *progress*: the gateway now keeps serving inbound control operations
+   that cannot re-enter a downstream call (`project`, `deny_admission`, `release`) while its own bounded call is outstanding. With
+   that, all 8 launches succeed. Lifecycle's side is safe to shorten for a reason worth stating precisely: what must not happen
+   early is not the *call* giving up, it is the *state machine* advancing. A `deny_admission` that times out now leaves the
+   session `termination-incomplete`, holds the identity, and is retried — so admission closure became a precondition for
+   completing termination rather than merely evidence of it.
+
+**(b) Read-write workspace grants made concurrent sessions mutually exclusive.** With the deadlock gone, all 8 sessions launched
+and 7 of 8 workloads died instantly with empty consoles. The workspace directory was `drwxrws--- root:200011` — a single owning
+group. The constructor granted read-write access by *chowning the shared workspace to the session's primary GID*, so the last
+launch won the group and the other seven could not write at all. Two sessions on one workspace could never both work; the D-12
+profile is the first test that ever asked for that.
+
+`execution-identity-lifecycle` §7 already prescribes the right mechanism, and prescribes it precisely: a per-session ACL entry
+naming the allocated group, which lifecycle MUST remove during reclamation before the identity may enter quarantine. The
+implementation had taken a shortcut past a frozen requirement, and the frozen requirement was correct. Now implemented
+(`ab_common::acl`, POSIX.1e access ACLs written directly as the `system.posix_acl_access` xattr — no new dependency in a crate
+that counts toward R-CON-8), revoked recursively at reclamation with removal verified across the manifest-registered paths.
+`acl_entries_removed` in `session.cleanup_completed` was previously a hard-coded `0`; it is now counted, and a failed removal
+holds the identity in `reclaiming` as §7 requires.
+
+**(c) The fixture exceeded its own reviewed budget.** The workload pushed eight commits into one growing repository, so each
+bundle carried the cumulative history (3, 6, 9 … objects) against a granted per-operation `objects: 8`. Pushes 3–8 were denied
+`budget_objects` — correctly. The gateway corpus read 40 % while the platform was behaving exactly as authorised. Eight
+independent single-commit repositories are eight real, distinct upstream effects, each 3 objects, inside the grant. This one was
+purely the harness's fault and is the clearest argument for the rule that a fixture must fail loudly rather than quietly measure
+itself.
+
+**What survives of the original diagnosis.** Lifecycle does serialise blocking work, and that is still a defect worth recording —
+`terminate` holds the daemon through a 2 s SIGTERM grace and bounded waits. It was not what made the profile unreachable.
+Component-interfaces §3.6 requires lifecycle to *decide, serialise and record* transitions; serialising the *decision* is the
+requirement, serialising the *waiting* is an implementation choice. It now costs latency instead of correctness, and it is carried
+forward rather than claimed as fixed.
+
+**What the frozen documents were missing.** Nothing in 0.3 said that two components which may call *each other* must bound those
+calls asymmetrically — so an implementation could satisfy every stated obligation and still deadlock. Closed by
+component-interfaces **0.4 §3.8** (mutual calls between components: bounded waits, asymmetric bounds for cyclic pairs,
+deadline-based retry, progress while a bounded call is outstanding, and an explicit prohibition on equal bounds for a cyclic
+pair). The in-session gateway protocol was likewise implemented in WP3 and specified nowhere; closed by component-wire-formats
+**0.2 §10–11**.
 
 ### Consequence for the WP3.1 verdict
 
