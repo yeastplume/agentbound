@@ -1,7 +1,9 @@
-# expected-ids: derived from test-catalogue.md 0.7; milestones 1A+1B.
+# expected-ids: derived from test-catalogue.md 0.8; milestones 1A+1B.
 # 121 entries = 118 frozen catalogue ids (every 1A/1B id in test-catalogue.md 0.7, verified complete) + 3 ADR-0002 decision rows
-# (D4, D7-8, D7-9), which are Decision-level obligations rather than catalogue ids. Catalogue ids at 1C/1D (D-14, D-17,
-# T-6.4-015, T-6.8-010) are deliberately absent: out of scope for 1A+1B, and must NOT be counted as not-executed here.
+# (D4, D7-8, D7-9), which are Decision-level obligations rather than catalogue ids. Catalogue ids at 1C/1D (D-12.full, D-14,
+# D-17, T-6.4-015, T-6.8-010) are deliberately absent: out of scope for 1A+1B, and must NOT be counted as not-executed here.
+# D-12.full is the whole-ontology attribution row that catalogue 0.8 moved to 1C (R-AUD-2 milestone split, phase-1-requirements
+# 0.11); D-12 below remains 1B and requires PASS, which for it means 100% over the finite gateway-operation corpus.
 # Maintained by hand. The earlier header claimed "118 ids" and a tools/gen-expected-ids.py that does not exist; the count went
 # stale as WP3.1 added rows. Verify against the frozen catalogue rather than trusting this comment:
 #   awk '!/^#/ && NF {print $1}' expected-ids.txt | sort -u > /tmp/m.txt

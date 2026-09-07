@@ -524,7 +524,8 @@ now known — not assumed — to discriminate. But the same work established tha
 this implementation**, and that is the finding that governs the go/no-go.
 
 **R-AUD-2 is not satisfied at 1B.** Its attribution-completeness metric requires reconstructing
-`initiator → agent → session → process → effect` across three effect classes at ≥ 99 %. Measured: **3.5 %**. The gateway-operation
+`initiator → agent → session → process → effect` across three effect classes at ≥ 99 %. Measured on the full frozen profile:
+**4.3 %**. The gateway-operation
 corpus reconstructs at 100 %, but local object create/modify and process lifecycle events have **no ingestion path at all** — 220
 of every 230 effects are unattributable, because nothing in the implementation was ever built to collect them. This is a design
 gap, not a defect, and closing it (an audit-netlink shipper, per-session rule lifecycle, reconciliation with R-AUD-3's `lost`

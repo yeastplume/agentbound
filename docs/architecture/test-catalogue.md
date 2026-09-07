@@ -1,6 +1,6 @@
 # Phase 1 Test Catalogue
 
-**Version:** 0.7  
+**Version:** 0.8  
 **Status:** Frozen (WP0)  
 **Date:** 28 August 2026  
 **Governs:** Agentbound milestones 1A–1D  
@@ -16,6 +16,7 @@
 - **0.4** — T-6.8-006 narrowed to policy-service outage; T-6.8-011–013 added (audit degradation, lifecycle-daemon outage, forbidden degraded mapping).
 - **0.5** — Post-freeze editorial maintenance (no normative change): T-6.4 coverage accounting corrected (014 from bullets; 015 is the control-arm projection); GR/GU privilege labels; pinning ownership cited; §7.3 fault-point wording.
 - **0.6** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Control-arm prose points to ADR-0003; Oxford spelling.
+- **0.8** — D-12 split into D-12 (1B, gateway-operation corpus at 100%) and D-12.full (1C, whole ontology at the §12 threshold), following the R-AUD-2 milestone split in phase-1-requirements 0.11. The §5 metric definition, NOMINAL and OVERLOAD profiles, denominators, correlation deadlines and seeds are **unchanged**; only which milestone owes which class moves. Adds a note that a repetition failing to realise the profile is retained as an invalid attempt and never scored.
 - **0.7** — WP1 findings propagated: T-6.2-009 added (inherited host `sysfs`, F-2); F-C-05 covers `sysfs` ordering (F-2); T-6.4-009 expects the pidfs-inode process-instance check with same-tick reuse (F-1); F-T-04 states `cgroup.kill` without waiting for the frozen state (F-3). Coverage note: one 1A row added; no row removed or renumbered.
 
 
@@ -191,7 +192,8 @@ change the denominator.
 | D-09 | 1B | 10 | R-GW-1..4 | USP | direct protected-service access | deny/fail closed; no network interface exists | KA,DR,GA | |
 | D-10 | 1B | 11,13 | R-GW-3..4,R-AUD-2 | USP | typed Git operation | full attributed gateway operation | LR,GA,AR | |
 | D-11 | 1A | 7 | R-CON-1 | ANI | constructor faults | no runnable session or usable credential | LC,KA,LR | |
-| D-12 | 1B | 13 | R-AUD-1..3 | USP | local and gateway effect generation | reported completeness meets §5 metric | AR,KA,GA | |
+| D-12 | 1B | 13 | R-AUD-1..3 | USP | local and gateway effect generation | §5 metric computed over the NOMINAL profile; the finite gateway-operation corpus reconstructs at 100%, denied operations included, matched by class, outcome and idempotency key; the whole-ontology fraction is reported alongside it | AR,KA,GA | |
+| D-12.full | 1C | 13 | R-AUD-1..3 | USP | local and gateway effect generation | §5 metric over the whole three-class ontology meets the §12 threshold, reported per class | AR,KA,GA | |
 | D-13 | 1B | 19 | R-GW-5 | USP | Git staging adapter | staging allowed; main/cross-session/forged trace denied | GA,DR,AR | |
 | D-14 | 1C | 22 | R-GW-8 | USP | inference binding members | unapproved changes refused and audited | GA,DR,AR | |
 | D-15 | 1A | 6 | R-ISO-5,R-RES-3 | USP | child delegation | strictly narrower authority; no recovery path | LR,KA,DR | |

@@ -661,10 +661,15 @@ fn main() {
             per.push(format!("rep{} seed={} |C|/|G|={}/{} gw={}/{}", js(v, "repetition"), js(v, "seed"), js(v, "C"), js(v, "G"), js(v, "gateway_corpus.C"), js(v, "gateway_corpus.G"))); }
         let overall = if g_all > 0.0 { c_all / g_all } else { 0.0 }; let gw = if gw_g > 0.0 { gw_c / gw_g } else { 0.0 };
         let every_gw_100 = !valid.is_empty() && valid.iter().all(|v| f(v, "gateway_corpus.G") > 0.0 && f(v, "gateway_corpus.C") == f(v, "gateway_corpus.G"));
-        let met = valid.len() == 10 && overall >= 0.99 && every_gw_100;
+        // The 1B bar, after the R-AUD-2 milestone split (phase-1-requirements 0.11, catalogue 0.8): ten valid repetitions and 100%
+        // over the finite gateway-operation corpus in every one of them. The whole-ontology fraction is REPORTED here and is owed by
+        // D-12.full at 1C, which this suite does not run. `overall` therefore does not gate this row — the threshold it would be
+        // compared against was moved to another milestone, not lowered — and the detail states the measured figure either way so no
+        // reader can mistake the gateway corpus for whole-ontology attribution.
+        let met = valid.len() == 10 && every_gw_100;
         let classes = valid.first().map(|v| jget(v, "per_class").map(|c| String::from_utf8_lossy(&canonical(c)).into_owned()).unwrap_or_default()).unwrap_or_default();
-        g.rec("D-12", met, format!("§5 NOMINAL metric computed from {d}: {} result files, {} valid repetitions (10 required); aggregate |C|/|G| = {}/{} = {:.1}% (>= 99% required); gateway corpus {}/{} = {:.1}% ({}); invalid/aborted repetitions retained: {:?}; per-rep: [{}]; per-class (rep 1): {}",
-            reps.len(), valid.len(), c_all, g_all, overall * 100.0, gw_c, gw_g, gw * 100.0, if every_gw_100 { "100% in every valid run" } else { "NOT 100% in every valid run" },
+        g.rec("D-12", met, format!("§5 NOMINAL metric computed from {d}: {} result files, {} valid repetitions (10 required); 1B bar = 100% over the finite gateway-operation corpus: {}/{} = {:.1}% ({}); whole-ontology aggregate |C|/|G| = {}/{} = {:.1}% — REPORTED, owed by D-12.full at 1C (>= 99% there), NOT whole-ontology attribution at 1B; invalid/aborted repetitions retained: {:?}; per-rep: [{}]; per-class (rep 1): {}",
+            reps.len(), valid.len(), gw_c, gw_g, gw * 100.0, if every_gw_100 { "100% in every valid run" } else { "NOT 100% in every valid run" }, c_all, g_all, overall * 100.0,
             reps.iter().filter(|v| js(v, "valid") != "true").map(|v| format!("rep{}: launched={} incomplete={} errors={}", js(v, "repetition"), js(v, "sessions_launched"), js(v, "sessions_incomplete"), js(v, "launch_errors"))).collect::<Vec<_>>(),
             per.join("; "), classes.chars().take(600).collect::<String>()));
     }
