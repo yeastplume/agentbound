@@ -37,7 +37,11 @@ pub fn listen(path: &str, mode: u32) -> io::Result<OwnedFd> {
     unsafe { libc::umask(old) };
     os(r)?;
     os(unsafe { libc::chmod(cstr(path).as_ptr() as *const libc::c_char, mode) })?;
-    os(unsafe { libc::listen(fd.as_raw_fd(), 16) })?;
+    // Backlog: the pre-registered profile is 8 concurrent sessions, each holding several connections, against single-threaded
+    // daemons that also serve each other. At 16 the queue overflowed under the profile and callers saw connect block or fail —
+    // indistinguishable from a refusal. This is a queue depth, not a concurrency limit: it bounds how many callers may WAIT, and
+    // every one of them is still served in order (WP3.1).
+    os(unsafe { libc::listen(fd.as_raw_fd(), 128) })?;
     Ok(fd)
 }
 
@@ -111,13 +115,50 @@ pub const LIFECYCLE_TO_GATEWAY_MS: i64 = 2_000;
 /// `agentbound-lifecycle` and `agentbound-gateway` serve one request at a time, so a mutual call (lifecycle→gateway `release` while
 /// the gateway is in a lifecycle `record_budget`) would otherwise wedge both processes and every session with them. With a bound the
 /// call fails, and each caller already has a fail-closed path for "the other daemon did not answer".
+/// Connect with the whole operation bounded by `ms`, INCLUDING the connect itself.
+///
+/// `SO_RCVTIMEO`/`SO_SNDTIMEO` bound `recv` and `send`; they do not bound `connect`. On a `SOCK_SEQPACKET` unix socket a blocking
+/// `connect` waits indefinitely once the peer's accept backlog is full, so a bound that is only applied to the transfer is not a
+/// bound at all. That is how the gateway ↔ lifecycle pair could still deadlock after both sides had "bounded" calls: both daemons
+/// were observed blocked in `connect` on each other's socket, below the layer where any timeout had been set (WP3.1). The connect is
+/// therefore performed non-blocking with an explicit deadline, then the descriptor is returned to blocking mode for the transfer.
 pub fn connect_bounded(path: &str, ms: i64) -> io::Result<Conn> {
-    let c = connect(path)?;
+    let c = connect_deadline(path, ms)?;
     let tv = libc::timeval { tv_sec: ms / 1000, tv_usec: ((ms % 1000) * 1000) as i64 };
     for opt in [libc::SO_RCVTIMEO, libc::SO_SNDTIMEO] {
         os(unsafe { libc::setsockopt(c.fd.as_raw_fd(), libc::SOL_SOCKET, opt, &tv as *const _ as *const libc::c_void, std::mem::size_of::<libc::timeval>() as u32) })?;
     }
     Ok(c)
+}
+
+/// `connect` bounded by `ms`, via `O_NONBLOCK` plus `poll`. A unix-socket connect either completes immediately or returns
+/// `EAGAIN`/`EINPROGRESS` when the listener's backlog is full; `poll` for writability is how the completion is awaited.
+fn connect_deadline(path: &str, ms: i64) -> io::Result<Conn> {
+    let fd = os(unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK, 0) })?;
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    let (a, l) = sockaddr(path);
+    let r = unsafe { libc::connect(fd.as_raw_fd(), &a as *const _ as *const libc::sockaddr, l) };
+    if r != 0 {
+        let e = io::Error::last_os_error();
+        match e.raw_os_error() {
+            Some(libc::EINPROGRESS) | Some(libc::EAGAIN) => {
+                let mut pf = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLOUT, revents: 0 };
+                let n = unsafe { libc::poll(&mut pf, 1, ms.clamp(0, i32::MAX as i64) as i32) };
+                if n == 0 { return Err(io::Error::from_raw_os_error(libc::ETIMEDOUT)); }
+                if n < 0 { return Err(io::Error::last_os_error()); }
+                // a completed non-blocking connect reports its real result through SO_ERROR
+                let mut err: libc::c_int = 0; let mut len = std::mem::size_of::<libc::c_int>() as u32;
+                os(unsafe { libc::getsockopt(fd.as_raw_fd(), libc::SOL_SOCKET, libc::SO_ERROR, &mut err as *mut _ as *mut libc::c_void, &mut len) })?;
+                if err != 0 { return Err(io::Error::from_raw_os_error(err)); }
+            }
+            _ => return Err(e),
+        }
+    }
+    // back to blocking: the transfer is bounded by SO_RCVTIMEO/SO_SNDTIMEO, which the caller sets
+    let fl = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+    os(unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, fl & !libc::O_NONBLOCK) })?;
+    let peer = peercred(fd.as_raw_fd())?;
+    Ok(Conn { fd, peer })
 }
 pub fn connect(path: &str) -> io::Result<Conn> {
     let fd = os(unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC, 0) })?;
