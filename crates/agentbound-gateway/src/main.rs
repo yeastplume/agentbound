@@ -28,6 +28,10 @@ pub struct Projection { pub authorization_id: String, pub allocation_id: String,
     /// non-idempotent Git push would have executed twice.
     pub idem: std::collections::BTreeMap<(String, String), (String, i64, String, Value)> }
 
+/// The outcome of a bounded call to `agentbound-lifecycle`. `Refused` means lifecycle answered and said no; `NoReply` means no
+/// answer arrived inside the bound. The distinction matters because only the second may be retried.
+enum LcOutcome { Ok(#[allow(dead_code)] Value), Refused, NoReply }
+
 pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn>, pub inherited: Vec<(String, OwnedFd)> }
 
 /// Requirement named in a denial (D7 item 9). Rules map to the R-GW / R-ISO requirement whose check produced them.
@@ -92,6 +96,18 @@ impl Gateway {
     /// A call to `agentbound-lifecycle`. `record_budget` is bounded much more tightly than the rest: it is the call that can close a
     /// cycle with lifecycle's own gateway calls, and the gateway's fail-closed path for it is cheap (refuse the operation, close
     /// admission) whereas lifecycle's is not.
+    /// As `lc`, but distinguishes the two failures a caller must treat differently: a peer that ANSWERED "no" (`Refused`) from a
+    /// peer that did not answer inside the bound (`NoReply`). Collapsing them into `Option` is what made a busy lifecycle look
+    /// identical to a lifecycle that had refused. Only `NoReply` may be retried.
+    fn lc_result(&self, op: &str, body: Value) -> LcOutcome {
+        let ms = ab_common::wire::GATEWAY_TO_LIFECYCLE_MS.min(if op == "record_budget" { ab_common::wire::BUDGET_PERSIST_MS } else { ab_common::wire::CROSS_DAEMON_MS });
+        let Ok(mut c) = wire::connect_bounded(&self.cfg.lifecycle_sock, ms) else { return LcOutcome::NoReply };
+        match c.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)) {
+            Err(_) => LcOutcome::NoReply,
+            Ok(r) => if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { LcOutcome::Ok(r.get("body").cloned().unwrap_or(Value::Null)) } else { LcOutcome::Refused },
+        }
+    }
+
     fn lc(&self, op: &str, body: Value) -> Option<Value> { let ms = ab_common::wire::GATEWAY_TO_LIFECYCLE_MS.min(if op == "record_budget" { ab_common::wire::BUDGET_PERSIST_MS } else { ab_common::wire::CROSS_DAEMON_MS });
         wire::connect_bounded(&self.cfg.lifecycle_sock, ms).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
 
@@ -238,8 +254,16 @@ impl Gateway {
     fn budget_from_record(rec: &Value) -> std::collections::BTreeMap<String, (u64, u64)> {
         rec.get("budget").and_then(|b| b.as_obj()).map(|m| m.iter().map(|(k, v)| (k.0.clone(), (v.get("operations").and_then(|x| x.as_int()).unwrap_or(0) as u64, v.get("bytes").and_then(|x| x.as_int()).unwrap_or(0) as u64))).collect()).unwrap_or_default()
     }
-    /// Persist a projection's budget consumption to the lifecycle record store (durable, hash-chained). Failure to persist closes
-    /// admission: an operation whose consumption cannot be recorded must not be followed by another.
+    /// Persist a projection's budget consumption and completed idempotency outcomes to the lifecycle record store (durable,
+    /// hash-chained). Failure to persist closes admission: an operation whose consumption cannot be recorded must not be followed by
+    /// another.
+    ///
+    /// The bound is *retried to a deadline* rather than treated as a refusal on the first expiry (component-interfaces §3.8,
+    /// "deadline, not attempt count"). This is per-operation on the hot path, and the short 2 s bound exists to break the
+    /// gateway ↔ lifecycle cycle, not to express how long a busy peer may legitimately take to serialise a record. Treating the
+    /// first timeout as fatal closed admission on perfectly healthy sessions whenever lifecycle was serving another request — it
+    /// produced 44 conformance FAILs, all of them "closed by gateway", and none of them a real refusal. A *refusal* still closes
+    /// admission immediately: only the "no reply within the bound" case is retried, and only until the deadline.
     pub fn persist_budget(&mut self, aid: &str) -> bool {
         let Some(p) = self.by_alloc.get(aid) else { return false };
         let Some(lrd) = p.lrd.clone() else { return true };
@@ -247,7 +271,21 @@ impl Gateway {
         let keys: Vec<(String, Value)> = p.idem.iter().map(|((opid, key), (name, seq, digest, reply))| (format!("{opid} {key}"),
             Value::obj(vec![("input_digest", Value::s(digest)), ("operation", Value::s(name)), ("operation_seq", Value::Int(*seq)), ("reply", reply.clone())]))).collect();
         let outcomes = Value::obj(keys.iter().map(|(k, v)| (k.as_str(), v.clone())).collect());
-        let ok = self.lc("record_budget", Value::obj(vec![("launch_record_digest", Value::s(&lrd)), ("budget", body), ("outcomes", outcomes)])).is_some();
+        let req = Value::obj(vec![("launch_record_digest", Value::s(&lrd)), ("budget", body), ("outcomes", outcomes)]);
+        let deadline = ab_common::sig::monotonic_ns() + ab_common::wire::BUDGET_PERSIST_DEADLINE_MS * 1_000_000;
+        let mut ok = false;
+        let mut attempts = 0u32;
+        loop {
+            attempts += 1;
+            match self.lc_result("record_budget", req.clone()) {
+                LcOutcome::Ok(_) => { ok = true; break }
+                // a refusal is an answer: lifecycle decided, and the decision stands
+                LcOutcome::Refused => break,
+                // no answer within the bound: the peer is busy, not refusing
+                LcOutcome::NoReply => { if ab_common::sig::monotonic_ns() >= deadline { break } std::thread::sleep(std::time::Duration::from_millis(100)); }
+            }
+        }
+        if attempts > 1 { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.budget_persist_retried", if ok { "ok" } else { "deny" }, &cr, Value::obj(vec![("attempts", Value::Int(attempts as i64)), ("deadline_ms", Value::Int(ab_common::wire::BUDGET_PERSIST_DEADLINE_MS))])); }
         if !ok { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.admission_denied", "ok", &cr, Value::obj(vec![("reason", Value::s("budget_persist_failed"))])); self.by_alloc.get_mut(aid).unwrap().admission = false; }
         ok
     }

@@ -70,6 +70,14 @@ pub const CROSS_DAEMON_MS: i64 = 60_000;
 /// authority live. See ADR-0002 and the WP3.1 register.
 pub const BUDGET_PERSIST_MS: i64 = 2_000;
 
+/// How long the gateway keeps RETRYING `record_budget` before it gives up and closes admission. `BUDGET_PERSIST_MS` bounds one
+/// attempt — it exists to break the gateway ↔ lifecycle cycle — and this bounds the whole effort, because "lifecycle is serving
+/// someone else right now" is not a refusal and must not be reported as one. Set above `CROSS_DAEMON_MS` so that a peer which is
+/// itself waiting out its own worst-case bound still gets answered rather than declared broken; below the point where a session
+/// would rather be told the operation failed. Treating the first 2 s expiry as fatal closed admission on healthy sessions and
+/// produced 44 conformance FAILs, every one of them reported as "closed by gateway" (WP3.1).
+pub const BUDGET_PERSIST_DEADLINE_MS: i64 = 90_000;
+
 /// The bound for the gateway's OTHER direction of the same cycle: `agentbound-gateway` → `agentbound-lifecycle` `record` and `list`,
 /// made while the gateway is serving a control request (`activate`, or the reconstruct sweep). This closes a second, distinct
 /// deadlock that the WP3.1 D-12 profile exposed and that no single-session test could reach:
