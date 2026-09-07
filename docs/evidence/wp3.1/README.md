@@ -283,6 +283,21 @@ was wrong before:
 
 Every input of the measurement is retained next to its result under `/var/lib/agentbound/evidence/d12/`: the eight ground-truth
 logs, the eight launch replies, the correlator manifest, the driver log, and the audit-loss counter observed at correlation time.
+Committed in full at [`raw/d12/`](raw/d12/) with a reviewer's guide to attacking it.
+
+**Result of the ten seeded repetitions** (binaries at `d44254e`, `dirty=false`):
+
+| | |
+|---|---|
+| Valid repetitions | **10 of 10** |
+| Gateway-operation corpus | **800/800 = 100.0 %** — the 1B bar |
+| Whole ontology | **800/18 400 = 4.35 %** — reported, owed by D-12.full at 1C |
+| Local-object class | 0/16 000 — `no platform record names this effect at all` |
+| Process-lifecycle class | 0/1 600 — same |
+| Audit records lost at correlation | 0 in every repetition |
+
+Ten different seeds returned the identical figure, which is what the repetition count is for: 4.35 % is not variance, it is two of
+three effect classes having no ingestion path.
 
 ### 1. The gateway protocol had no idempotency key at all (fixed)
 

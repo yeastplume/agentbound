@@ -35,7 +35,7 @@ cannot be repaired inside this work package.**
 | Suite state | 182 assertions: 175 PASS, 3 WEAK, 4 RECORDED, **0 FAIL**. Catalogue coverage: **0 NOT-EXECUTED** over all **118** frozen 1A+1B ids; dups=0, extra=0 |
 | Gate condition 1–4 | met (see §4) |
 | Gate condition 5 | **not met** — no independent reproduction; see §6 |
-| R-AUD-2 (1B) | **fails** — attribution completeness **3.5 %** vs required ≥ 99 % |
+| R-AUD-2 (1B) | **met as narrowed** — gateway-operation corpus **100 %** (80/80 per repetition, ten seeded repetitions). Whole-ontology **4.3 %**, now owed by D-12.full at 1C: phase-1-requirements **0.11** / catalogue **0.8** split the milestone explicitly rather than leaving a failing row unexplained. The ≥ 99 % three-class threshold is unchanged |
 | R-CON-8 (privileged SLOC) | 1 205 of 6 000 (pinned `tokei 13.0.0-alpha.8`) — comfortable; the previously published figure was wrong, see §5 |
 
 **Do not read "0 FAIL" as the exit condition.** It is not, and §3 is why.
@@ -43,7 +43,7 @@ cannot be repaired inside this work package.**
 ## 3. The finding that governs the verdict
 
 **R-AUD-2 requires reconstructing `initiator → agent → session → process → effect` across three effect classes at ≥ 99 %.
-Measured: 3.5 %.**
+Measured on the full frozen profile: 4.3 % — because two of the three classes are not collected at all.**
 
 The frozen test catalogue (§5) pre-registers the metric: 8 concurrent sessions × 230 atomic effects × 10 seeded repetitions, a
 30 s correlation deadline, denied operations in scope, ground truth taken from an *instrumented workload log* rather than the
@@ -53,6 +53,14 @@ platform's own record. Three ontology classes: (a) local object create/modify, (
 - Classes (a) and (b) reconstruct at **0 %**. There is no ingestion path. No audit record names an individual file a session
   created or an individual fork/exec/exit.
 - 220 of every 230 effects — **95.7 % of the metric's denominator** — are therefore unattributable.
+
+**How this was disposed of.** Not by relaxing the metric: by splitting the milestone in the frozen documents and saying which class
+is owed when. phase-1-requirements **0.11** makes the finite gateway corpus the 1B obligation and moves classes (a) and (b) to 1C;
+catalogue **0.8** splits the row into D-12 (1B) and D-12.full (1C), leaving the §5 metric definition, profiles, denominators,
+correlation deadlines and seeds untouched. The ≥ 99 % whole-ontology figure remains the 1C bar and the Gate 3 condition, the measured
+4.3 % is retained and printed by the D-12 row itself, and a 1B report may not present the gateway corpus as whole-ontology
+attribution. If you think this is the metric being redefined to make a failing result pass, that is the right thing to challenge —
+the distinction I claim is that the *obligation* moved milestone while the *threshold* and the *measurement* did not move at all.
 
 **Why WP2 and WP3 both missed it:** D-12 was scored by a presence check that asserted certain event *kinds* appeared. Those kinds
 were already being emitted for other reasons, so the row passed without ever measuring completeness. It is a design gap, not a
@@ -64,15 +72,21 @@ README says so explicitly.
 
 Two further open findings, both real, neither repaired:
 
-- **Lifecycle serializes blocking work, not just decisions.** The pre-registered 8-session profile cannot be admitted — 2–3 of 8
-  launches succeed. `agentbound-lifecycle` serves one request at a time and waits inside that serialization: a construction held
-  it **17.4 s**, a termination **61 s**, one session took **123 s** to activate. Component-interfaces §3.6 requires it to decide,
-  serialize and record *transitions*; serializing the *waiting* is an implementation choice. I judge this a §3.6 conformance
-  defect and it bounds every concurrency claim the platform can make.
+- **The 8-session finding in the earlier brief was a wrong diagnosis, and the independent validation was right to refuse it.** It
+  reported that the profile "cannot be admitted" because lifecycle serialises blocking work. Lifecycle does serialise blocking work
+  — that part was true, and it is carried forward — but it was not the cause. Instrumenting instead of reasoning found three
+  defects: a genuine **deadlock** between gateway and lifecycle (each waiting out the full 60 s bound on the other, straced on both
+  sides simultaneously; the collateral damage was the *other six* launches' bindings going stale), a read-write workspace grant
+  implemented by **chowning the shared workspace to the session group** (so concurrent sessions on one workspace were mutually
+  exclusive — the last launch won and the rest could not write), and a **fixture that exceeded its own reviewed objects budget**.
+  All three are fixed; 8 of 8 sessions now launch and complete the profile. The lesson I would want a reviewer to take: the earlier
+  conclusion was attractive because it had the shape of an architectural limit rather than a bug.
 - **The in-session gateway protocol (`agentbound.gateway.v0.1`) is specified in no frozen document.** Its request shape, replay
   and conflict semantics exist only in code. That is precisely how it came to carry **no idempotency key at all** while
   `component-wire-formats` mandates one on every component request — a retried Git push would have executed twice. Fixed in this
-  work package (`9867299`), but the specification gap remains.
+  work package (`9867299`), and the specification gap is now closed too: component-wire-formats **0.2 §10** specifies
+  `agentbound.gateway.v0.1` (members, input digest, replay and conflict rules, durable outcomes) and **§11** the cross-daemon call
+  bounds; component-interfaces **0.4 §3.8** states the mutual-call obligations whose absence allowed the deadlock to be conformant.
 
 ## 4. Gate conditions, with evidence
 

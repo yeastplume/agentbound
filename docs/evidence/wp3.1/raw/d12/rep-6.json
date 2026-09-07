@@ -1,0 +1,69 @@
+{
+ "C": 80,
+ "G": 1840,
+ "artifacts_dir": "/var/lib/agentbound/evidence/d12/d12-rep-6-artifacts",
+ "completeness": 0.043478260869565216,
+ "expected_G": 1840,
+ "gateway_corpus": {
+  "C": 80,
+  "G": 80,
+  "completeness": 1.0
+ },
+ "late_beyond_deadline": 0,
+ "launch_errors": [],
+ "per_class": {
+  "gateway-operation": {
+   "C": 80,
+   "G": 80,
+   "completeness": 1.0,
+   "missing": {}
+  },
+  "local-object": {
+   "C": 0,
+   "G": 1600,
+   "completeness": 0.0,
+   "missing": {
+    "no platform record names this effect at all": 1600
+   }
+  },
+  "process-lifecycle": {
+   "C": 0,
+   "G": 160,
+   "completeness": 0.0,
+   "missing": {
+    "no platform record names this effect at all": 160
+   }
+  }
+ },
+ "profile": {
+  "aggregate_rate_per_s": 20,
+  "correlation_deadline_s": 30,
+  "duration_s": 300,
+  "effects_per_session": 230,
+  "mix": "200 local create/modify, 20 process lifecycle, 8 push-staging-ref permitted + 2 denied",
+  "sessions": 8
+ },
+ "repetition": 6,
+ "seed": "3f5b9f0a708054b8",
+ "sessions": 8,
+ "sessions_incomplete": [],
+ "sessions_launched": 8,
+ "start_order": [
+  4,
+  5,
+  2,
+  0,
+  1,
+  3,
+  6,
+  7
+ ],
+ "timing": {
+  "audit_lost_records_at_correlation": "0",
+  "correlator_wall": "2026-09-07T13:12:44Z",
+  "end_marker_wall": "2026-09-07T13:12:14Z",
+  "launch_wall_s": 1.5,
+  "workload_wall_s": 99.3
+ },
+ "valid": true
+}
