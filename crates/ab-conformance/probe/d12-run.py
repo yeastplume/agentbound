@@ -161,7 +161,8 @@ def main():
     res["sessions_incomplete"] = incomplete
     res["profile"] = {"sessions": SESSIONS, "effects_per_session": EFFECTS_PER_SESSION, "aggregate_rate_per_s": 20, "duration_s": DURATION_S,
                       "correlation_deadline_s": CORRELATION_DEADLINE_S, "mix": "200 local create/modify, 20 process lifecycle, 8 push-staging-ref permitted + 2 denied"}
-    res["timing"] = {"launch_wall_s": round(t_launched - t0, 1), "workload_wall_s": round(time.time() - CORRELATION_DEADLINE_S - t_launched, 1),
+    # integer milliseconds, not rounded seconds: this file must stay readable by the canonical JSON parser, which rejects floats
+    res["timing"] = {"launch_wall_ms": int((t_launched - t0) * 1000), "workload_wall_ms": int((time.time() - CORRELATION_DEADLINE_S - t_launched) * 1000),
                      "end_marker_wall": end_marker_wall, "correlator_wall": correlator_wall, "audit_lost_records_at_correlation": loss_snapshot}
     # `valid` means the run realised the profile: all 8 sessions launched, all 8 declared their end within the 300 s window, and the
     # denominator is exactly the profile's. An invalid repetition is an infrastructure abort — retained as evidence, never scored, and

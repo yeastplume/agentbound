@@ -152,18 +152,26 @@ def main():
                     continue
                 st["C"] += 1
 
+    def ppm(c, g):
+        """Exact ratio as integer parts-per-million (round-half-up). Keeps the file parseable by the canonical JSON parser."""
+        return ((c * 2_000_000 + g) // (2 * g)) if g else 0
     G = sum(v["G"] for k, v in per_class.items() if k != "SETUP")
     C = sum(v["C"] for k, v in per_class.items() if k != "SETUP")
     out = {
         "sessions": len(sessions),
         "G": G,
         "C": C,
-        "completeness": (C / G) if G else 0.0,
+        # Ratios are emitted as integer parts-per-million, not as floats. The result file is read by the conformance runner through
+        # the project's canonical JSON parser, which rejects non-integer numbers by design (`NonIntegerNumber`) — the same parser that
+        # guards manifests, where a float would be an interoperability hazard. Emitting floats here meant the runner could not read
+        # this file at all: it silently fell back to parsing the last line, saw only the closing brace, and reported "0 valid
+        # repetitions" while ten valid ones sat on disk. C and G remain the authoritative integers; ppm is derived for readers.
+        "completeness_ppm": ppm(C, G),
         "gateway_corpus": {"G": gateway_corpus["G"], "C": gateway_corpus["C"],
-                           "completeness": (gateway_corpus["C"] / gateway_corpus["G"]) if gateway_corpus["G"] else 0.0},
+                           "completeness_ppm": ppm(gateway_corpus["C"], gateway_corpus["G"])},
         "late_beyond_deadline": late,
         "per_class": {k: {"G": v["G"], "C": v["C"],
-                          "completeness": (v["C"] / v["G"]) if v["G"] else 0.0,
+                          "completeness_ppm": ppm(v["C"], v["G"]),
                           "missing": dict(v["missing_reason"].most_common(4))}
                       for k, v in sorted(per_class.items())},
     }

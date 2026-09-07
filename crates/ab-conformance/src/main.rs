@@ -665,8 +665,15 @@ fn main() {
         // Parse each result file WHOLE. `parse()` takes the last line that is itself valid JSON, which is right for a JSONL event
         // stream and wrong for these: the harness writes them pretty-printed, so `parse()` saw only the closing brace, every
         // repetition read as invalid, and the row reported "0 valid repetitions" while ten valid repetitions sat on disk (WP3.1).
-        let mut reps: Vec<Value> = (1..=10).filter_map(|n| std::fs::read_to_string(format!("{d}/rep-{n}.json")).ok())
-            .filter_map(|s| json::parse(s.trim().as_bytes(), &MANIFEST_LIMITS).ok()).filter(|v| !matches!(v, Value::Null)).collect();
+        // A file that exists but cannot be parsed is counted and named, never silently dropped: dropping it made an UNREADABLE
+        // result indistinguishable from an ABSENT one, which is how "0 valid repetitions" got reported over ten good measurements.
+        let present: Vec<(i64, String)> = (1..=10).filter_map(|n| std::fs::read_to_string(format!("{d}/rep-{n}.json")).ok().map(|s| (n, s))).collect();
+        let mut unreadable: Vec<String> = Vec::new();
+        let mut reps: Vec<Value> = Vec::new();
+        for (n, s) in &present {
+            match json::parse(s.trim().as_bytes(), &MANIFEST_LIMITS) { Ok(v) if !matches!(v, Value::Null) => reps.push(v),
+                Ok(_) => unreadable.push(format!("rep-{n}: null")), Err(e) => unreadable.push(format!("rep-{n}: {e:?}")) }
+        }
         reps.sort_by_key(|v| js(v, "repetition").parse::<i64>().unwrap_or(0));
         let valid: Vec<&Value> = reps.iter().filter(|v| js(v, "valid") == "true").collect();
         let f = |v: &Value, p: &str| js(v, p).parse::<f64>().unwrap_or(-1.0);
@@ -683,8 +690,9 @@ fn main() {
         // reader can mistake the gateway corpus for whole-ontology attribution.
         let met = valid.len() == 10 && every_gw_100;
         let classes = valid.first().map(|v| jget(v, "per_class").map(|c| String::from_utf8_lossy(&canonical(c)).into_owned()).unwrap_or_default()).unwrap_or_default();
-        g.rec("D-12", met, format!("§5 NOMINAL metric computed from {d}: {} result files, {} valid repetitions (10 required); 1B bar = 100% over the finite gateway-operation corpus: {}/{} = {:.1}% ({}); whole-ontology aggregate |C|/|G| = {}/{} = {:.1}% — REPORTED, owed by D-12.full at 1C (>= 99% there), NOT whole-ontology attribution at 1B; invalid/aborted repetitions retained: {:?}; per-rep: [{}]; per-class (rep 1): {}",
-            reps.len(), valid.len(), gw_c, gw_g, gw * 100.0, if every_gw_100 { "100% in every valid run" } else { "NOT 100% in every valid run" }, c_all, g_all, overall * 100.0,
+        let met = met && unreadable.is_empty();
+        g.rec("D-12", met, format!("§5 NOMINAL metric computed from {d}: {} result files, {} unreadable {unreadable:?}, {} valid repetitions (10 required); 1B bar = 100% over the finite gateway-operation corpus: {}/{} = {:.1}% ({}); whole-ontology aggregate |C|/|G| = {}/{} = {:.1}% — REPORTED, owed by D-12.full at 1C (>= 99% there), NOT whole-ontology attribution at 1B; invalid/aborted repetitions retained: {:?}; per-rep: [{}]; per-class (rep 1): {}",
+            present.len(), unreadable.len(), valid.len(), gw_c, gw_g, gw * 100.0, if every_gw_100 { "100% in every valid run" } else { "NOT 100% in every valid run" }, c_all, g_all, overall * 100.0,
             reps.iter().filter(|v| js(v, "valid") != "true").map(|v| format!("rep{}: launched={} incomplete={} errors={}", js(v, "repetition"), js(v, "sessions_launched"), js(v, "sessions_incomplete"), js(v, "launch_errors"))).collect::<Vec<_>>(),
             per.join("; "), classes.chars().take(600).collect::<String>()));
     }
