@@ -432,3 +432,98 @@ control in `/tmp/negative-controls.json` and do not weaken the assignment.
 The clean tree still reports **175 PASS, 3 WEAK, 4 RECORDED, 0 FAIL; catalogue 115/121 PASS, 0 NOT-EXECUTED; verdict PASS**
 ([raw/run-07-negative-controls.md](raw/run-07-negative-controls.md)) — and that number now means something it did not mean before
 item 6, because five of the six enforcements behind it are known to be load-bearing and the sixth is known to be unreachable.
+
+---
+
+## Item 8 — WP3.1 verdict
+
+### Verdict: the WP3.1 corrections hold, and WP3's exit condition does **not**
+
+WP3.1 was added because the WP3 register claimed a conformance result it had not earned. That correction is now done, and it
+found more than the review did. The suite is honest about what it measures, every catalogue row executes, and the assertions are
+now known — not assumed — to discriminate. But the same work established that one milestone-1B requirement **cannot be met by
+this implementation**, and that is the finding that governs the go/no-go.
+
+**R-AUD-2 is not satisfied at 1B.** Its attribution-completeness metric requires reconstructing
+`initiator → agent → session → process → effect` across three effect classes at ≥ 99 %. Measured: **3.5 %**. The gateway-operation
+corpus reconstructs at 100 %, but local object create/modify and process lifecycle events have **no ingestion path at all** — 220
+of every 230 effects are unattributable, because nothing in the implementation was ever built to collect them. This is a design
+gap, not a defect, and closing it (an audit-netlink shipper, per-session rule lifecycle, reconciliation with R-AUD-3's `lost`
+counter) is a work package rather than a repair. WP2 and WP3 both scored D-12 by a presence check over event kinds that were
+already being emitted, which is why neither noticed.
+
+### Against the five exit conditions
+
+| # | Condition | Verdict | Evidence |
+|---|---|---|---|
+| 1 | All mandatory 1B rows present | **MET** | 121 catalogue rows, **0 NOT-EXECUTED**, dups=0, extra=0; 301 register rows including 48 fault-injection rows |
+| 2 | No claimed-enforced resource merely copied into the binding | **MET** | `installed_value` is read back from the kernel or the class is recorded `absent` (item 3, `construct.rs`) |
+| 3 | Budget enforcement survives restart | **MET** | `T-6.9-005.budget-persist`: op_count 31→36, restored to 36 after restart (not reset), then exhausted at the same cumulative figure |
+| 4 | No missing fault point permits authority or identity reuse | **MET** | 48 F-C/F-T rows covering every construction and termination step the catalogue names; each records containment and no authority survival |
+| 5 | An independent fresh-host run reproduces the result | **NOT MET** | Item 7 not performed. See below — one half of it I cannot satisfy at all |
+
+### Against the three stop-or-narrow triggers
+
+| Trigger | Fired? | Detail |
+|---|---|---|
+| Corrections require changing frozen semantics broadly | **No** | Frozen-doc changes were narrow and additive: `test-catalogue` 0.7, `manifest-schema` 0.8, ADR-0002 0.9→**0.10**. No frozen requirement was weakened |
+| Negative controls reveal broad false positives | **Partially — and this is a real signal** | 3 of 6 controls initially failed. Not broad in count, but **T-6.9-008 was passing on other runs' history**, and that class of error is systemic rather than local. Every remaining cumulative counter has since been audited (see below) |
+| Direct privileged SLOC / lifecycle complexity undermines the simplicity argument | **No, on the bound — but the previously published figure was wrong** | See below |
+
+### R-CON-8: the previously published figure used the wrong scope
+
+R-CON-8 bounds `agentbound-launch` + `agentbound-lifecycle` + the gateway authentication path at ≤ 6 000 **direct** SLOC, counted
+with a pinned tool. Measured now with the pinned `tokei 13.0.0-alpha.8`:
+
+| Figure | SLOC |
+|---|---|
+| **1 — direct privileged (the bounded figure)** | **1 205** (launch 428, lifecycle 763, gateway auth path 14) — **20 % of 6 000** |
+| 3 — shared code linked into privileged processes (`ab-common`) | 1 011 |
+| 6 — gateway core, unbounded but line-by-line reviewed | 387 |
+
+The round-4 note in this file reported "direct privileged SLOC 2 417 (launch 494, lifecycle 826, ab-common 1 097)". **That was the
+wrong scope**: it included all of `ab-common` in the bounded figure and omitted the gateway authentication path, whereas R-CON-8
+names the auth path and treats shared library code as a separately reported figure. It was also not produced with the pinned tool.
+The bound was never close to breached either way, so no decision rested on it — but the figure was wrong and is corrected here
+rather than quietly restated. **The simplicity argument holds:** lifecycle grew by roughly 60 SLOC across all of WP3.1.
+
+### What item 6 implies beyond the three rows it repaired
+
+The T-6.9-008 failure was not a local mistake. Any assertion whose evidence is "a record of kind X exists in the audit log" passes
+on a log that accumulates across runs. I audited every remaining cumulative counter in the suite: **ten remain, and all ten are
+sound** — each is either a before/after delta around the specific stimulus or scoped to a single allocation id, so none can be
+satisfied by a previous run. Five rows use explicit run-window scoping. This is recorded because the property "no assertion may
+pass on another run's evidence" is now a standing obligation on new rows, not a one-off repair.
+
+### Recommendation to the plan (0.17)
+
+1. **Do not go to WP4 on the current evidence.** Condition 5 is unmet and R-AUD-2 fails. Neither is a formality.
+2. **Narrow milestone 1B: drop the R-AUD-2 attribution-completeness metric from 1B and re-scope it to a dedicated work package.**
+   The honest position is that end-to-end attribution was claimed at 1B on the strength of a presence check. Two of its three
+   effect classes were never collected. The requirement should either move behind a work package that builds class (a) and (b)
+   ingestion, or be restated as gateway-operation attribution only — which *is* demonstrated, at 100 % of the finite corpus, with
+   idempotency keys and a 30 s correlation deadline. **It should not remain a 1B exit claim in its current form.**
+3. **Treat lifecycle's serialization as a 1B defect, not a capacity note.** The pre-registered 8-session profile cannot be
+   admitted because `agentbound-lifecycle` serializes blocking work (a construction held it 17.4 s; a termination 61 s) when
+   component-interfaces §3.6 requires it to serialize *decisions*. This is a spec-conformance gap, and it also bounds every
+   concurrency claim the platform can make.
+4. **Specify the in-session gateway protocol.** `agentbound.gateway.v0.1` appears in **no frozen document**. Its request shape,
+   its now-required `idempotency_key`, and the replay/conflict semantics exist only in code. That is how it came to omit an
+   idempotency key entirely while `component-wire-formats` mandated one for every component request.
+5. **Adopt the negative-control harness as a gate, not an artefact.** A conformance run should not be reportable unless its
+   controls have been re-established against the build under test. Item 6 found three false positives that four consecutive green
+   runs did not.
+
+### What is not done, and what I cannot do
+
+- **Ten seeded suite repetitions** (item 5, second half) — not run. One transient has already been observed (`T-6.5-009` saw a
+  stray `in-use` allocator state once), so flakiness is known to exist and is not yet characterised.
+- **Item 7, fresh-host reproduction** — not performed.
+- **Item 7's second half is not available to me at all.** It requires "adversarial assertions owned and reviewed by someone other
+  than the implementation author." I wrote every assertion in this suite, including every negative control. A fresh-host run
+  proves the result is not host-specific; it does **not** provide independent ownership, and provisioning a second VM must not be
+  reported as if it had. **This condition can only be closed by a reviewer who is not me**, and the WP3.1 exit should not be
+  recorded as met until that happens.
+
+The suite's current state — 175 PASS, 3 WEAK, 4 RECORDED, 0 FAIL, 0 NOT-EXECUTED — is a fair report of what these assertions
+check, and item 6 is what makes it a fair report rather than merely a green one. It is not evidence that milestone 1B is met.
