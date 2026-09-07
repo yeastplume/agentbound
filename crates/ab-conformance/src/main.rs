@@ -656,7 +656,11 @@ fn main() {
             format!("{}/{} triggers in the frozen vocabulary exercised with a declared action and a session.revocation_received record in the hash-chained log: {covered:?}{}. Invariant 21 stays incomplete until 1C (inference grant/binding revoked), per R-LC-3.",
                 covered.len(), TRIGGERS.len(), if missing.is_empty() { String::new() } else { format!("; NOT exercised: {missing:?}") }));
     }
-    g.weak("D-12", missing.is_empty(), format!("presence check only, NOT the pre-registered metric: {}/{} required kinds on one launch record; missing={:?}", need.len() - missing.len(), need.len(), missing));
+    // The pre-registered §5 metric is measured by a separate harness (`d12-run.py`), because it needs 8 concurrent sessions and its
+    // own instrumented ground truth. This row is only a presence check, and it MUST carry the measured result so the register cannot
+    // be read as if presence were the metric: measured completeness is 3.5% (gateway corpus 100%, local-object and process-lifecycle
+    // classes 0% — they have no ingestion path at all), against a required >= 99% overall. See docs/evidence/wp3.1/README.md item 5.
+    g.weak("D-12", missing.is_empty(), format!("presence check only, NOT the pre-registered metric: {}/{} required kinds on one launch record; missing={:?}. PRE-REGISTERED METRIC NOT MET: measured |C|/|G| = 3.5% vs required >= 99% (gateway-operation corpus 100%, but the local-object and process-lifecycle classes have no ingestion path, so 220 of 230 effects per session are unattributable); the 8-session profile also cannot currently be admitted. R-AUD-2 is not satisfied at 1B.", need.len() - missing.len(), need.len(), missing));
     g.rec("T-6.3-007", chain.contains("gateway.released") && chain.contains("session.sealed"), "post-termination: projection released, record sealed, socket node removed with the mount namespace");
     let (_, sockleft) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
     g.rec("T-6.3-007.socket", sockleft.trim() == "0", format!("host-side socket nodes left for this allocation: {}", sockleft.trim()));
