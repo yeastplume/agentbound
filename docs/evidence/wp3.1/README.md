@@ -529,6 +529,33 @@ item 6, because five of the six enforcements behind it are known to be load-bear
 
 ---
 
+## Item 9 — the deadlock was diagnosed three times before it was diagnosed correctly
+
+Item 5 recorded a gateway ↔ lifecycle deadlock as found and fixed. It was neither, twice more. The full history matters because each
+wrong diagnosis was *supported* by direct evidence, and each fix was a real repair of a real defect that nevertheless left the
+symptom in place. What follows is what the fourth attempt found, and why the first three were not enough.
+
+| Attempt | What the evidence showed | The fix | Why it was not the cause |
+|---|---|---|---|
+| 1 | Both daemons blocked on each other at the 60 s `CROSS_DAEMON_MS` bound (`strace`, both sides) | asymmetric bounds; gateway shortened to `BUDGET_PERSIST_MS` | correct and necessary, but converted the deadlock into a livelock |
+| 2 | Each side re-colliding with the other's retry | `lc_serving` — serve re-entrancy-safe control while a bounded call is outstanding | fixed *construction* (2/8 → 8/8 sessions); the session hot path still could not make progress |
+| 3 | Gateway timing out on `record_budget` and closing admission (44 FAILs, all "closed by gateway") | `lc_result` distinguishes `Refused` from `NoReply`; retry to a deadline; `connect` itself bounded (`SO_RCVTIMEO` never bounded `connect`, so every "bounded" call had an unbounded prefix) | both were genuine defects — one of them a bound that had never applied to the call that actually blocked — but the timeouts kept happening |
+| **4** | **3 196 `deny_admission` calls delivered to the single-threaded gateway during one three-session probe** | **back off `termination-incomplete` retries (`RETRY_BACKOFF_NS`)** | **this was the cause.** `poll_sessions` retried every incomplete termination on every tick, each retry issuing a fresh `deny_admission`. Lifecycle was generating load against the very gateway it was waiting on. |
+
+The lesson is not that the earlier fixes were wrong — three of the four were real defects, and the suite needs all of them — but that
+a saturated peer and a deadlocked peer present identically at the socket, and `strace` showing two daemons blocked on each other does
+not distinguish "cycle" from "one of them is being flooded by the other". What separated them was **counting** the calls rather than
+looking at where they blocked.
+
+Two of the four fixes were things the frozen §3.8 permitted, so `component-interfaces` is now **0.5**: a bound must cover connection
+establishment, a component waiting on a peer must keep serving that peer, and "no answer" is not "no". The retry-storm property is
+stated there too — a mandatory retry issued at loop speed is a denial of service against the peer.
+
+After the fix, three concurrent sessions produce **27 operations admitted, 24 completed, zero persist failures and zero
+`connection_refused`**, where the same probe previously produced 9 `budget_persist_failed`.
+
+---
+
 ## Item 8 — WP3.1 verdict
 
 ### Verdict: the WP3.1 corrections hold, and WP3's exit condition does **not**
