@@ -126,7 +126,7 @@ CONTROLS = [
                "outcomes from the lifecycle store on activate/reconstruct, a repeated key after a gateway restart re-executes the "
                "operation (independent WP3.1 validation, finding 6). D4.7-idempotency-persist must see a second execution.",
         "file": "crates/agentbound-gateway/src/main.rs",
-        "old": "pr.record = Some(b.clone()); pr.idem = Self::outcomes_from_record(&rec); pr.used = used.clone();",
+        "old": "pr.record = Some(b.clone()); pr.idem = outcomes; pr.used = used.clone();",
         "new": "pr.record = Some(b.clone()); pr.used = used.clone();",
         "expect_fail": ["D4.7-idempotency-persist"],
         "also_ok": [],
