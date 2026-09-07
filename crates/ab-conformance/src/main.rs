@@ -541,7 +541,11 @@ fn main() {
     let main_before = sh("su -s /bin/sh agentbound-gateway -c 'git -C /var/lib/agentbound/git/demo.git rev-parse refs/heads/main'").1.trim().to_string();
     let (rc, v, _) = gb.request(&greq, ""); let glrd = js(&v, "launch_record_digest"); let gscope = js(&v, "scope_id"); let guid = js(&v, "uid");
     g.rec("D-10.launch", rc == 0 && !glrd.is_empty(), format!("rc={rc} lrd={glrd} topology=local-socket"));
-    let gcon = js(&v, "console"); std::thread::sleep(std::time::Duration::from_secs(24));
+    // Wait for the worker's own GW-END marker rather than a fixed sleep. A blind 24 s wait read the console while the worker was
+    // still running and scored its unwritten rows as absent — 9 NOT-EXECUTED rows and a cascade of 1B FAILs, none of them real. The
+    // marker is what says the worker is done; the timeout only bounds the wait (WP3.1).
+    let gcon = js(&v, "console");
+    for _ in 0..120 { if std::fs::read_to_string(&gcon).unwrap_or_default().contains("GW-END") { break } std::thread::sleep(std::time::Duration::from_millis(500)); }
     let worker = std::fs::read_to_string(&gcon).unwrap_or_default(); let mut gend = false;
     for l in worker.lines().filter(|l| l.starts_with("GW ")) { let p: Vec<&str> = l.splitn(4, ' ').collect(); if p.len() < 3 { continue; } if p[1] == "GW-END" { gend = true; continue; } g.put(p[1], CLASSES.iter().find(|c| **c == p[2]).copied().unwrap_or("FAIL"), p.get(3).copied().unwrap_or("")); }
     g.fixture("GW-COMPLETE", gend, format!("worker lines={}", worker.lines().count()));
