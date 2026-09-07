@@ -655,7 +655,11 @@ fn main() {
     // §5; fewer is reported as such and fails.
     {
         let d = "/var/lib/agentbound/evidence/d12";
-        let mut reps: Vec<Value> = (1..=10).filter_map(|n| std::fs::read_to_string(format!("{d}/rep-{n}.json")).ok()).map(|s| parse(&s)).filter(|v| !matches!(v, Value::Null)).collect();
+        // Parse each result file WHOLE. `parse()` takes the last line that is itself valid JSON, which is right for a JSONL event
+        // stream and wrong for these: the harness writes them pretty-printed, so `parse()` saw only the closing brace, every
+        // repetition read as invalid, and the row reported "0 valid repetitions" while ten valid repetitions sat on disk (WP3.1).
+        let mut reps: Vec<Value> = (1..=10).filter_map(|n| std::fs::read_to_string(format!("{d}/rep-{n}.json")).ok())
+            .filter_map(|s| json::parse(s.trim().as_bytes(), &MANIFEST_LIMITS).ok()).filter(|v| !matches!(v, Value::Null)).collect();
         reps.sort_by_key(|v| js(v, "repetition").parse::<i64>().unwrap_or(0));
         let valid: Vec<&Value> = reps.iter().filter(|v| js(v, "valid") == "true").collect();
         let f = |v: &Value, p: &str| js(v, p).parse::<f64>().unwrap_or(-1.0);
