@@ -71,7 +71,14 @@ const DETAIL_RE: &str = "'\"detail\":\"[^\"]*\"'";
 fn cgprocs(scope: &str) -> i32 { sh(&format!("cat /sys/fs/cgroup/system.slice/{scope}/cgroup.procs 2>/dev/null | wc -l")).1.trim().parse().unwrap_or(0) }
 
 impl Rig {
-    fn put(&mut self, id: &str, verdict: &'static str, ev: impl Into<String>) { let ev = ev.into().replace('\n', " "); println!("{verdict} {id} {}", ev.chars().take(160).collect::<String>()); self.rows.push(Row { id: id.into(), verdict, evidence: ev }); }
+    /// Print one row. A passing row's evidence is clipped to keep the console readable; a FAIL's is printed in full, because the
+    /// clip hid the failing field exactly when it was needed — D-08's evidence is a JSON object whose deciding member sits past
+    /// character 160, so the console showed a truncated blob and the reason had to be reconstructed from the audit store (WP3.1).
+    fn put(&mut self, id: &str, verdict: &'static str, ev: impl Into<String>) {
+        let ev = ev.into().replace('\n', " ");
+        if verdict == "FAIL" { println!("{verdict} {id} {ev}"); } else { println!("{verdict} {id} {}", ev.chars().take(160).collect::<String>()); }
+        self.rows.push(Row { id: id.into(), verdict, evidence: ev });
+    }
     fn rec(&mut self, id: &str, pass: bool, ev: impl Into<String>) { self.put(id, if pass { "PASS" } else { "FAIL" }, ev) }
     /// Assertion holds but is weaker than the catalogue intent; a false assertion is still FAIL.
     fn weak(&mut self, id: &str, pass: bool, ev: impl Into<String>) { self.put(id, if pass { "WEAK" } else { "FAIL" }, ev) }
