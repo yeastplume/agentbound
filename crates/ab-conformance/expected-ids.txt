@@ -1,4 +1,12 @@
-# expected-ids: derived from test-catalogue.md 0.7; milestones 1A+1B; 118 ids; regenerate with tools/gen-expected-ids.py
+# expected-ids: derived from test-catalogue.md 0.7; milestones 1A+1B.
+# 121 entries = 118 frozen catalogue ids (every 1A/1B id in test-catalogue.md 0.7, verified complete) + 3 ADR-0002 decision rows
+# (D4, D7-8, D7-9), which are Decision-level obligations rather than catalogue ids. Catalogue ids at 1C/1D (D-14, D-17,
+# T-6.4-015, T-6.8-010) are deliberately absent: out of scope for 1A+1B, and must NOT be counted as not-executed here.
+# Maintained by hand. The earlier header claimed "118 ids" and a tools/gen-expected-ids.py that does not exist; the count went
+# stale as WP3.1 added rows. Verify against the frozen catalogue rather than trusting this comment:
+#   awk '!/^#/ && NF {print $1}' expected-ids.txt | sort -u > /tmp/m.txt
+#   grep -oE '^\| (D-[0-9]+|T-6\.[0-9]+-[0-9]+|F-[CT]-[0-9]+) \| 1[AB]' docs/architecture/test-catalogue.md | sed 's/^| //; s/ | 1[AB]$//' | sort -u > /tmp/c.txt
+#   comm -13 /tmp/m.txt /tmp/c.txt   # MUST be empty: a frozen 1A/1B id absent from this manifest is a coverage hole
 # id milestones catalogue-section
 D-01 1A 6.
 D-02 1A 6.
