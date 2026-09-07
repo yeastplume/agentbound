@@ -1,5 +1,5 @@
 # Agentbound Component Interfaces
-**Version:** 0.4  
+**Version:** 0.5  
 **Status:** Frozen (WP0) — skeleton; wire formats are WP1 outputs  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed reference implementation  
@@ -10,6 +10,7 @@
 - **0.1** — Initial WP0 skeleton.
 - **0.2** — Envelope freshness values fixed; identifier terminology aligned; systemd is an observation source only.
 - **0.3** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Oxford spelling.
+- **0.5** — §3.8 gains the three properties WP3.1 established by measurement rather than by reasoning, after two successive "fixed" verdicts on the gateway ↔ lifecycle deadlock were both wrong. (a) A bound MUST cover connection establishment, not only transfer: `SO_RCVTIMEO`/`SO_SNDTIMEO` leave `connect` unbounded, and both daemons were observed blocked there simultaneously. (b) A component waiting on a peer MUST keep serving that peer's re-entrancy-safe inbound calls; a sleep-based retry loop reproduced the deadlock on the session hot path with every bound correct. (c) "No answer within the bound" is not a refusal — conflating them closed admission on healthy sessions. No obligation is weakened; three that were assumed are now stated.
 - **0.4** — Adds §3.8, mutual-call bounds between components. This closes an omission the WP3.1 D-12 measurement exposed as two real deadlocks in the reference implementation: 0.3 required each component to serialize its own decisions and to bound its waits, but never said that two components which can call *each other* must bound those calls asymmetrically. With equal bounds a cycle is merely truncated to the bound, and a 60 s truncation exceeds the §4.1 launch-binding freshness window, so unrelated concurrent launches fail `constructor_envelope:Stale`. No existing obligation is weakened.
 
 
@@ -158,7 +159,9 @@ without exposing secrets in errors.
 | Cyclic pairs | Where two components may each originate a call to the other, the pair MUST be identified and its bounds MUST be **asymmetric**: the side whose failure is cheap and fail-closed takes the short bound; the side whose failure would abandon a transition or leave authority live takes the long one. |
 | Bound relationship | A short bound MUST exceed the peer's slowest legitimate service time for that operation, and every bound MUST be small enough that exhausting it cannot consume a freshness window that another in-flight operation depends on (§4.1). |
 | Progress | A component MUST return to serving requests after a bounded call fails; it MUST NOT hold its request queue across a retry. Where the caller can safely retry, the retry MUST be bounded by a deadline, not by an attempt count, because the wait is set by the peer's queue depth. |
-| Not permitted | Equal bounds on both directions of a cyclic pair (this truncates a deadlock instead of breaking it); a bound that is a latency budget rather than a liveness bound; unbounded retry of a call that holds an execution identity. |
+| Bound covers the whole call | A bound MUST cover **establishing** the connection as well as transferring on it. A transfer-only timeout is not a bound: a component whose peer's accept queue is full blocks before any transfer begins, below the layer where the timeout was set. |
+| Serving while waiting | A component waiting on a bounded call to a peer MUST continue to accept and serve that peer's inbound calls that cannot re-enter a downstream call. A wait implemented as an unconditional sleep re-creates the deadlock even when every bound is correct, because the waiter is very often the reason the peer has not answered. The set of operations that may be served this way MUST be enumerated, and anything outside it MUST be refused as retryable rather than dropped. |
+| Not permitted | Equal bounds on both directions of a cyclic pair (this truncates a deadlock instead of breaking it); a bound that is a latency budget rather than a liveness bound; unbounded retry of a call that holds an execution identity; treating "no answer within the bound" as a refusal, since a busy peer and a refusing peer require opposite responses. |
 
 Each component still serializes its own decisions (§3.6). Serialization is what
 makes a cycle possible, so the pairs that can close one MUST be enumerated in the
