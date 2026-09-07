@@ -32,7 +32,12 @@ pub struct Projection { pub authorization_id: String, pub allocation_id: String,
 /// answer arrived inside the bound. The distinction matters because only the second may be retried.
 enum LcOutcome { Ok(#[allow(dead_code)] Value), Refused, NoReply }
 
-pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn>, pub inherited: Vec<(String, OwnedFd)> }
+pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn>, pub inherited: Vec<(String, OwnedFd)>,
+    /// The control listener, kept here so that ANY bounded downstream call can keep serving re-entrancy-safe inbound control
+    /// operations while it waits (component-interfaces §3.8, "Progress"). Threading it only into `activate` left the session hot
+    /// path — `persist_budget` — unable to make progress, which is where the gateway ↔ lifecycle cycle reappeared: lifecycle
+    /// called `deny_admission` and waited, while the gateway sat retrying `record_budget` without ever accepting that call.
+    pub control_fd: Option<OwnedFd> }
 
 /// Requirement named in a denial (D7 item 9). Rules map to the R-GW / R-ISO requirement whose check produced them.
 pub fn requirement_for(rule: &str) -> &'static str {
@@ -65,9 +70,12 @@ fn main() {
     let catalogue = ab_common::json::parse(&std::fs::read(arg("--catalogue", "/etc/agentbound/catalogue.json")).expect("catalogue"), &ab_common::json::MANIFEST_LIMITS).expect("catalogue parse");
     let cfg = Config { lifecycle_sock: arg("--lifecycle-socket", "/run/agentbound/lifecycle.sock"), socket_dir: arg("--socket-dir", "/run/agentbound/gw"), catalogue, git_root: arg("--git-root", "/var/lib/agentbound/git"), credential: arg("--credential", "/var/lib/agentbound/gateway/credential"), quarantine: arg("--quarantine", "/var/lib/agentbound/gateway/quarantine"), audit: ab_common::audit::Sink::open(&arg("--audit-spool", "/var/lib/agentbound/gateway/audit-gateway.jsonl")), max_conns_per_session: arg("--max-conns", "16").parse().unwrap_or(16) };
     let _ = std::fs::create_dir_all(&cfg.socket_dir); let _ = std::fs::create_dir_all(&cfg.quarantine);
-    let mut gw = Gateway { cfg, by_alloc: HashMap::new(), conns: Vec::new(), inherited: wire::listen_fds() };
+    let mut gw = Gateway { cfg, by_alloc: HashMap::new(), conns: Vec::new(), inherited: wire::listen_fds(), control_fd: None };
     gw.reconstruct(); wire::sd_notify("READY=1\n");
     let control = wire::listen(&arg("--socket", "/run/agentbound/gateway.sock"), 0o660).expect("listen control");
+    // duplicated, not moved: the loop below polls `control` directly, and `gw` needs its own handle to serve inbound control from
+    // inside a bounded call
+    gw.control_fd = control.try_clone().ok();
     loop {
         // poll: control listener, every session listener, every connection (data + peer pidfd exit)
         let mut pfds: Vec<libc::pollfd> = vec![libc::pollfd { fd: control.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
@@ -281,14 +289,30 @@ impl Gateway {
                 LcOutcome::Ok(_) => { ok = true; break }
                 // a refusal is an answer: lifecycle decided, and the decision stands
                 LcOutcome::Refused => break,
-                // no answer within the bound: the peer is busy, not refusing
-                LcOutcome::NoReply => { if ab_common::sig::monotonic_ns() >= deadline { break } std::thread::sleep(std::time::Duration::from_millis(100)); }
+                // No answer within the bound: the peer is busy, not refusing. Before sleeping, serve any inbound control operation
+                // that cannot re-enter this path — lifecycle's `deny_admission` is exactly such a call, and it is very often WHY
+                // lifecycle has not answered us. Sleeping without serving it is the deadlock.
+                LcOutcome::NoReply => {
+                    if ab_common::sig::monotonic_ns() >= deadline { break }
+                    self.serve_control_briefly(100);
+                }
             }
         }
         if attempts > 1 { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.budget_persist_retried", if ok { "ok" } else { "deny" }, &cr, Value::obj(vec![("attempts", Value::Int(attempts as i64)), ("deadline_ms", Value::Int(ab_common::wire::BUDGET_PERSIST_DEADLINE_MS))])); }
         if !ok { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.admission_denied", "ok", &cr, Value::obj(vec![("reason", Value::s("budget_persist_failed"))])); self.by_alloc.get_mut(aid).unwrap().admission = false; }
         ok
     }
+    /// Poll the control listener for up to `ms` and dispatch anything that arrives through the re-entrancy-safe inline path. Used in
+    /// place of a plain sleep inside a bounded downstream retry, so that waiting on a peer never blocks that peer's call to us.
+    fn serve_control_briefly(&mut self, ms: i32) {
+        use std::os::fd::AsRawFd;
+        let Some(cf) = self.control_fd.take() else { std::thread::sleep(std::time::Duration::from_millis(ms as u64)); return };
+        let mut pf = libc::pollfd { fd: cf.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        let n = unsafe { libc::poll(&mut pf, 1, ms) };
+        if n > 0 && pf.revents != 0 { if let Ok(ic) = wire::accept(&cf) { self.control_inline(ic); } }
+        self.control_fd = Some(cf);
+    }
+
     fn by_lrd_mut(&mut self, lrd: &str) -> Option<&mut Projection> { self.by_alloc.values_mut().find(|p| p.lrd.as_deref() == Some(lrd)) }
     /// Grants exist only as the committed record says (D4.7): fetch it from lifecycle, never from the caller.
     fn activate(&mut self, lrd: &str, control: &std::os::fd::OwnedFd) -> Value {
