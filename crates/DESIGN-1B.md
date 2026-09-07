@@ -30,7 +30,14 @@ gateway restart: reconstructs grants only from lifecycle `list` + launch-record 
 
 One `sendmsg` = one operation: canonical JSON `{"v":"agentbound.gateway.v0.1","operation_id":..., "operation":"git.push_staging", "args":{...}, "payload_sha256":..., "payload_len":n}` **Verified on VM 110:** SEQPACKET messages of 256 KiB pass, 1 MiB fails `EMSGSIZE` (`wmem_max` 212992; buffer raised by the unprivileged peer only up to that). Therefore: the operation packet is JSON only; the payload is carried in following `payload_chunk` packets (each ≤ 128 KiB, each carrying its own kernel `SCM_CREDENTIALS`, same process instance) up to `payload_len` bytes, then the gateway verifies `payload_sha256` and executes. Per-connection reassembly bound = `bytes_per_operation` (default 8 MiB); an operation is admitted only once the whole payload is present and verified — every chunk is attributed to the same live process. Reply: one packet, canonical JSON `{ok, class, body|rule, operation_seq, trace_id}`. Caller-supplied `trace_id` is ignored unless equal to the record's.
 
-Reject classes on the session socket: `unauthenticated` (credential/instance mismatch → close), `unauthorized` (operation not granted / session not active), `invalid` (parse, multiple/zero SCM_CREDENTIALS, SCM_RIGHTS present → close), `budget`, `upstream_rejected`, `admitted-before-revocation` (recorded on the operation, not a reject).
+Normative shape now lives in `docs/architecture/component-wire-formats.md` §10 (0.2): seven members including `idempotency_key`; the
+input digest is SHA-256 of the canonical request minus the key. **Idempotency outcomes are persisted**: `Projection.idem` maps
+`(operation_id, key) → (operation, operation_seq, input_digest, reply)`, is sent to lifecycle as `outcomes` in the same
+`record_budget` call as consumption (before the reply is released), and is restored on `activate`/`reconstruct`. Lifecycle stores
+it as its own `outcomes` record kind and refuses `outcome_rewrite`. The former in-memory-only map was the WP3.1 finding-6 defect.
+Cross-daemon bounds: `CROSS_DAEMON_MS` 60 s, `BUDGET_PERSIST_MS` 2 s (asymmetric; wire-formats §11).
+
+Reject classes on the session socket: `unauthenticated` (credential/instance mismatch → close), `unauthorized` (operation not granted / session not active), `invalid` (parse, SCM_RIGHTS present → close; the multiple/zero SCM_CREDENTIALS branch is unreachable on the pinned kernel, ADR-0002 0.10), `conflict` (`idempotency_conflict`), `budget`, `upstream_rejected`, `admitted-before-revocation` (recorded on the operation, not a reject).
 
 ## Git staging-ref adapter (`git.push_staging`)
 

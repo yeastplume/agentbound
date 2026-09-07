@@ -1,12 +1,13 @@
 # Agentbound Component Wire Formats
-**Version:** 0.1  
+**Version:** 0.2  
 **Status:** Draft (WP2) — defines the items deferred by [component interfaces](component-interfaces.md) §10  
 **Date:** 28 August 2026  
-**Applies to:** Phase 1 Unix-governed reference implementation, milestone 1A  
+**Applies to:** Phase 1 Unix-governed reference implementation, milestones 1A and 1B  
 **Related:** [component interfaces](component-interfaces.md), [manifest schema](manifest-schema.md), [session lifecycle](session-lifecycle.md), [execution-identity lifecycle](execution-identity-lifecycle.md)
 
 ## Revision history
 
+- **0.2** — WP3.1 (independent validation findings 4 and 6): adds §10, the in-session gateway protocol `agentbound.gateway.v0.1`, which was implemented in WP3 but specified in no frozen document — the omission that let it ship without the idempotency key component-interfaces §5 mandates. Specifies the key, the input digest that defines "same authenticated input", the replay and conflict rules, and the requirement that completed outcomes be durable across a gateway restart. Adds §11: cross-daemon calls MUST be time-bounded, and a call that can close a cycle MUST be bounded asymmetrically. Adds the `outcomes` member of `record_budget` to §3. No 0.1 member list changes.
 - **0.1** — Initial WP2 definition: message envelope, per-operation schemas for the 1A component pairs, error payload, event schema, versioning rules, and the 1A policy-to-launch delivery shape.
 
 ---
@@ -92,3 +93,50 @@ optionally with `launch_record_digest` and `trace_id` when the caller is authori
 ## 9. Store record formats (informative)
 
 Allocator store (SQLite WAL, `synchronous=FULL`): table `alloc(seq INTEGER PRIMARY KEY, allocation_id, uid, gid, state, state_seq, authorization_id, manifest_digest, agent_global_id, session_id, trace_id, host_id, boot_id, scope_id, pidns_id, domain_id, actor, wall_clock, monotonic_ns, evidence, prev_hash, hash)`; every state change is a new row; `hash = SHA-256(prev_hash || canonical row)`. Launch-record store: same shape with `kind ∈ {binding, event, seal, correction}` and the canonical signed pair stored once by digest. Both are readable only by the lifecycle daemon.
+
+## 10. In-session gateway protocol (`agentbound.gateway.v0.1`, 1B)
+
+Spoken by a session workload over the projected socket `/run/gateway.sock`; distinct from the component protocol of §2 because the
+peer is untrusted and is authenticated per connection and per packet (ADR-0002). One JSON line per request, ≤ 64 KiB, followed by
+`payload_len` raw bytes when non-zero.
+
+```text
+{"args":<object>,"idempotency_key":"<1–128 bytes>","operation":"<name>","operation_id":"<op:…>","payload_len":<n>,"payload_sha256":"sha256:<hex>","v":"agentbound.gateway.v0.1"}
+```
+
+Exactly these seven members. `payload_sha256` is required when `payload_len > 0` and MUST match the payload bytes. `operation_id`
+MUST NOT contain a space. The reply is the §2.2 reply envelope; a payload-bearing request first receives
+`{"awaiting_payload":<n>,"operation_seq":<k>}` and then the final reply.
+
+**Idempotency (component-interfaces §5).** The key is scoped to `(allocation, operation_id, idempotency_key)`. The *authenticated
+input* is the canonical JSON of the request object with `idempotency_key` removed (so: `args`, `operation`, `operation_id`,
+`payload_len`, `payload_sha256`, `v`); its SHA-256 is the **input digest**.
+
+- Same key, same input digest → the gateway MUST return the **original reply** (same `operation_seq`, same `result`), MUST NOT
+  execute the adapter again, MUST NOT consume budget, and MUST emit `gateway.operation_replayed`.
+- Same key, different input digest, or same key used for a different `operation` → `conflict` / `idempotency_conflict`.
+- A key is recorded only when the adapter reports **completion**; a denied or failed operation records nothing, so a retry after a
+  denial is a fresh attempt (and a fresh in-scope effect, per test-catalogue §5).
+- Completed outcomes MUST be **durable before the reply is released** and MUST survive a gateway restart: they are appended to the
+  session's hash-chained lifecycle record as `outcomes` (via `record_budget`, §3) and restored on activate/reconstruct. If the
+  outcome cannot be recorded the reply is `unavailable` / `outcome_persist` and admission closes — the same fail-closed rule as
+  budget consumption. Rationale: a session survives a gateway restart, opens a new connection and retries; without durable outcomes
+  a non-idempotent adapter operation (a staging push) would execute twice. This was a real defect at WP3 (WP3.1 finding 6).
+
+Budget consumption is checked and made durable *before* the adapter runs (deny rules `budget_operations`, `budget_bytes`,
+`budget_objects`); outcome persistence happens *after*. Both use the same `record_budget` call and the lifecycle store refuses a
+regression of either (`budget_regression`, `outcome_rewrite`).
+
+**`record_budget` (gateway → lifecycle), added to §3.** `body` = `{"launch_record_digest", "budget": {<operation_id>: {"bytes","operations"}},
+"outcomes"?: {"<operation_id> <idempotency_key>": {"input_digest","operation","operation_seq","reply"}}}`. Both maps are complete
+snapshots; the store appends each as its own record kind and rejects any decrease (`budget`) or change to an existing key (`outcomes`).
+
+## 11. Cross-daemon call bounds
+
+Every call one daemon makes to another MUST be bounded in time. A call that can close a cycle between two daemons — at 1B,
+gateway → lifecycle `record_budget` while lifecycle → gateway `deny_admission`/`release` may be in flight — MUST be bounded
+**asymmetrically**: the side whose failure is cheap to fail closed (the gateway: refuse the one operation, close admission) takes
+the short bound (`BUDGET_PERSIST_MS`, 2 s); the side whose failure would abandon a transition takes the long one (`CROSS_DAEMON_MS`,
+60 s, which MUST exceed the peer's slowest legitimate service time). Equal bounds do not break the cycle; they merely truncate the
+deadlock to the bound (measured at WP3.1: 61 128 ms with equal 60 s bounds, 2 124 ms after the asymmetry). These constants live in
+`ab_common::wire` and any change to them is a revision of this document.

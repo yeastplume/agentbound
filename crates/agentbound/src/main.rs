@@ -13,6 +13,9 @@ fn out(v: &Value) -> bool { println!("{}", String::from_utf8_lossy(&canonical(v)
 fn key(x: &str) -> Value { if x.starts_with("sha256:") { Value::obj(vec![("launch_record_digest", Value::s(x))]) } else { Value::obj(vec![("authorization_id", Value::s(x))]) } }
 
 fn main() {
+    // `--provenance`: print the source provenance embedded at build time and exit (independent WP3.1 validation, finding 4). The
+    // conformance runner asks every installed binary, so a stale install is visible as a commit mismatch rather than hidden.
+    if std::env::args().nth(1).as_deref() == Some("--provenance") { println!("commit={} dirty={} tree={}", ab_common::provenance::COMMIT, ab_common::provenance::DIRTY, ab_common::provenance::TREE); return; }
     let a: Vec<String> = std::env::args().collect();
     let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
     let (pol, lc, au) = (env("AGENTBOUND_POLICY_SOCKET", "/run/agentbound/policy.sock"), env("AGENTBOUND_LIFECYCLE_SOCKET", "/run/agentbound/lifecycle.sock"), env("AGENTBOUND_AUDIT_SOCKET", "/run/agentbound/audit.sock"));

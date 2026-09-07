@@ -174,7 +174,10 @@ impl Service {
         let (state, ident) = match self.sessions.get(lrd) { Some(s) => (s.state.clone(), self.store.latest(&s.allocation_id).map_err(store_err)?.map(|a| a.state).unwrap_or_default()), None => ("unknown".into(), String::new()) };
         // the latest gateway budget-consumption record travels with the binding so a restarted gateway restores it (R-GW-7, D4.7)
         let budget = recs.iter().rev().find(|(k, _)| k == "budget").map(|(_, v)| v.clone()).unwrap_or(Value::obj(vec![]));
-        Ok(Value::obj(vec![("binding", binding), ("budget", budget), ("identity_state", Value::s(&ident)), ("sealed", Value::Bool(sealed)), ("state", Value::s(&state))]))
+        // completed-operation outcomes (component-interfaces §5) travel the same way, so a restarted gateway returns the ORIGINAL
+        // result to a repeated key instead of re-executing a non-idempotent adapter action (independent WP3.1 validation, finding 6)
+        let outcomes = recs.iter().rev().find(|(k, _)| k == "outcomes").map(|(_, v)| v.clone()).unwrap_or(Value::obj(vec![]));
+        Ok(Value::obj(vec![("binding", binding), ("budget", budget), ("identity_state", Value::s(&ident)), ("outcomes", outcomes), ("sealed", Value::Bool(sealed)), ("state", Value::s(&state))]))
     }
     /// Gateway-only: append the session's budget consumption {operation_id: {bytes, operations}} to its hash-chained record.
     /// Monotonic: a figure lower than the last recorded one is refused (a restarted gateway must not un-spend).
@@ -191,6 +194,16 @@ impl Service {
             }
         }
         let seq = self.store.append_record("budget", &aid, lrd, &az, budget).map_err(store_err)?;
+        // Optional `outcomes`: {"<operation_id> <idempotency_key>": {"input_digest", "operation", "operation_seq", "reply"}}.
+        // Append-only like the budget; the gateway sends the full map, and a key may never change its recorded outcome.
+        if let Some(out) = b.get("outcomes").filter(|x| x.as_obj().is_some()) {
+            if let Some((_, prev)) = recs.iter().rev().find(|(k, _)| k == "outcomes") {
+                for (k, pv) in prev.as_obj().map(|m| m.iter().collect::<Vec<_>>()).unwrap_or_default() {
+                    match out.get(&k.0) { Some(cur) if cur == pv => {}, _ => return err(wire::CLASS_CONFLICT, "outcome_rewrite", format!("recorded outcome for {} would change or vanish", k.0)) }
+                }
+            }
+            self.store.append_record("outcomes", &aid, lrd, &az, out).map_err(store_err)?;
+        }
         Ok(Value::obj(vec![("recorded", Value::Bool(true)), ("seq", Value::Int(seq))]))
     }
     fn status_prebinding(&mut self, az: &str) -> Reply {

@@ -122,9 +122,20 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
         let t = open_tree_clone(d).map_err(|e| Fail { step: 3, rule: "mount_open_tree", detail: format!("errno={e}") })?; unsafe { libc::close(d) };
         let ro = mi.access == "read-only";
         mount_setattr(t, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | if ro { MOUNT_ATTR_RDONLY } else { 0 }).map_err(|e| Fail { step: 3, rule: "mount_setattr", detail: format!("errno={e}") })?;
-        // read-write workspaces: the session GID is granted through the directory group for the session's duration;
-        // ownership stays with the durable projection principal (durable-ownership carry-in), so cleanup resets the group
-        if !ro { let p = format!("{base}/{rel}"); let _ = std::os::unix::fs::chown(&p, None, Some(gids[0])); let _ = std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o2770)); }
+        // read-write workspaces: the session GID is granted through a per-session POSIX ACL entry naming the allocated group
+        // (execution-identity-lifecycle §7), which lifecycle removes at reclamation. Ownership stays with the durable projection
+        // principal. This MUST NOT be done by chowning the directory to the session group: a shared workspace has one owning group,
+        // so chown makes concurrent sessions on the same workspace mutually exclusive — the last launch wins the group and the rest
+        // cannot write at all. That defect presented as a lifecycle capacity limit until the D-12 eight-session profile isolated it.
+        if !ro {
+            let p = format!("{base}/{rel}");
+            // setgid on the directory so objects the session creates inherit the durable owning group, not the session's
+            let _ = std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o2770));
+            if let Err(e) = ab_common::acl::grant_group(&p, gids[0], ab_common::acl::PERM_RWX) {
+                return fail(3, "workspace_acl", format!("{rel} gid={} errno={e}", gids[0]));
+            }
+            led.note(3, "workspace_acl", &format!("{rel}: named-group ACL entry for gid {}", gids[0]));
+        }
         led.fds.push(t); mounts.push((t, target.clone(), ro));
         projections.push(Value::obj(vec![("access", Value::s(mi.access)), ("catalogue_version", Value::s(cfg.catalogue.get("catalogue_version").and_then(|x| x.as_str()).unwrap_or(""))), ("mount_id", Value::s(mi.mount_id)), ("target_template_projection", Value::s(mi.target_template_id))]));
     }
@@ -242,7 +253,29 @@ pub fn construct(cfg: &mut Config, authorization_id: &str, led: &mut Ledger) -> 
     // F-C-08: the record is committed and the gateway socket is bound, but activation never happens — the grant and socket must be
     // unusable and the rollback must release both.
     if fault("pre-activate-crash") { return fail(8, "fault_injected", "pre-activate-crash: record committed, socket bound, grants never activated".to_string()); }
-    if m.topology == "local-socket" { call(&cfg.gateway_sock, "activate", &format!("{authorization_id}/gw-activate"), Value::obj(vec![("launch_record_digest", Value::s(&lrd))]), &[], 8)?; led.note(8, "gateway_activated", "grants loaded from launch-record store"); }
+    if m.topology == "local-socket" {
+        // `activate` makes the gateway call lifecycle for the committed record, and lifecycle may itself be mid-`terminate` waiting on
+        // this gateway (`deny_admission`) — a genuine cycle between two single-threaded daemons, which the D-12 profile hits routinely.
+        // The gateway's side is now bounded at GATEWAY_TO_LIFECYCLE_MS, so it gives up quickly, returns to its poll loop and serves the
+        // pending `deny_admission`, which unblocks lifecycle. That makes the failure TRANSIENT, so retry it here rather than failing a
+        // construction for a condition that clears in milliseconds. The retries stay well inside BINDING_MAX_AGE_S; if they all fail
+        // the construction still fails closed, with the attempts recorded.
+        // Deadline-based, not a fixed count: lifecycle serves one request at a time, and under the D-12 profile eight concurrent
+        // constructions queue behind each other, so the wait a retry must cover is set by the queue, not by a guessed attempt count.
+        // The binding's own freshness was already checked at commit_binding (step 8), so this window does not consume it; what it does
+        // consume is a held identity, which is why it is bounded at all rather than being unlimited.
+        let mut last = None;
+        let retry_until = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        for attempt in 0.. {
+            match call(&cfg.gateway_sock, "activate", &format!("{authorization_id}/gw-activate/{attempt}"), Value::obj(vec![("launch_record_digest", Value::s(&lrd))]), &[], 8) {
+                Ok(_) => { led.note(8, "gateway_activated", &format!("grants loaded from launch-record store (attempt {})", attempt + 1)); last = None; break; }
+                Err(e) => { let transient = e.detail.contains("record unavailable") || e.detail.contains("unavailable"); last = Some(e);
+                    if !transient || std::time::Instant::now() >= retry_until { break; }
+                    std::thread::sleep(std::time::Duration::from_millis(250)); }
+            }
+        }
+        if let Some(e) = last { led.note(8, "gateway_activate_failed", &e.detail); return Err(e); }
+    }
     // ---- step 9: hand the live evidence to lifecycle, release the barrier, report activation ----
     let ds = Value::Arr(vec![Value::obj(vec![("index", Value::Int(0)), ("kind", Value::s("init_pidfd"))]), Value::obj(vec![("index", Value::Int(1)), ("kind", Value::s("cgroup_dir"))])]);
     let reg = Value::obj(vec![("allocation_id", Value::s(&aid)), ("descriptors", ds), ("init_pid", Value::Int(pid as i64)), ("launch_record_digest", Value::s(&lrd)), ("pid_namespace_id", Value::s(&format!("pidns:{pidns}"))), ("scope_id", Value::s(&format!("{scope_name}.scope"))), ("session_dir", Value::s(&session_dir))]);

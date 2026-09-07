@@ -16,12 +16,12 @@ use std::time::{Duration, Instant};
 fn gateway_call_f(sock: &str, op: &str, lrd: &str, idem: &str, fault: Option<&str>) -> Option<Value> {
     let mut b = vec![("launch_record_digest", Value::s(lrd))];
     if let Some(f) = fault { b.push(("fault", Value::s(f))); }
-    let c = wire::connect_bounded(sock, wire::CROSS_DAEMON_MS).ok()?;
+    let c = wire::connect_bounded(sock, wire::LIFECYCLE_TO_GATEWAY_MS).ok()?;
     let r = c.call(&wire::request(op, idem, Value::obj(b))).ok()?;
     if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { r.get("body").cloned() } else { None }
 }
 fn gateway_call(sock: &str, op: &str, lrd: &str, idem: &str) -> Option<Value> {
-    let c = wire::connect_bounded(sock, wire::CROSS_DAEMON_MS).ok()?;
+    let c = wire::connect_bounded(sock, wire::LIFECYCLE_TO_GATEWAY_MS).ok()?;
     let r = c.call(&wire::request(op, idem, Value::obj(vec![("launch_record_digest", Value::s(lrd))]))).ok()?;
     if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { r.get("body").cloned() } else { None }
 }
@@ -163,7 +163,11 @@ impl Service {
         // F-T-05: step 5 cannot confirm the absence of live processes — the protocol must report `termination-incomplete`
         // and MUST NOT release the identity (§5: uncertainty holds the identity).
         let no_live_confirmed = self.term_fault.as_deref() != Some("no-live-confirmation");
-        let complete = procs.is_empty() && init_exited && inside.is_empty() && outside.is_empty() && no_live_confirmed;
+        // F-T-01 / component-interfaces §3.8: admission closure is a precondition for completing termination, not merely evidence.
+        // A `deny_admission` that timed out (the gateway was busy, possibly calling back into this daemon) leaves the session
+        // `termination-incomplete`; the identity stays held and `poll_sessions` retries. That is what makes a SHORT bound on this call
+        // safe: the call may give up early, the state machine may not.
+        let complete = procs.is_empty() && init_exited && inside.is_empty() && outside.is_empty() && no_live_confirmed && gw_deny.is_some();
         let evidence = Value::obj(vec![("cgroup_kill_written", Value::Bool(step4)), ("cgroup_procs_remaining", pids(&procs)), ("credential_scan_inside_scope", pids(&inside)), ("credential_scan_outside_scope", pids(&outside)), ("d_state", pids(&dstate)),
             ("elapsed_ms", Value::Int(t0.elapsed().as_millis() as i64)), ("freeze_written", Value::Bool(step2)), ("gateway_admission_denied", Value::Bool(gw_deny.is_some())), ("frozen_observed", Value::Bool(cg_frozen(cg))), ("init_pid", Value::Int(init_pid as i64)), ("init_pidfd_exited", Value::Bool(init_exited)), ("sigterm_sent", Value::Bool(step3))]);
         if !outside.is_empty() { self.append_event(lrd, "identity.scope_escape_suspected", "hold", Value::obj(vec![("pids", pids(&outside)), ("uid", Value::Int(uid as i64))])); }
@@ -204,6 +208,20 @@ impl Service {
         let projection_ok = ws_files.is_empty() || (sp.is_some() && failed == 0);
         self.append_event(lrd, "session.ownership_projected", if projection_ok { "ok" } else if sp.is_none() { "unmapped-principal" } else { "partial" }, Value::obj(vec![("bytes", Value::Int(bytes)), ("failed", Value::Int(failed)), ("files", Value::Int(projected)), ("storage_principal", Value::s(&storage_ref))]));
         let mut paths: Vec<String> = self.cfg.managed_paths.clone(); if let Some(d) = &session_dir { paths.push(d.clone()); }
+        // execution-identity-lifecycle §7: a grant that named this session's allocated group MUST have its ACL entry removed during
+        // reclamation, before the identity may enter quarantine, and §4.1's scan MUST verify the removal within every
+        // manifest-registered path. `acl_entries_removed` was previously a hard-coded 0 because the grant was a chown (WP3.1).
+        let mut acl_removed = 0i64;
+        let mut acl_residual: Vec<String> = Vec::new();
+        for p in &paths {
+            // depth 3 covers `/var/lib/agentbound` → `workspaces` → `<workspace>` → its immediate children, which is where a
+            // manifest-projected mount source can be; a grant is never placed deeper.
+            let (n, f) = ab_common::acl::revoke_group_tree(p, gid, 3);
+            acl_removed += n as i64;
+            acl_residual.extend(f);
+        }
+        acl_residual.sort(); acl_residual.dedup();
+        let acl_ok = acl_residual.is_empty();
         let mut residue = Vec::new();
         for p in &paths { scan_owned(p, uid, gid, &mut residue); }
         residue.sort(); residue.dedup();
@@ -240,8 +258,8 @@ impl Service {
         // §5 steps 6 and 7 report inside `grants`: `released`/`remaining` for the gateway records, `broker_closed` for the broker and
         // session credential capability. Either being false holds cleanup — nothing is released and the record is not sealed.
         let grants = match &gw { Some(b) => Value::obj(vec![("broker_closed", Value::Bool(broker_closed)), ("connections_closed", b.get("connections_closed").cloned().unwrap_or(Value::Int(0))), ("released", b.get("released").cloned().unwrap_or(Value::Bool(false))), ("remaining", b.get("remaining").cloned().unwrap_or(Value::Null))]), None => Value::obj(vec![("broker_closed", Value::Bool(broker_closed)), ("connections_closed", Value::Int(0)), ("released", Value::Bool(false)), ("remaining", Value::s("gateway unreachable"))]) };
-        let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_str()).is_none() && r.get("removed").and_then(|x| x.as_bool()) == Some(true)) && gw_ok && projection_ok;
-        self.append_event(lrd, "session.cleanup_completed", if cond { "ok" } else { "hold" }, Value::obj(vec![("acl_entries_removed", Value::Int(0)), ("grants", grants), ("ipc_namespace", Value::s("destroyed with last process")), ("residue", Value::Arr(removed)), ("unmounts", Value::Arr(unmounts))]));
+        let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_str()).is_none() && r.get("removed").and_then(|x| x.as_bool()) == Some(true)) && gw_ok && projection_ok && acl_ok;
+        self.append_event(lrd, "session.cleanup_completed", if cond { "ok" } else { "hold" }, Value::obj(vec![("acl_entries_removed", Value::Int(acl_removed)), ("acl_removal_failures", Value::Arr(acl_residual.iter().map(|r| Value::s(r)).collect())), ("grants", grants), ("ipc_namespace", Value::s("destroyed with last process")), ("residue", Value::Arr(removed)), ("unmounts", Value::Arr(unmounts))]));
         if let Ok(Some(a)) = self.store.latest(&aid) {
             let a = if a.state == "in-use" || a.state == "allocated" { self.store.transition(&aid, a.state_seq, "reclaiming", "termination complete", None, None, "agentbound-lifecycle").ok() } else { Some(a) };
             if let Some(a) = a { if a.state == "reclaiming" && cond {

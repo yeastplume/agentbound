@@ -7,7 +7,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 pub const MAX_PACKET: usize = 128 * 1024; // measured: 256 KiB passes, 1 MiB EMSGSIZE on the baseline
 pub const PROTOCOL: &str = "agentbound.gateway.v0.1";
 
-pub struct Pending { pub op: Value, pub op_seq: i64, pub expect_len: usize, pub sha: String, pub buf: Vec<u8>, pub idem: String }
+pub struct Pending { pub op: Value, pub op_seq: i64, pub expect_len: usize, pub sha: String, pub buf: Vec<u8>, pub idem: String, pub input_digest: String }
 pub struct Conn { pub last_idem: String, pub fd: OwnedFd, pub pidfd: OwnedFd, pub inst: ProcInstance, pub allocation_id: String, pub uid: u32, pub gid: u32, pub ops: u64, pub last_cred_pid: i32, pub pending: Option<Pending> }
 impl Conn { pub fn describe(&self) -> Value { Value::obj(vec![("cgroup", Value::s(&self.inst.cgroup)), ("establishing_pid", Value::Int(self.inst.pid as i64)), ("pidfd", Value::s("acquired")), ("pidfs_inode", Value::Int(self.inst.pidfs_ino as i64)), ("pidns", Value::Int(self.inst.pidns as i64)), ("start_time", Value::Int(self.inst.start_time as i64)), ("uid", Value::Int(self.uid as i64))]) } }
 
@@ -47,12 +47,14 @@ pub fn handle(gw: &mut Gateway, i: usize, pk: wire::Packet) -> Result<(), Deny> 
         if got < want { return reply(gw, i, wire::reply_ok(Value::obj(vec![("received", Value::Int(got as i64))]))); }
         let pend = gw.conns[i].pending.take().unwrap();
         if ab_common::sig::sha256_hex(&pend.buf) != pend.sha { return Err((wire::CLASS_INVALID, "payload_digest", String::new(), false)); }
-        return execute(gw, i, pend.op, pend.op_seq, Some(pend.buf), pend.idem);
+        return execute(gw, i, pend.op, pend.op_seq, Some(pend.buf), pend.idem, pend.input_digest);
     }
     let v = json::parse_canonical(&pk.bytes, &json::REQUEST_LIMITS).map_err(|e| (wire::CLASS_INVALID, "parse", e.to_string(), false))?;
     if v.get("v").and_then(|x| x.as_str()) != Some(PROTOCOL) { return Err((wire::CLASS_INVALID, "version", String::new(), false)); }
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
     let (Some(op), Some(opid)) = (s("operation"), s("operation_id")) else { return Err((wire::CLASS_INVALID, "envelope", "operation, operation_id".into(), false)) };
+    // the persisted outcome map is keyed "<operation_id> <idempotency_key>" (split at the FIRST space), so the id itself may not contain one
+    if opid.contains(' ') { return Err((wire::CLASS_INVALID, "envelope", "operation_id may not contain a space".into(), false)); }
     // component-interfaces §5: every request carries an idempotency key scoped to (caller identity, operation, target record). The
     // gateway's own scope is (allocation, operation_id, key). It is the workload's handle on the effect, so it is also what makes
     // the audit record correlatable to the workload's own log (test-catalogue §5 requires the class, outcome AND key to match).
@@ -60,9 +62,13 @@ pub fn handle(gw: &mut Gateway, i: usize, pk: wire::Packet) -> Result<(), Deny> 
         .ok_or((wire::CLASS_INVALID, "envelope", "idempotency_key (1-128 bytes)".to_string(), false))?.to_string();
     // stash it before any check that can refuse: a denial is an in-scope effect and must carry the workload's key too
     gw.conns[i].last_idem = idem.clone();
-    // a repeated key with an identical operation returns the original outcome; with a different one it is a conflict
-    if let Some((prev_op, prev_seq, prev_reply)) = gw.by_alloc[&aid].idem.get(&(opid.clone(), idem.clone())).cloned() {
-        if prev_op != op { return Err((wire::CLASS_CONFLICT, "idempotency_conflict", format!("key already used for {prev_op}"), false)); }
+    // §5: same key + same authenticated input → the ORIGINAL reply; same key + different input → conflict. "Input" is the whole
+    // request minus the key itself (operation, args, payload length and digest), canonicalised — so a retry that changed its args or
+    // payload is refused rather than silently answered with the old result. The map is restored from the lifecycle store on restart.
+    let input_digest = { let mut m: Vec<(String, Value)> = v.as_obj().map(|o| o.iter().filter(|(k, _)| k.0 != "idempotency_key").map(|(k, x)| (k.0.clone(), x.clone())).collect()).unwrap_or_default(); m.sort_by(|a, b| a.0.cmp(&b.0));
+        ab_common::sig::sha256_hex(&ab_common::json::canonical(&Value::obj(m.iter().map(|(k, x)| (k.as_str(), x.clone())).collect()))) };
+    if let Some((prev_op, prev_seq, prev_digest, prev_reply)) = gw.by_alloc[&aid].idem.get(&(opid.clone(), idem.clone())).cloned() {
+        if prev_op != op || prev_digest != input_digest { return Err((wire::CLASS_CONFLICT, "idempotency_conflict", format!("key already used for {prev_op} with different input"), false)); }
         gw.emit("gateway.operation_replayed", "ok", &Gateway::corr(&gw.by_alloc[&aid]),
             Value::obj(vec![("idempotency_key", Value::s(&idem)), ("operation", Value::s(&op)), ("operation_seq", Value::Int(prev_seq))]));
         return reply(gw, i, prev_reply);
@@ -88,13 +94,13 @@ pub fn handle(gw: &mut Gateway, i: usize, pk: wire::Packet) -> Result<(), Deny> 
     let op_seq = gw.by_alloc[&aid].op_count as i64;
     if plen > 0 {
         let Some(sha) = s("payload_sha256") else { return Err((wire::CLASS_INVALID, "envelope", "payload_sha256".into(), false)) };
-        gw.conns[i].pending = Some(Pending { op: v.clone(), op_seq, expect_len: plen, sha, buf: Vec::with_capacity(plen), idem: idem.clone() });
+        gw.conns[i].pending = Some(Pending { op: v.clone(), op_seq, expect_len: plen, sha, buf: Vec::with_capacity(plen), idem: idem.clone(), input_digest: input_digest.clone() });
         return reply(gw, i, wire::reply_ok(Value::obj(vec![("awaiting_payload", Value::Int(plen as i64)), ("operation_seq", Value::Int(op_seq))])));
     }
-    execute(gw, i, v, op_seq, None, idem)
+    execute(gw, i, v, op_seq, None, idem, input_digest)
 }
 
-fn execute(gw: &mut Gateway, i: usize, op: Value, op_seq: i64, payload: Option<Vec<u8>>, idem: String) -> Result<(), Deny> {
+fn execute(gw: &mut Gateway, i: usize, op: Value, op_seq: i64, payload: Option<Vec<u8>>, idem: String, input_digest: String) -> Result<(), Deny> {
     let aid = gw.conns[i].allocation_id.clone();
     let cr = Gateway::corr(&gw.by_alloc[&aid]);
     let name = op.get("operation").and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -106,7 +112,11 @@ fn execute(gw: &mut Gateway, i: usize, op: Value, op_seq: i64, payload: Option<V
     match res {
         Ok(body) => { gw.emit("gateway.operation_completed", "ok", &cr, Value::obj(vec![("idempotency_key", Value::s(&idem)), ("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("result", body.clone())]));
             let r = wire::reply_ok(Value::obj(vec![("operation_seq", Value::Int(op_seq)), ("result", body), ("trace_id", Value::s(&trace))]));
-            if let Some(p) = gw.by_alloc.get_mut(&aid) { p.idem.insert((op.get("operation_id").and_then(|x| x.as_str()).unwrap_or("").to_string(), idem.clone()), (name.clone(), op_seq, r.clone())); }
+            if let Some(p) = gw.by_alloc.get_mut(&aid) { p.idem.insert((op.get("operation_id").and_then(|x| x.as_str()).unwrap_or("").to_string(), idem.clone()), (name.clone(), op_seq, input_digest, r.clone())); }
+            // the outcome is durable BEFORE the reply is released: a crash between adapter completion and this persist would
+            // otherwise leave a completed push that a retry re-executes. If it cannot be recorded, admission closes (as for budget)
+            // and the caller gets the result exactly once, with the session unable to retry against a gateway that has forgotten it.
+            if !gw.persist_budget(&aid) { return Err((wire::CLASS_UNAVAILABLE, "outcome_persist", "completed outcome could not be recorded".into(), false)); }
             reply(gw, i, r) }
         Err((rule, detail)) => { let kind = if rule == "upstream_rejected" { "gateway.upstream_rejected" } else { "gateway.operation_denied" }; gw.emit(kind, "deny", &cr, if kind == "gateway.upstream_rejected" { Value::obj(vec![("detail", Value::s(&detail)), ("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("rule", Value::s(rule))]) } else { Value::obj(vec![("class", Value::s(wire::CLASS_UNAUTHORIZED)), ("credential_pid", Value::Int(inst.pid as i64)), ("detail", Value::s(&detail)), ("establishing_pid", Value::Int(inst.pid as i64)), ("idempotency_key", Value::s(&idem)), ("operation", Value::s(&name)), ("operation_seq", Value::Int(op_seq)), ("rule", Value::s(rule))]) }); reply(gw, i, wire::reply_err(wire::CLASS_UNAUTHORIZED, rule, &detail)) }
     }

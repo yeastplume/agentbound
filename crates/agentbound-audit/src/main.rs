@@ -74,6 +74,9 @@ impl Audit {
 }
 
 fn main() {
+    // `--provenance`: print the source provenance embedded at build time and exit (independent WP3.1 validation, finding 4). The
+    // conformance runner asks every installed binary, so a stale install is visible as a commit mismatch rather than hidden.
+    if std::env::args().nth(1).as_deref() == Some("--provenance") { println!("commit={} dirty={} tree={}", ab_common::provenance::COMMIT, ab_common::provenance::DIRTY, ab_common::provenance::TREE); return; }
     let args: Vec<String> = std::env::args().collect();
     let arg = |k: &str, d: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| d.to_string());
     let writers = arg("--writer-uids", "0").split(',').filter_map(|s| s.parse().ok()).collect();

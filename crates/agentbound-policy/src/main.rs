@@ -166,6 +166,9 @@ impl Policy {
 }
 
 fn main() {
+    // `--provenance`: print the source provenance embedded at build time and exit (independent WP3.1 validation, finding 4). The
+    // conformance runner asks every installed binary, so a stale install is visible as a commit mismatch rather than hidden.
+    if std::env::args().nth(1).as_deref() == Some("--provenance") { println!("commit={} dirty={} tree={}", ab_common::provenance::COMMIT, ab_common::provenance::DIRTY, ab_common::provenance::TREE); return; }
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("keygen") {
         // agentbound-policy keygen <seed-path> <key_id> <role>  → prints the keyring entry

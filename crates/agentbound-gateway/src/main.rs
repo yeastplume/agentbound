@@ -20,10 +20,13 @@ pub struct Projection { pub authorization_id: String, pub allocation_id: String,
     /// persisted to the lifecycle record store after every admitted operation and restored on reconstruct, so a gateway restart
     /// can never reset a session's budget (WP3.1 item 3).
     pub used: std::collections::BTreeMap<String, (u64, u64)>,
-    /// completed-operation state per (operation_id, idempotency_key), so a repeated key returns the original outcome instead of
-    /// repeating a non-idempotent action (component-interfaces §5). In-memory only: a gateway restart drops the session's
-    /// connections anyway, so no replay can span one.
-    pub idem: std::collections::BTreeMap<(String, String), (String, i64, Value)> }
+    /// completed-operation state per (operation_id, idempotency_key): (operation name, operation_seq, input digest, original reply).
+    /// A repeated key with the same authenticated input returns the original reply; with a different input it is a conflict
+    /// (component-interfaces §5). PERSISTED: written to the lifecycle record store in the same `record_budget` call that makes the
+    /// consumption durable, and restored on activate/reconstruct. The earlier in-memory-only version was a real defect (independent
+    /// WP3.1 validation, finding 6): a session survives a gateway restart, opens a new connection and retries — and a
+    /// non-idempotent Git push would have executed twice.
+    pub idem: std::collections::BTreeMap<(String, String), (String, i64, String, Value)> }
 
 pub struct Gateway { pub cfg: Config, pub by_alloc: HashMap<String, Projection>, pub conns: Vec<session::Conn>, pub inherited: Vec<(String, OwnedFd)> }
 
@@ -50,6 +53,9 @@ pub fn requirement_for(rule: &str) -> &'static str {
 }
 
 fn main() {
+    // `--provenance`: print the source provenance embedded at build time and exit (independent WP3.1 validation, finding 4). The
+    // conformance runner asks every installed binary, so a stale install is visible as a commit mismatch rather than hidden.
+    if std::env::args().nth(1).as_deref() == Some("--provenance") { println!("commit={} dirty={} tree={}", ab_common::provenance::COMMIT, ab_common::provenance::DIRTY, ab_common::provenance::TREE); return; }
     let args: Vec<String> = std::env::args().collect();
     let arg = |k: &str, d: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| d.to_string());
     let catalogue = ab_common::json::parse(&std::fs::read(arg("--catalogue", "/etc/agentbound/catalogue.json")).expect("catalogue"), &ab_common::json::MANIFEST_LIMITS).expect("catalogue parse");
@@ -67,7 +73,7 @@ fn main() {
         for c in &gw.conns { pfds.push(libc::pollfd { fd: c.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 }); pfds.push(libc::pollfd { fd: c.pidfd.as_raw_fd(), events: libc::POLLIN, revents: 0 }); }
         let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, 500) };
         if n <= 0 { continue; }
-        if pfds[0].revents != 0 { if let Ok(c) = wire::accept(&control) { gw.control(c); } }
+        if pfds[0].revents != 0 { if let Ok(c) = wire::accept(&control) { gw.control(c, &control); } }
         for (i, a) in allocs.iter().enumerate() { if pfds[1 + i].revents != 0 { gw.accept_session(a); } }
         let base = 1 + allocs.len();
         let mut drop_idx = Vec::new();
@@ -86,9 +92,79 @@ impl Gateway {
     /// A call to `agentbound-lifecycle`. `record_budget` is bounded much more tightly than the rest: it is the call that can close a
     /// cycle with lifecycle's own gateway calls, and the gateway's fail-closed path for it is cheap (refuse the operation, close
     /// admission) whereas lifecycle's is not.
-    fn lc(&self, op: &str, body: Value) -> Option<Value> { let ms = if op == "record_budget" { ab_common::wire::BUDGET_PERSIST_MS } else { ab_common::wire::CROSS_DAEMON_MS };
+    fn lc(&self, op: &str, body: Value) -> Option<Value> { let ms = ab_common::wire::GATEWAY_TO_LIFECYCLE_MS.min(if op == "record_budget" { ab_common::wire::BUDGET_PERSIST_MS } else { ab_common::wire::CROSS_DAEMON_MS });
         wire::connect_bounded(&self.cfg.lifecycle_sock, ms).ok()?.call(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok().filter(|r| r.get("ok").and_then(|x| x.as_bool()) == Some(true)).and_then(|r| r.get("body").cloned()) }
-    /// D4.7: on start, rebuild projections only for records lifecycle still reports live; no connection survives.
+
+    /// As `lc`, but keeps serving inbound control requests that need no downstream call while the reply is outstanding
+    /// (component-interfaces §3.8, "Progress"). This is what actually breaks the gateway ↔ lifecycle cycle: bounding both sides
+    /// short only converts the deadlock into a livelock, because each side keeps re-colliding with the other's retry. Serving
+    /// `deny_admission`/`release` here lets lifecycle's in-flight call complete immediately, so its reply to us arrives on the
+    /// first attempt. Only calls that cannot re-enter this path are served (`served_inline`); anything else is deferred to the
+    /// main loop by leaving the connection unaccepted, exactly as before.
+    fn lc_serving(&mut self, control: &std::os::fd::OwnedFd, op: &str, body: Value) -> Option<Value> {
+        use std::os::fd::AsRawFd;
+        let ms = ab_common::wire::GATEWAY_TO_LIFECYCLE_MS.min(if op == "record_budget" { ab_common::wire::BUDGET_PERSIST_MS } else { ab_common::wire::CROSS_DAEMON_MS });
+        let c = wire::connect_bounded(&self.cfg.lifecycle_sock, ms).ok()?;
+        c.send(&wire::request(op, &format!("gw-{}", ab_common::sig::monotonic_ns()), body)).ok()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms as u64);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now()).as_millis() as i32;
+            let mut pfds = [libc::pollfd { fd: c.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 },
+                            libc::pollfd { fd: control.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
+            let n = unsafe { libc::poll(pfds.as_mut_ptr(), 2, left.max(0)) };
+            if n <= 0 { return None; }
+            if pfds[0].revents != 0 {
+                let r = c.recv().ok()??;
+                return r.get("ok").and_then(|x| x.as_bool()).filter(|b| *b).and_then(|_| r.get("body").cloned());
+            }
+            if pfds[1].revents != 0 { if let Ok(ic) = wire::accept(control) { self.control_inline(ic); } }
+        }
+    }
+
+    /// Serve, while a bounded downstream call is outstanding, only those control operations that are pure local state changes and
+    /// therefore cannot re-enter `lc`/`lc_serving`: `project`, `deny_admission`, `release`. Anything else is answered
+    /// `unavailable`/`reentrant_call_in_flight` so the caller retries rather than being silently dropped. The permitted operations are
+    /// dispatched by the SAME `control` code path as always — a second, hand-copied dispatcher would drift from it (it did, once:
+    /// a copy replied `socket_digest` where the real handler replies `socket_path`).
+    fn control_inline(&mut self, c: wire::Conn) {
+        let Ok(Some(msg)) = c.recv() else { return };
+        let reentrant_safe = wire::parse_request(&msg).map(|r| matches!(r.op, "project" | "deny_admission" | "release")).unwrap_or(true);
+        if !reentrant_safe {
+            let op = wire::parse_request(&msg).map(|r| r.op.to_string()).unwrap_or_default();
+            let _ = c.send(&wire::reply_err(wire::CLASS_UNAVAILABLE, "reentrant_call_in_flight", &op));
+            return;
+        }
+        self.control_dispatch(c, msg, None);
+    }
+
+    /// Control plane: root callers only (launch and lifecycle).
+    fn control(&mut self, c: wire::Conn, control: &std::os::fd::OwnedFd) {
+        let Ok(Some(msg)) = c.recv() else { return };
+        self.control_dispatch(c, msg, Some(control));
+    }
+
+    /// `control` receives, this dispatches. `control_fd` is `None` when we are already inside a bounded downstream call, in which case
+    /// no operation reaching here is allowed to start another one.
+    fn control_dispatch(&mut self, c: wire::Conn, msg: Value, control_fd: Option<&std::os::fd::OwnedFd>) {
+        let reply = match wire::parse_request(&msg) {
+            Err(e) => wire::reply_err(wire::CLASS_INVALID, "envelope", e),
+            Ok(_) if c.peer.uid != 0 => wire::reply_err(wire::CLASS_UNAUTHENTICATED, "peer_not_permitted", ""),
+            Ok(r) => { let s = |k: &str| r.body.get(k).and_then(|x| x.as_str()).map(str::to_string); match r.op {
+                "project" => match (s("authorization_id"), s("allocation_id"), r.body.get("uid").and_then(|x| x.as_int()), r.body.get("gid").and_then(|x| x.as_int())) {
+                    (Some(az), Some(aid), Some(u), Some(g)) => match self.project(&az, &aid, u as u32, g as u32) { Ok(p) => { let pr = &self.by_alloc[&aid]; let cr = Self::corr(pr); self.emit("gateway.projected", "ok", &cr, Value::obj(vec![("socket_type", Value::s("AF_UNIX/SOCK_SEQPACKET")), ("topology", Value::s("local-socket"))])); wire::reply_ok(Value::obj(vec![("socket_path", Value::s(&p))])) }, Err(e) => wire::reply_err(wire::CLASS_UNAVAILABLE, "project", &e) },
+                    _ => wire::reply_err(wire::CLASS_INVALID, "body", "authorization_id, allocation_id, uid, gid") },
+                "activate" => match (s("launch_record_digest"), control_fd) { (Some(lrd), Some(cf)) => self.activate(&lrd, cf),
+                    (Some(_), None) => wire::reply_err(wire::CLASS_UNAVAILABLE, "reentrant_call_in_flight", "activate"),
+                    (None, _) => wire::reply_err(wire::CLASS_INVALID, "body", "launch_record_digest") },
+                "deny_admission" => match s("launch_record_digest").and_then(|l| self.by_lrd_mut(&l)) { Some(p) => { p.admission = false; let cr = Self::corr(p); self.emit("gateway.admission_denied", "ok", &cr, Value::obj(vec![("reason", Value::s("lifecycle"))])); wire::reply_ok(Value::obj(vec![("admission", Value::Bool(false))])) }, None => wire::reply_err(wire::CLASS_INVALID, "unknown_record", "") },
+                "release" => match s("launch_record_digest").or_else(|| s("allocation_id").and_then(|a| self.by_alloc.get(&a).and_then(|p| p.lrd.clone().or(Some(format!("alloc:{a}")))))) { Some(key) => { let keep = s("fault").as_deref() == Some("socket-unmount"); self.release_with(&key, keep) }, None => wire::reply_err(wire::CLASS_INVALID, "body", "launch_record_digest or allocation_id") },
+                "status" => match s("launch_record_digest").and_then(|l| self.by_lrd_mut(&l).map(|p| (p.admission, p.allocation_id.clone(), p.op_count, p.bytes_used))) { Some((adm, aid, n, b)) => { let conns = self.conns.iter().filter(|c| c.allocation_id == aid).count(); wire::reply_ok(Value::obj(vec![("admission", Value::Bool(adm)), ("bytes_used", Value::Int(b as i64)), ("connections", Value::Int(conns as i64)), ("operations", Value::Int(n as i64))])) }, None => wire::reply_err(wire::CLASS_INVALID, "unknown_record", "") },
+                other => wire::reply_err(wire::CLASS_INVALID, "unknown_op", other) } }
+        };
+        let _ = c.send(&reply);
+    }
+    /// The latest `budget` record for a session, as lifecycle returns it with the binding: {operation_id: {operations, bytes}}.
+    /// The latest `outcomes` record: {"<operation_id> <key>": {input_digest, operation, operation_seq, reply}} → idem map.
     fn reconstruct(&mut self) {
         // boot ordering: lifecycle is Type=simple, so After= does not imply its socket is bound yet — retry for up to ~10 s
         let mut list = None;
@@ -103,7 +179,9 @@ impl Gateway {
             if g(&["authorization_manifest", "gateway", "channel_topology"]) != "local-socket" { continue; }
             let (az, aid) = (g(&["authorization_manifest", "authorization_id"]), g(&["launch_binding", "execution_identity", "allocation_id"]));
             let uid = b.get("launch_binding").and_then(|x| x.get("execution_identity")).and_then(|x| x.get("uid")).and_then(|x| x.as_int()).unwrap_or(0) as u32;
-            if let Ok(p) = self.project(&az, &aid, uid, uid) { let used = Self::budget_from_record(&rec); let pr = self.by_alloc.get_mut(&aid).unwrap(); pr.lrd = Some(lrd.to_string()); pr.record = Some(b.clone()); pr.used = used.clone(); pr.op_count = used.values().map(|u| u.0).sum(); pr.bytes_used = used.values().map(|u| u.1).sum(); pr.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default(); pr.admission = st == "active" || st == "degraded"; let _ = p; }
+            // D4.7 / WP3.1 finding 6: completed idempotency outcomes are restored here too, not only in `activate`. A gateway that
+            // came back through reconstruct with an empty `idem` map would re-execute a retried non-idempotent adapter operation.
+            if let Ok(p) = self.project(&az, &aid, uid, uid) { let used = Self::budget_from_record(&rec); let outcomes = Self::outcomes_from_record(&rec); let pr = self.by_alloc.get_mut(&aid).unwrap(); pr.lrd = Some(lrd.to_string()); pr.record = Some(b.clone()); pr.idem = outcomes; pr.used = used.clone(); pr.op_count = used.values().map(|u| u.0).sum(); pr.bytes_used = used.values().map(|u| u.1).sum(); pr.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default(); pr.admission = st == "active" || st == "degraded"; let _ = p; }
         }
         let stale: Vec<String> = self.inherited.drain(..).map(|(n, _)| n).collect();
         for n in &stale { wire::fdstore_remove(n); let _ = std::fs::remove_file(format!("{}/{n}.sock", self.cfg.socket_dir)); }
@@ -152,24 +230,11 @@ impl Gateway {
     pub fn corr(p: &Projection) -> ab_common::audit::Correlation { ab_common::audit::Correlation { authorization_id: Some(p.authorization_id.clone()), allocation_id: Some(p.allocation_id.clone()), launch_record_digest: p.lrd.clone(), execution_uid: Some(p.uid), trace_id: p.record.as_ref().and_then(|r| r.get("authorization_manifest")).and_then(|m| m.get("session_trace")).and_then(|t| t.get("trace_id")).and_then(|x| x.as_str()).map(str::to_string), session_id: p.record.as_ref().and_then(|r| r.get("authorization_manifest")).and_then(|m| m.get("session_trace")).and_then(|t| t.get("session_id")).and_then(|x| x.as_str()).map(str::to_string), ..Default::default() } }
 
     /// Control plane: root callers only (launch and lifecycle).
-    fn control(&mut self, c: wire::Conn) {
-        let Ok(Some(msg)) = c.recv() else { return };
-        let reply = match wire::parse_request(&msg) {
-            Err(e) => wire::reply_err(wire::CLASS_INVALID, "envelope", e),
-            Ok(_) if c.peer.uid != 0 => wire::reply_err(wire::CLASS_UNAUTHENTICATED, "peer_not_permitted", ""),
-            Ok(r) => { let s = |k: &str| r.body.get(k).and_then(|x| x.as_str()).map(str::to_string); match r.op {
-                "project" => match (s("authorization_id"), s("allocation_id"), r.body.get("uid").and_then(|x| x.as_int()), r.body.get("gid").and_then(|x| x.as_int())) {
-                    (Some(az), Some(aid), Some(u), Some(g)) => match self.project(&az, &aid, u as u32, g as u32) { Ok(p) => { let pr = &self.by_alloc[&aid]; let cr = Self::corr(pr); self.emit("gateway.projected", "ok", &cr, Value::obj(vec![("socket_type", Value::s("AF_UNIX/SOCK_SEQPACKET")), ("topology", Value::s("local-socket"))])); wire::reply_ok(Value::obj(vec![("socket_path", Value::s(&p))])) }, Err(e) => wire::reply_err(wire::CLASS_UNAVAILABLE, "project", &e) },
-                    _ => wire::reply_err(wire::CLASS_INVALID, "body", "authorization_id, allocation_id, uid, gid") },
-                "activate" => match s("launch_record_digest") { Some(lrd) => self.activate(&lrd), None => wire::reply_err(wire::CLASS_INVALID, "body", "launch_record_digest") },
-                "deny_admission" => match s("launch_record_digest").and_then(|l| self.by_lrd_mut(&l)) { Some(p) => { p.admission = false; let cr = Self::corr(p); self.emit("gateway.admission_denied", "ok", &cr, Value::obj(vec![("reason", Value::s("lifecycle"))])); wire::reply_ok(Value::obj(vec![("admission", Value::Bool(false))])) }, None => wire::reply_err(wire::CLASS_INVALID, "unknown_record", "") },
-                "release" => match s("launch_record_digest").or_else(|| s("allocation_id").and_then(|a| self.by_alloc.get(&a).and_then(|p| p.lrd.clone().or(Some(format!("alloc:{a}")))))) { Some(key) => { let keep = s("fault").as_deref() == Some("socket-unmount"); self.release_with(&key, keep) }, None => wire::reply_err(wire::CLASS_INVALID, "body", "launch_record_digest or allocation_id") },
-                "status" => match s("launch_record_digest").and_then(|l| self.by_lrd_mut(&l).map(|p| (p.admission, p.allocation_id.clone(), p.op_count, p.bytes_used))) { Some((adm, aid, n, b)) => { let conns = self.conns.iter().filter(|c| c.allocation_id == aid).count(); wire::reply_ok(Value::obj(vec![("admission", Value::Bool(adm)), ("bytes_used", Value::Int(b as i64)), ("connections", Value::Int(conns as i64)), ("operations", Value::Int(n as i64))])) }, None => wire::reply_err(wire::CLASS_INVALID, "unknown_record", "") },
-                other => wire::reply_err(wire::CLASS_INVALID, "unknown_op", other) } }
-        };
-        let _ = c.send(&reply);
+    fn outcomes_from_record(rec: &Value) -> std::collections::BTreeMap<(String, String), (String, i64, String, Value)> {
+        rec.get("outcomes").and_then(|o| o.as_obj()).map(|m| m.iter().filter_map(|(k, v)| { let (opid, key) = k.0.split_once(' ')?;
+            Some(((opid.to_string(), key.to_string()), (v.get("operation").and_then(|x| x.as_str()).unwrap_or("").to_string(), v.get("operation_seq").and_then(|x| x.as_int()).unwrap_or(0),
+                v.get("input_digest").and_then(|x| x.as_str()).unwrap_or("").to_string(), v.get("reply").cloned().unwrap_or(Value::Null)))) }).collect()).unwrap_or_default()
     }
-    /// The latest `budget` record for a session, as lifecycle returns it with the binding: {operation_id: {operations, bytes}}.
     fn budget_from_record(rec: &Value) -> std::collections::BTreeMap<String, (u64, u64)> {
         rec.get("budget").and_then(|b| b.as_obj()).map(|m| m.iter().map(|(k, v)| (k.0.clone(), (v.get("operations").and_then(|x| x.as_int()).unwrap_or(0) as u64, v.get("bytes").and_then(|x| x.as_int()).unwrap_or(0) as u64))).collect()).unwrap_or_default()
     }
@@ -179,19 +244,24 @@ impl Gateway {
         let Some(p) = self.by_alloc.get(aid) else { return false };
         let Some(lrd) = p.lrd.clone() else { return true };
         let body = Value::obj(p.used.iter().map(|(k, (o, b))| (k.as_str(), Value::obj(vec![("bytes", Value::Int(*b as i64)), ("operations", Value::Int(*o as i64))]))).collect());
-        let ok = self.lc("record_budget", Value::obj(vec![("launch_record_digest", Value::s(&lrd)), ("budget", body)])).is_some();
+        let keys: Vec<(String, Value)> = p.idem.iter().map(|((opid, key), (name, seq, digest, reply))| (format!("{opid} {key}"),
+            Value::obj(vec![("input_digest", Value::s(digest)), ("operation", Value::s(name)), ("operation_seq", Value::Int(*seq)), ("reply", reply.clone())]))).collect();
+        let outcomes = Value::obj(keys.iter().map(|(k, v)| (k.as_str(), v.clone())).collect());
+        let ok = self.lc("record_budget", Value::obj(vec![("launch_record_digest", Value::s(&lrd)), ("budget", body), ("outcomes", outcomes)])).is_some();
         if !ok { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.admission_denied", "ok", &cr, Value::obj(vec![("reason", Value::s("budget_persist_failed"))])); self.by_alloc.get_mut(aid).unwrap().admission = false; }
         ok
     }
     fn by_lrd_mut(&mut self, lrd: &str) -> Option<&mut Projection> { self.by_alloc.values_mut().find(|p| p.lrd.as_deref() == Some(lrd)) }
     /// Grants exist only as the committed record says (D4.7): fetch it from lifecycle, never from the caller.
-    fn activate(&mut self, lrd: &str) -> Value {
-        let Some(rec) = self.lc("record", Value::obj(vec![("launch_record_digest", Value::s(lrd))])) else { return wire::reply_err(wire::CLASS_UNAVAILABLE, "lifecycle", "record unavailable") };
+    fn activate(&mut self, lrd: &str, control: &std::os::fd::OwnedFd) -> Value {
+        // §3.8: keep serving lifecycle's own inbound calls while this one is outstanding, or the two daemons livelock on each other's retries
+        let Some(rec) = self.lc_serving(control, "record", Value::obj(vec![("launch_record_digest", Value::s(lrd))])) else { return wire::reply_err(wire::CLASS_UNAVAILABLE, "lifecycle", "record unavailable") };
         let b = rec.get("binding").cloned().unwrap_or(Value::Null);
         let aid = b.get("launch_binding").and_then(|x| x.get("execution_identity")).and_then(|x| x.get("allocation_id")).and_then(|x| x.as_str()).unwrap_or("").to_string();
         let Some(p) = self.by_alloc.get_mut(&aid) else { return wire::reply_err(wire::CLASS_INVALID, "not_projected", &aid) };
         p.lrd = Some(lrd.to_string()); p.record = Some(b.clone()); p.admission = true;
         p.used = Self::budget_from_record(&rec); p.op_count = p.used.values().map(|u| u.0).sum(); p.bytes_used = p.used.values().map(|u| u.1).sum();
+        p.idem = Self::outcomes_from_record(&rec);
         p.ops = b.get("authorization_manifest").and_then(|m| m.get("gateway")).and_then(|g| g.get("operations")).and_then(|o| o.as_arr()).cloned().unwrap_or_default();
         let (n, cr) = (p.ops.len(), Self::corr(p));
         self.emit("gateway.grants_loaded", "ok", &cr, Value::obj(vec![("operations", Value::Int(n as i64)), ("source", Value::s("launch-record-store"))]));

@@ -1,5 +1,5 @@
 # Agentbound Component Interfaces
-**Version:** 0.3  
+**Version:** 0.4  
 **Status:** Frozen (WP0) — skeleton; wire formats are WP1 outputs  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed reference implementation  
@@ -10,6 +10,7 @@
 - **0.1** — Initial WP0 skeleton.
 - **0.2** — Envelope freshness values fixed; identifier terminology aligned; systemd is an observation source only.
 - **0.3** — Editorial pass under docs/STYLE.md; no obligation, identifier, or value changed. Oxford spelling.
+- **0.4** — Adds §3.8, mutual-call bounds between components. This closes an omission the WP3.1 D-12 measurement exposed as two real deadlocks in the reference implementation: 0.3 required each component to serialize its own decisions and to bound its waits, but never said that two components which can call *each other* must bound those calls asymmetrically. With equal bounds a cycle is merely truncated to the bound, and a 60 s truncation exceeds the §4.1 launch-binding freshness window, so unrelated concurrent launches fail `constructor_envelope:Stale`. No existing obligation is weakened.
 
 
 ---
@@ -150,6 +151,24 @@ alone decides, serializes, and records the resulting transition.
 Adapters MUST NOT expose generic HTTP, CONNECT, shell, filesystem, or arbitrary
 byte-stream forwarding. They MUST return an operation outcome suitable for audit
 without exposing secrets in errors.
+### 3.8 Mutual calls between components
+| Property | Contract |
+|---|---|
+| Bounded wait | Every call a component makes to another component MUST be bounded in time. A component that cannot bound a wait MUST refuse the operation rather than wait indefinitely. |
+| Cyclic pairs | Where two components may each originate a call to the other, the pair MUST be identified and its bounds MUST be **asymmetric**: the side whose failure is cheap and fail-closed takes the short bound; the side whose failure would abandon a transition or leave authority live takes the long one. |
+| Bound relationship | A short bound MUST exceed the peer's slowest legitimate service time for that operation, and every bound MUST be small enough that exhausting it cannot consume a freshness window that another in-flight operation depends on (§4.1). |
+| Progress | A component MUST return to serving requests after a bounded call fails; it MUST NOT hold its request queue across a retry. Where the caller can safely retry, the retry MUST be bounded by a deadline, not by an attempt count, because the wait is set by the peer's queue depth. |
+| Not permitted | Equal bounds on both directions of a cyclic pair (this truncates a deadlock instead of breaking it); a bound that is a latency budget rather than a liveness bound; unbounded retry of a call that holds an execution identity. |
+
+Each component still serializes its own decisions (§3.6). Serialization is what
+makes a cycle possible, so the pairs that can close one MUST be enumerated in the
+implementation's design record together with the direction that carries the short
+bound and the fail-closed action it takes. At 1B the cyclic pair is
+`agentbound-gateway` ↔ `agentbound-lifecycle`, in both directions: gateway
+`activate`/`record_budget` → lifecycle, against lifecycle
+`deny_admission`/`release` → gateway. The gateway carries the short bound in both
+directions because refusing one operation and closing admission is always safe,
+whereas a lifecycle termination that gave up early would leave authority live.
 ---
 ## 4. Reference trust and storage profile
 ### 4.1 Signing and verifier trust

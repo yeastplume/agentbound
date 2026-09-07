@@ -70,6 +70,35 @@ pub const CROSS_DAEMON_MS: i64 = 60_000;
 /// authority live. See ADR-0002 and the WP3.1 register.
 pub const BUDGET_PERSIST_MS: i64 = 2_000;
 
+/// The bound for the gateway's OTHER direction of the same cycle: `agentbound-gateway` → `agentbound-lifecycle` `record` and `list`,
+/// made while the gateway is serving a control request (`activate`, or the reconstruct sweep). This closes a second, distinct
+/// deadlock that the WP3.1 D-12 profile exposed and that no single-session test could reach:
+///
+///   * the constructor calls gateway `activate`; the gateway blocks on lifecycle `record` to load grants from the committed record;
+///   * meanwhile lifecycle's own `poll_sessions` noticed an unrelated session's init had exited, entered `terminate`, and blocked on
+///     gateway `deny_admission`.
+///
+/// Each daemon serves one request at a time, so both then waited out the full 60 s bound. Measured directly with `strace` on both
+/// daemons: lifecycle EAGAIN at 11:25:12.936 on the gateway socket, gateway EAGAIN at 11:25:12.624 on the lifecycle socket, both
+/// released at 11:26:12.9. The visible damage was not the stall itself but what it did to the OTHER launches: a 60 s stall exceeds
+/// `BINDING_MAX_AGE_S` (60 s), so six of eight concurrent constructions died `invalid:constructor_envelope:Stale` — which is exactly
+/// the "2–3 of 8 sessions admitted" symptom that had been recorded as lifecycle capacity.
+///
+/// The gateway is the correct side to shorten for the same reason as `BUDGET_PERSIST_MS`: its fail-closed path is cheap and correct
+/// (activation fails, the constructor rolls back, no authority is granted), whereas lifecycle giving up early on `deny_admission`
+/// would leave authority live. 2 s is far above lifecycle's measured service time for `record` (single-digit ms) while being far
+/// below the freshness window it must not consume.
+pub const GATEWAY_TO_LIFECYCLE_MS: i64 = 2_000;
+
+/// The mirror bound: `agentbound-lifecycle` → `agentbound-gateway` (`deny_admission`, `release`), made while lifecycle is inside a
+/// transition. Shortening this side too is what actually BREAKS the cycle rather than truncating it, and it is safe for a reason that
+/// is worth stating precisely: what must not happen early is not the *call* giving up, it is the *state machine* advancing. A
+/// `deny_admission` that times out leaves the session in `termination-incomplete`, holds the execution identity, and is retried from
+/// `poll_sessions` on the next tick — so authority is never released on an unconfirmed closure, while the daemon returns to serving
+/// requests immediately instead of holding its queue for a minute. Measured under the 8-session D-12 profile: with a 60 s bound
+/// lifecycle stalled long enough to invalidate other constructions' launch bindings; with 2 s and retry the same load completes.
+pub const LIFECYCLE_TO_GATEWAY_MS: i64 = 2_000;
+
 /// Connect with a bounded receive/send timeout. Required for any call between two daemons that can each call the other: both
 /// `agentbound-lifecycle` and `agentbound-gateway` serve one request at a time, so a mutual call (lifecycle→gateway `release` while
 /// the gateway is in a lifecycle `record_budget`) would otherwise wedge both processes and every session with them. With a bound the

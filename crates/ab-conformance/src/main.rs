@@ -22,7 +22,12 @@ fn catalogue_id(row: &str) -> String {
 }
 #[cfg(test)]
 mod tests { #[test] fn ids() { for (r, c) in [("T-6.4-003.only", "T-6.4-003"), ("T-6.4-010.stream", "T-6.4-010"), ("T-6.1-001.init-environ", "T-6.1-001"), ("D-06.storage-principal", "D-06"), ("D-02.1B", "D-02"), ("GS-4[../main]", "GS-4"), ("F-C-09.record", "F-C-09"), ("T-6.8-setup", "T-6.8-setup"), ("D4.7-reconstruct", "D4"), ("D7-9.diagnostics", "D7-9"), ("T-6.5-001.dup", "T-6.5-001")] { assert_eq!(super::catalogue_id(r), c, "{r}"); } } }
-fn expected_ids() -> Vec<(String, String)> { let t = include_str!("../expected-ids.txt"); t.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).map(|l| { let mut it = l.split_whitespace(); (it.next().unwrap().to_string(), it.next().unwrap_or("").to_string()) }).collect() }
+/// (id, milestones, required verdict). The required verdict is `PASS` unless the frozen catalogue row's own pass criterion admits a
+/// recorded / not-applicable outcome (`RECORDED`); the manifest header lists those four with their justification. `WEAK` is never
+/// acceptable as a final verdict for a mandatory row.
+fn expected_ids() -> Vec<(String, String, String)> { let t = include_str!("../expected-ids.txt"); t.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).map(|l| { let f: Vec<&str> = l.split_whitespace().collect(); (f[0].to_string(), f.get(1).copied().unwrap_or("").to_string(), f.last().copied().filter(|v| *v == "RECORDED").unwrap_or("PASS").to_string()) }).collect() }
+/// Does a row's best verdict satisfy its required one? PASS satisfies everything; RECORDED satisfies only a RECORDED requirement.
+fn satisfies(best: &str, required: &str) -> bool { best == "PASS" || (best == "RECORDED" && required == "RECORDED") }
 
 fn sh(cmd: &str) -> (i32, String) { let o = Command::new("sh").arg("-c").arg(cmd).output().unwrap(); (o.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))) }
 fn jget<'a>(v: &'a Value, path: &str) -> Option<&'a Value> { let mut c = Some(v); for k in path.split('.') { c = c.and_then(|x| x.get(k)); } c }
@@ -84,31 +89,13 @@ impl Rig {
     }
 }
 
-const GW_FORGE: &str = r#"
-import socket,sys,struct,os
-path,pid=sys.argv[1],int(sys.argv[2])
-def conn():
-    s=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET); s.settimeout(2)
-    try: s.connect(path)
-    except OSError as e: print("DENY connect",e.errno); return None
-    return s
-msg=b'{"args":{},"operation":"gateway.ping","operation_id":"x","payload_len":0,"payload_sha256":"","v":"agentbound.gateway.v0.1"}'
-# root from the host: uid 0 != allocation uid -> establishment refused (connection closed before any packet)
-s=conn()
-if s:
-    try:
-        s.send(msg); r=s.recv(4096); print("ACCEPT" if b'"ok":true' in r else "DENY host-root-peer", r[:80])
-    except OSError as e: print("DENY host-root-peer closed",e.errno)
-# forged SCM_CREDENTIALS claiming the session init pid (needs CAP_SYS_ADMIN; we have it as root) -> pidfs instance/uid mismatch
-for label,creds in (("forged-pid",[struct.pack("iII",pid,0,0)]),("two-creds",[struct.pack("iII",os.getpid(),0,0),struct.pack("iII",pid,0,0)])):
-    s=conn()
-    if not s: continue
-    try:
-        s.sendmsg([msg],[(socket.SOL_SOCKET,socket.SCM_CREDENTIALS,c) for c in creds]); r=s.recv(4096); print("ACCEPT" if b'"ok":true' in r else "DENY "+label, r[:80])
-    except OSError as e: print("DENY",label,"closed",e.errno)
-"#;
+// GW_FORGE (host-root SCM_CREDENTIALS forgery) was removed in WP3.1 item 6: it never reached the per-packet rules because
+// establish() refused it on uid before any packet was read. T-6.4-008 now attacks from an in-scope session-uid peer.
 
 fn main() {
+    // `--provenance`: print the source provenance embedded at build time and exit (independent WP3.1 validation, finding 4). The
+    // conformance runner asks every installed binary, so a stale install is visible as a commit mismatch rather than hidden.
+    if std::env::args().nth(1).as_deref() == Some("--provenance") { println!("commit={} dirty={} tree={}", ab_common::provenance::COMMIT, ab_common::provenance::DIRTY, ab_common::provenance::TREE); return; }
     let mut g = Rig { rows: vec![], as_user: "alice".into() };
     // Where this run starts in the hash-chained store. Any row whose evidence is "a denial of kind X was recorded" MUST count only
     // lines appended after this point: counting the whole log lets a previous run's denials satisfy a check that is no longer being
@@ -639,9 +626,9 @@ fn main() {
     let (_, chain) = sh(&format!("grep '{glrd}' /var/lib/agentbound/audit/events.jsonl | grep -o '\"event\":\"[a-z._]*\"' | sort -u | tr -d '\"' | sed 's/event://' | tr '\\n' ' '"));
     let need = ["session.launch_record_committed", "gateway.grants_loaded", "session.activated", "gateway.connection_established", "gateway.operation_admitted", "gateway.operation_completed", "gateway.operation_denied", "session.revocation_received", "session.termination_started", "gateway.admission_denied", "session.terminated", "gateway.released", "session.cleanup_completed", "session.identity_released", "session.sealed"];
     let missing: Vec<&str> = need.iter().copied().filter(|k| !chain.contains(k)).collect();
-    // NOT the pre-registered D-12 metric (catalogue §5: 8 sessions × 230 effects × 10 seeded repetitions, correlation deadlines,
-    // denied operations, ≥99% overall and 100% gateway attribution). This is a single-record presence check and is recorded WEAK
-    // under that name until WP3.1 item 5 implements the metric; it must not be read as attribution completeness.
+    // The single-session audit-chain presence check that earlier registers scored AS D-12. It is not the §5 metric and no longer
+    // carries that id: it is kept as a fixture so the shape of one 1B session's chain stays visible, and it is excluded from counts.
+    g.fixture("D-12.chain-shape", missing.is_empty(), format!("one launch record carries {}/{} expected event kinds; missing={:?} (fixture — NOT the §5 attribution metric, which is D-12 below)", need.len() - missing.len(), need.len(), missing));
     // ---- D-16: every revocation trigger in the frozen vocabulary is exercised at the milestone where its component exists ----
     // For each trigger: the declared action came from the manifest (not a default), the action was carried out, and the hash-chained
     // log holds a `session.revocation_received` naming it. The per-trigger rows are T-6.8-001..011; D-16 checks the SET is complete.
@@ -656,11 +643,31 @@ fn main() {
             format!("{}/{} triggers in the frozen vocabulary exercised with a declared action and a session.revocation_received record in the hash-chained log: {covered:?}{}. Invariant 21 stays incomplete until 1C (inference grant/binding revoked), per R-LC-3.",
                 covered.len(), TRIGGERS.len(), if missing.is_empty() { String::new() } else { format!("; NOT exercised: {missing:?}") }));
     }
-    // The pre-registered §5 metric is measured by a separate harness (`d12-run.py`), because it needs 8 concurrent sessions and its
-    // own instrumented ground truth. This row is only a presence check, and it MUST carry the measured result so the register cannot
-    // be read as if presence were the metric: measured completeness is 3.5% (gateway corpus 100%, local-object and process-lifecycle
-    // classes 0% — they have no ingestion path at all), against a required >= 99% overall. See docs/evidence/wp3.1/README.md item 5.
-    g.weak("D-12", missing.is_empty(), format!("presence check only, NOT the pre-registered metric: {}/{} required kinds on one launch record; missing={:?}. PRE-REGISTERED METRIC NOT MET: measured |C|/|G| = 3.5% vs required >= 99% (gateway-operation corpus 100%, but the local-object and process-lifecycle classes have no ingestion path, so 220 of 230 effects per session are unattributable); the 8-session profile also cannot currently be admitted. R-AUD-2 is not satisfied at 1B.", need.len() - missing.len(), need.len(), missing));
+    // D-12 is the pre-registered §5 metric and nothing else. It is measured by `d12-run.py` (8 concurrent sessions, own instrumented
+    // ground truth, 30 s correlation deadline, N = 10 seeded repetitions), which writes one JSON result per repetition to
+    // /var/lib/agentbound/evidence/d12/rep-<n>.json. This row COMPUTES its verdict from those files — every figure below is read from
+    // them, none is prose — and FAILs when there is no valid measurement: an absent or invalid measurement is not a pass, and a
+    // presence check over event kinds (what earlier registers scored here) is not the metric. Ten valid repetitions are required by
+    // §5; fewer is reported as such and fails.
+    {
+        let d = "/var/lib/agentbound/evidence/d12";
+        let mut reps: Vec<Value> = (1..=10).filter_map(|n| std::fs::read_to_string(format!("{d}/rep-{n}.json")).ok()).map(|s| parse(&s)).filter(|v| !matches!(v, Value::Null)).collect();
+        reps.sort_by_key(|v| js(v, "repetition").parse::<i64>().unwrap_or(0));
+        let valid: Vec<&Value> = reps.iter().filter(|v| js(v, "valid") == "true").collect();
+        let f = |v: &Value, p: &str| js(v, p).parse::<f64>().unwrap_or(-1.0);
+        let (mut g_all, mut c_all, mut gw_g, mut gw_c) = (0.0, 0.0, 0.0, 0.0);
+        let mut per = Vec::new();
+        for v in &valid { g_all += f(v, "G"); c_all += f(v, "C"); gw_g += f(v, "gateway_corpus.G"); gw_c += f(v, "gateway_corpus.C");
+            per.push(format!("rep{} seed={} |C|/|G|={}/{} gw={}/{}", js(v, "repetition"), js(v, "seed"), js(v, "C"), js(v, "G"), js(v, "gateway_corpus.C"), js(v, "gateway_corpus.G"))); }
+        let overall = if g_all > 0.0 { c_all / g_all } else { 0.0 }; let gw = if gw_g > 0.0 { gw_c / gw_g } else { 0.0 };
+        let every_gw_100 = !valid.is_empty() && valid.iter().all(|v| f(v, "gateway_corpus.G") > 0.0 && f(v, "gateway_corpus.C") == f(v, "gateway_corpus.G"));
+        let met = valid.len() == 10 && overall >= 0.99 && every_gw_100;
+        let classes = valid.first().map(|v| jget(v, "per_class").map(|c| String::from_utf8_lossy(&canonical(c)).into_owned()).unwrap_or_default()).unwrap_or_default();
+        g.rec("D-12", met, format!("§5 NOMINAL metric computed from {d}: {} result files, {} valid repetitions (10 required); aggregate |C|/|G| = {}/{} = {:.1}% (>= 99% required); gateway corpus {}/{} = {:.1}% ({}); invalid/aborted repetitions retained: {:?}; per-rep: [{}]; per-class (rep 1): {}",
+            reps.len(), valid.len(), c_all, g_all, overall * 100.0, gw_c, gw_g, gw * 100.0, if every_gw_100 { "100% in every valid run" } else { "NOT 100% in every valid run" },
+            reps.iter().filter(|v| js(v, "valid") != "true").map(|v| format!("rep{}: launched={} incomplete={} errors={}", js(v, "repetition"), js(v, "sessions_launched"), js(v, "sessions_incomplete"), js(v, "launch_errors"))).collect::<Vec<_>>(),
+            per.join("; "), classes.chars().take(600).collect::<String>()));
+    }
     g.rec("T-6.3-007", chain.contains("gateway.released") && chain.contains("session.sealed"), "post-termination: projection released, record sealed, socket node removed with the mount namespace");
     let (_, sockleft) = sh(&format!("ls /run/agentbound/gw/ | grep -c {}", js(&v, "allocation_id").rsplit(':').next().unwrap_or("x")));
     g.rec("T-6.3-007.socket", sockleft.trim() == "0", format!("host-side socket nodes left for this allocation: {}", sockleft.trim()));
@@ -1012,6 +1019,42 @@ while [ $n -lt 400 ]; do ab-gwclient /run/gateway.sock op:gateway-ping gateway.p
     let first_ok = first.matches("\"pong\":true").count() == 5;
     g.rec("T-6.9-005.budget-persist", first_ok && ops_mid == ops_before + 5 && ops_after_restart == ops_mid && stored_mid >= 5 && refused > 0 && stored_final == ping_budget && (stored_mid as usize) + admitted == ping_budget as usize,
         format!("5 pings admitted (session op_count {ops_before}->{ops_mid}); lifecycle budget record then held op:gateway-ping operations={stored_mid} [{budget_rec}]; gateway restarted: session op_count restored to {ops_after_restart} (not reset); then {admitted} more pings admitted and {refused} refused budget_operations (gateway.operation_denied events for this allocation); stored op:gateway-ping operations={stored_final} == budget {ping_budget}, and {stored_mid}+{admitted}={}", stored_mid as usize + admitted));    // ---- T-6.4-009: PID reuse against the per-operation check (catalogue: "including reuse within one CLK_TCK tick") ----
+    // ---- D4.7-idempotency-persist (component-interfaces §5, independent WP3.1 validation finding 6) ----
+    // The ping budget of the session above is exhausted, so this uses a FRESH session: one op with key K; K again (same input) →
+    // original reply, `gateway.operation_replayed`, op_count unchanged; K with different args → `conflict/idempotency_conflict`;
+    // gateway RESTART; K again from a NEW connection → still the original reply with no new execution and no budget consumed; and the
+    // outcome is readable from the lifecycle record store, which is where a restarted gateway got it. Every figure is read back.
+    {
+        let gbi = Rig { as_user: "bob".into(), rows: vec![] }; let pi = gbi.write_req("idem-persist", GW_REQ);
+        let gi = gbi.request(&pi, ""); let vi = gi.1.clone();
+        let (lrdi, aidi) = (js(&vi, "launch_record_digest"), js(&vi, "allocation_id"));
+        let scopei = js(&vi, "scope_id"); let uidi = js(&vi, "uid");
+        let ipidi = sh(&format!("head -1 /sys/fs/cgroup/system.slice/{scopei}/cgroup.procs")).1.trim().to_string();
+        let ready = gi.0 == 0 && !lrdi.is_empty() && !ipidi.is_empty() && !uidi.is_empty();
+        // the session's own git-worker issues gateway operations for ~20 s after launch; wait for its GW-END so the session's
+        // op_count is quiescent and every change below is attributable to this row's calls alone
+        let coni = js(&vi, "console"); for _ in 0..30 { if std::fs::read_to_string(&coni).unwrap_or_default().contains("GW-END") { break; } std::thread::sleep(std::time::Duration::from_secs(1)); }
+        let key = format!("idem-persist-{}", ab_common::sig::monotonic_ns());
+        // the args variant is selected by a plain token inside the script so no JSON crosses three layers of shell quoting
+        std::fs::write("/tmp/idem.sh", "if [ \"$2\" = alt ]; then A='{\"x\":1}'; else A='{}'; fi; ab-gwclient /run/gateway.sock op:gateway-ping gateway.ping \"$A\" --idem \"$1\" 2>&1 | tail -c 300; echo\n").unwrap();
+        sh(&format!("nsenter -t {ipidi} -m -- sh -c 'cat > /tmp/idem.sh' < /tmp/idem.sh"));
+        let call = |k: &str, variant: &str| -> String { sh(&format!("sh -c 'echo $$ > /sys/fs/cgroup/system.slice/{scopei}/cgroup.procs; exec nsenter -t {ipidi} -m -n -p -S {uidi} -G {uidi} -- sh /tmp/idem.sh {k} {variant}' 2>&1")).1 };
+        let r1 = call(&key, "same"); let ops1: i64 = js(&gwst(&lrdi), "body.operations").parse().unwrap_or(-1);
+        let r2 = call(&key, "same"); let ops2: i64 = js(&gwst(&lrdi), "body.operations").parse().unwrap_or(-1);
+        let r3 = call(&key, "alt");
+        let stored_before = { let r = lc("record", Value::obj(vec![("launch_record_digest", Value::s(&lrdi))])); r.get("body").and_then(|b| b.get("outcomes")).map(|o| String::from_utf8_lossy(&canonical(o)).into_owned()).unwrap_or_default() };
+        sh("systemctl restart agentbound-gateway"); std::thread::sleep(std::time::Duration::from_secs(3));
+        let ops_r: i64 = js(&gwst(&lrdi), "body.operations").parse().unwrap_or(-1);
+        let r4 = call(&key, "same"); let ops4: i64 = js(&gwst(&lrdi), "body.operations").parse().unwrap_or(-1);
+        let seq = |r: &str| r.split("\"operation_seq\":").nth(1).and_then(|t| t.split(|c: char| !c.is_ascii_digit()).next()).unwrap_or("?").to_string();
+        let replayed: usize = sh(&format!("grep -h gateway.operation_replayed /var/lib/agentbound/audit/events.jsonl | grep -c {aidi}")).1.trim().parse().unwrap_or(0);
+        let completed: usize = sh(&format!("grep -h '\"kind\":\"gateway.operation_completed\"' /var/lib/agentbound/audit/events.jsonl | grep {aidi} | grep -c {key}")).1.trim().parse().unwrap_or(0);
+        let ok = ready && r1.contains("\"pong\":true") && ops1 >= 1 && r2.contains("\"pong\":true") && seq(&r1) == seq(&r2) && ops2 == ops1
+            && r3.contains("idempotency_conflict") && stored_before.contains(&key) && ops_r == ops1 && r4.contains("\"pong\":true") && seq(&r4) == seq(&r1) && ops4 == ops1 && completed == 1 && replayed >= 2;
+        g.rec("D4.7-idempotency-persist", ok, format!("first: seq={} ops={ops1}; same key+input: seq={} ops={ops2} (no consumption); different input: {}; lifecycle store holds outcome for key: {}; gateway restarted: ops restored={ops_r}; same key after restart from new connection: seq={} ops={ops4}; operation_completed for key={completed} (exactly once) replayed={replayed}",
+            seq(&r1), seq(&r2), if r3.contains("idempotency_conflict") { "conflict/idempotency_conflict" } else { r3.trim() }, stored_before.contains(&key), seq(&r4)));
+        g.terminate(&lrdi);
+    }
     // Construction: an in-scope session-uid client establishes a connection and *exits immediately*, leaving a forked holder with the
     // connected descriptor. The driver then recycles the establishing PID inside the session's pid namespace via ns_last_pid — a
     // capability no session has (measured: the session uid gets EIO/EACCES on that file, and even root needs CAP_SYS_ADMIN in the
@@ -1091,21 +1134,50 @@ while [ $n -lt 400 ]; do ab-gwclient /run/gateway.sock op:gateway-ping gateway.p
     let dups: Vec<String> = dup.iter().filter(|(_, n)| **n > 1).map(|(k, n)| format!("{k}×{n}")).collect();
     let best = |cid: &str| -> &'static str { let mut b = "NOT-EXECUTED"; for r in &g.rows { if catalogue_id(&r.id) == cid { b = match (b, r.verdict) { (_, "FAIL") => "FAIL", ("FAIL", _) => "FAIL", (_, "PASS") => "PASS", ("PASS", _) => "PASS", (_, "WEAK") => "WEAK", ("WEAK", _) => "WEAK", (_, "RECORDED") => "RECORDED", (o, _) => o }; } } b };
     let expected = expected_ids();
-    let mut cov: Vec<(String, String, &str)> = expected.iter().map(|(id, ms)| (id.clone(), ms.clone(), best(id))).collect();
-    let known: std::collections::HashSet<String> = expected.iter().map(|(i, _)| i.clone()).collect();
+    let mut cov: Vec<(String, String, &str)> = expected.iter().map(|(id, ms, _)| (id.clone(), ms.clone(), best(id))).collect();
+    let known: std::collections::HashSet<String> = expected.iter().map(|(i, _, _)| i.clone()).collect();
+    let required: std::collections::HashMap<String, String> = expected.iter().map(|(i, _, r)| (i.clone(), r.clone())).collect();
     let extra: Vec<String> = { let mut e: Vec<String> = g.rows.iter().filter(|r| r.verdict != "FIXTURE").map(|r| catalogue_id(&r.id)).filter(|c| !known.contains(c)).collect(); e.sort(); e.dedup(); e };
     let n_not = cov.iter().filter(|c| c.2 == "NOT-EXECUTED").count(); let n_cov_pass = cov.iter().filter(|c| c.2 == "PASS").count();
     cov.sort_by(|a, b| a.0.cmp(&b.0));
-    let (_, commit) = sh("cd /root/wp2 && git rev-parse --short HEAD 2>/dev/null || cat /root/wp2/COMMIT 2>/dev/null || echo unknown");
-    let (_, bins) = sh("cd /usr/local/bin && sha256sum agentbound agentbound-launch agentbound-lifecycle agentbound-policy agentbound-audit agentbound-gateway ab-conformance 2>/dev/null | awk '{print $2\"=\"substr($1,1,16)}' | tr '\\n' ' '; sha256sum /var/lib/agentbound/images/rootfs/bin/ab-gwclient /var/lib/agentbound/images/rootfs/probe.sh /var/lib/agentbound/images/rootfs/git-worker.sh 2>/dev/null | awk '{n=split($2,a,\"/\"); print a[n]\"=\"substr($1,1,16)}' | tr '\\n' ' '");
+    // Provenance (independent WP3.1 validation, finding 4). The commit is the one EMBEDDED in this runner at build time from the
+    // sending checkout — never read from a file on the build host, which is how every earlier register came to report `207930e`
+    // for binaries built from later source. Each installed daemon is asked for its own embedded provenance too, so an install that is
+    // stale relative to the runner shows up as a mismatch in the register instead of being invisible. Digests are full SHA-256.
+    let commit = ab_common::provenance::describe();
+    let mut prov_rows = String::new(); let mut prov_mismatch = false;
+    for b in ["agentbound", "agentbound-launch", "agentbound-lifecycle", "agentbound-policy", "agentbound-audit", "agentbound-gateway", "ab-conformance"] {
+        let (_, d) = sh(&format!("sha256sum /usr/local/bin/{b} 2>/dev/null | cut -d' ' -f1")); let (_, pv) = sh(&format!("/usr/local/bin/{b} --provenance 2>/dev/null"));
+        let pc = pv.split_whitespace().find_map(|t| t.strip_prefix("commit=")).unwrap_or("unknown").to_string();
+        let pd = pv.split_whitespace().find_map(|t| t.strip_prefix("dirty=")).unwrap_or("unknown").to_string();
+        if pc != ab_common::provenance::COMMIT || pd != ab_common::provenance::DIRTY { prov_mismatch = true; }
+        prov_rows.push_str(&format!("| `{b}` | `{}` | `{pc}` | {pd} |\n", d.trim()));
+    }
+    let bins = if prov_mismatch { "**MISMATCH — at least one installed binary was not built from the same source as this runner; see provenance table**".to_string() } else { "all installed binaries embed the same commit and dirty state as this runner".to_string() };
+    let (_, gwc) = sh("sha256sum /var/lib/agentbound/images/rootfs/bin/ab-gwclient 2>/dev/null | cut -d' ' -f1"); let (_, catd) = sh("sha256sum /etc/agentbound/catalogue.json | cut -d' ' -f1");
+    prov_rows.push_str(&format!("| `ab-gwclient` (in image) | `{}` | — | — |\n| `/etc/agentbound/catalogue.json` | `{}` | — | — |\n", gwc.trim(), catd.trim()));
     let run_id = format!("run-{}", ab_common::sig::monotonic_ns());
-    let ok = fail == 0 && dups.is_empty() && n_not == 0 && extra.is_empty();
-    let mut md = format!("# Agentbound conformance run — 1A + 1B rows (machine output)\n\n- Host: {}\n- Kernel: {}\n- systemd: {}\n- git: {}\n- Date: {}\n- Run id: {run_id}\n- Repository commit: {}\n- Binary digests (sha256/16): {}\n- Expected population: {} catalogue ids (test-catalogue 1A+1B)\n- Assertions: {} PASS, {} WEAK, {} RECORDED, {} FAIL ({} fixtures excluded)\n- Catalogue coverage: {} PASS, {} WEAK, {} RECORDED, {} FAIL, **{} NOT-EXECUTED**\n- Duplicate row ids: {}\n- Row ids outside the catalogue: {}\n- **Run verdict: {}**\n\n## Catalogue coverage\n\n| Catalogue id | Milestone | Best verdict |\n|---|---|---|\n", sh("hostname").1.trim(), sh("uname -r").1.trim(), sh("systemctl --version | head -1").1.trim(), sh("git --version").1.trim(), sh("date -u +%FT%TZ").1.trim(), commit.trim(), bins.trim(), expected.len(), pass, weak, recorded, fail, fixture, n_cov_pass, cov.iter().filter(|c| c.2 == "WEAK").count(), cov.iter().filter(|c| c.2 == "RECORDED").count(), cov.iter().filter(|c| c.2 == "FAIL").count(), n_not, if dups.is_empty() { "none".to_string() } else { dups.join(", ") }, if extra.is_empty() { "none".to_string() } else { extra.join(", ") }, if ok { "PASS" } else { "FAIL (coverage or assertion)" });
-    for (id, ms, v) in &cov { md.push_str(&format!("| {id} | {ms} | {v} |\n")); }
+    // Three separate verdicts (independent WP3.1 validation, finding 1). They MUST NOT be conflated: a suite can complete with no
+    // assertion failing, cover every catalogue id, and still not satisfy the frozen requirements — that was exactly the state of
+    // every earlier register, whose "run verdict PASS" meant only the first of these.
+    //   suite      — the harness ran to completion and no assertion was FALSE (no FAIL rows);
+    //   coverage   — every frozen 1A+1B catalogue id executed exactly once, and no row claims an id outside the catalogue;
+    //   requirements — every mandatory id's best verdict SATISFIES its required verdict (PASS, or RECORDED where the catalogue's own
+    //                pass criterion admits it). WEAK never satisfies; RECORDED where PASS is required never satisfies.
+    let suite_ok = fail == 0;
+    let coverage_ok = dups.is_empty() && n_not == 0 && extra.is_empty() && !prov_mismatch && ab_common::provenance::DIRTY == "false";
+    let unmet: Vec<String> = cov.iter().filter(|(id, _, v)| !satisfies(v, required.get(id).map(|s| s.as_str()).unwrap_or("PASS")))
+        .map(|(id, _, v)| format!("{id}={v}(required {})", required.get(id).map(|s| s.as_str()).unwrap_or("PASS"))).collect();
+    let requirements_ok = coverage_ok && unmet.is_empty();
+    let ok = suite_ok && coverage_ok && requirements_ok;
+    let verdict_line = format!("suite {}; coverage {}; requirements {}{}", if suite_ok { "COMPLETE" } else { "FAIL" }, if coverage_ok { "COMPLETE" } else { "FAIL" },
+        if requirements_ok { "PASS" } else { "FAIL" }, if unmet.is_empty() { String::new() } else { format!(" — unmet: {}", unmet.join(", ")) });
+    let mut md = format!("# Agentbound conformance run — 1A + 1B rows (machine output)\n\n- Host: {}\n- Kernel: {}\n- systemd: {}\n- git: {}\n- Date: {}\n- Run id: {run_id}\n- Source commit (embedded at build from the sending checkout): {}\n- Installed binaries: {}\n- Expected population: {} catalogue ids (test-catalogue 1A+1B)\n- Assertions: {} PASS, {} WEAK, {} RECORDED, {} FAIL ({} fixtures excluded)\n- Catalogue coverage: {} PASS, {} WEAK, {} RECORDED, {} FAIL, **{} NOT-EXECUTED**\n- Duplicate row ids: {}\n- Row ids outside the catalogue: {}\n- **Suite verdict: {}** (no assertion false)\n- **Coverage verdict: {}** (every frozen id executed once, none outside the catalogue)\n- **Requirements verdict: {}** (every mandatory id satisfies its required verdict; unmet: {})\n- **Run verdict: {}** — PASS only when all three hold\n\n## Provenance\n\n| Artifact | SHA-256 | Embedded commit | Dirty |\n|---|---|---|---|\n{prov_rows}\n## Catalogue coverage\n\n| Catalogue id | Milestone | Best verdict | Required | Satisfied |\n|---|---|---|---|---|\n", sh("hostname").1.trim(), sh("uname -r").1.trim(), sh("systemctl --version | head -1").1.trim(), sh("git --version").1.trim(), sh("date -u +%FT%TZ").1.trim(), commit, bins, expected.len(), pass, weak, recorded, fail, fixture, n_cov_pass, cov.iter().filter(|c| c.2 == "WEAK").count(), cov.iter().filter(|c| c.2 == "RECORDED").count(), cov.iter().filter(|c| c.2 == "FAIL").count(), n_not, if dups.is_empty() { "none".to_string() } else { dups.join(", ") }, if extra.is_empty() { "none".to_string() } else { extra.join(", ") }, if suite_ok { "COMPLETE" } else { "FAIL" }, if coverage_ok { "COMPLETE" } else { "FAIL (coverage, duplicate, extra, or PROVENANCE failure)" }, if requirements_ok { "PASS" } else { "FAIL" }, if unmet.is_empty() { "none".to_string() } else { unmet.join(", ") }, if ok { "PASS" } else { "FAIL (coverage or assertion)" });
+    for (id, ms, v) in &cov { let r = required.get(id).map(|s| s.as_str()).unwrap_or("PASS"); md.push_str(&format!("| {id} | {ms} | {v} | {r} | {} |\n", if satisfies(v, r) { "yes" } else { "**NO**" })); }
     md.push_str("\n## Rows\n\n| Row | Verdict | Evidence |\n|---|---|---|\n");
     for r in &g.rows { md.push_str(&format!("| {} | {} | {} |\n", r.id, r.verdict, r.evidence.replace('|', "\\|"))); }
     std::fs::write("/root/wp2/conformance-run.md", md).unwrap();
     for (id, _, v) in &cov { if *v == "NOT-EXECUTED" { println!("NOT-EXECUTED {id}"); } }
-    println!("\nassertions: {pass} PASS {weak} WEAK {recorded} RECORDED {fail} FAIL; catalogue: {n_cov_pass}/{} PASS, {n_not} not executed; dups={} extra={}; run verdict {}; register at /root/wp2/conformance-run.md", expected.len(), dups.len(), extra.len(), if ok { "PASS" } else { "FAIL" });
+    println!("\nassertions: {pass} PASS {weak} WEAK {recorded} RECORDED {fail} FAIL; catalogue: {n_cov_pass}/{} PASS, {n_not} not executed; dups={} extra={}; {verdict_line}; run verdict {}; register at /root/wp2/conformance-run.md", expected.len(), dups.len(), extra.len(), if ok { "PASS" } else { "FAIL" });
     if !ok { std::process::exit(1); }
 }
