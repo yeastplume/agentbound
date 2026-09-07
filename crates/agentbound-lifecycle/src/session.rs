@@ -27,6 +27,12 @@ fn gateway_call(sock: &str, op: &str, lrd: &str, idem: &str) -> Option<Value> {
 }
 
 pub const DEFAULT_TERM_BOUND_S: i64 = 10;
+
+/// Minimum spacing between retries of a `termination-incomplete` session. Each retry re-issues `deny_admission` to the gateway, so
+/// this is the difference between a retry and a retry storm: unbackoffed, 3 196 `deny_admission` calls reached the gateway during a
+/// single three-session probe, saturating it. Well under the quarantine floor, so a stalled termination is still retried many times
+/// before its identity could be reused.
+pub const RETRY_BACKOFF_NS: i64 = 5_000_000_000;
 pub const SIGTERM_GRACE_MS: u64 = 2000;
 
 // ---- cgroup helpers on the held directory descriptor ----
@@ -278,14 +284,21 @@ impl Service {
     }
 
     /// Periodic: init pidfd liveness (prompt trigger alongside D-Bus), quiesce deadlines, retries, reclamation.
+    ///
+    /// Retries of an incomplete termination are backed off by `RETRY_BACKOFF_NS`. The retry itself is mandatory — a termination whose
+    /// admission closure timed out holds its identity and must be re-attempted — but re-attempting it at loop speed turns this
+    /// daemon into a load generator against the gateway it depends on.
     pub fn poll_sessions(&mut self) {
         let now = monotonic_ns();
         let due: Vec<(String, &'static str)> = self.sessions.all().into_iter().filter_map(|s| {
             if s.state == "quiescing" && s.deadline_mono_ns.map(|d| now >= d).unwrap_or(false) { return Some((s.lrd.clone(), "quiesce_bound_expired")); }
             if s.state == "active" && s.init_pidfd.as_ref().map(|f| pidfd_exited(f.as_raw_fd())).unwrap_or(false) { return Some((s.lrd.clone(), "init_exited")); }
-            if s.state == "termination-incomplete" { return Some((s.lrd.clone(), "retry")); }
+            // Retry a stalled termination, but not on every tick: each retry re-issues `deny_admission` to the gateway, and an
+            // unbackoffed retry storm starves the same gateway of the capacity to answer anything else (WP3.1).
+            if s.state == "termination-incomplete" && s.retry_not_before_ns.map(|t| now >= t).unwrap_or(true) { return Some((s.lrd.clone(), "retry")); }
             None }).collect();
         for (lrd, why) in due {
+            if why == "retry" { if let Some(s) = self.sessions.get_mut(&lrd) { s.retry_not_before_ns = Some(now + RETRY_BACKOFF_NS); } }
             // a recovered session has no cgroup fd: retry means re-evaluating the containment evidence by path and sealing once it is clean
             let recovered = self.sessions.get(&lrd).map(|s| s.cgroup_dir.is_none() && s.state == "termination-incomplete").unwrap_or(false);
             if recovered { self.retry_recovered(&lrd); continue; }
