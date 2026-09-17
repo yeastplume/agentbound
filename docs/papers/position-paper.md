@@ -1,5 +1,7 @@
 # Agents as Unix Principals
 
+> **Scope:** this paper describes the broader proposal, including capabilities not implemented. For what exists and whether to continue development, read [Status and assessment](../STATUS.md).
+
 ## A Security Ontology for Governed Agent Sessions
 
 **Version:** 0.10  

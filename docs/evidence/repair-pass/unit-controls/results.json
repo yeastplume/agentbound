@@ -1,0 +1,35 @@
+[
+  {
+    "control": "no-gateway-waiver-removed",
+    "test": "session::regression_tests::no_gateway_does_not_require_a_gateway_reply",
+    "rc": 101,
+    "discriminates": true,
+    "original_sha256": "d67ce5c786168118fa37e9a0b5551af867f491174c187bf6f6fa520948559e45",
+    "mutation": {
+      "old": "topology == \"none\" || (topology == \"local-socket\" && reply",
+      "new": "(topology == \"local-socket\" && reply"
+    }
+  },
+  {
+    "control": "cleanup-schema-member-removed",
+    "test": "session::regression_tests::actual_cleanup_payload_matches_receiver_schema",
+    "rc": 101,
+    "discriminates": true,
+    "original_sha256": "0d4e62bfe5dc6cf27df2259330b9c99d02dd0186de66a5cfdeb6999eec6d6691",
+    "mutation": {
+      "old": "\"acl_entries_removed\", \"acl_removal_failures\", \"grants\"",
+      "new": "\"acl_entries_removed\", \"grants\""
+    }
+  },
+  {
+    "control": "sudo-config-guard-removed",
+    "test": "entry::tests::sudo_allows_only_authorization_and_uses_fixed_defaults",
+    "rc": 101,
+    "discriminates": true,
+    "original_sha256": "cde8bd5cddb207398b80189f63936fe36efe35f235c7981da10e72bb56a4ddd8",
+    "mutation": {
+      "old": "if key != \"--authorization\" && mode != Invocation::Admin {",
+      "new": "if false && key != \"--authorization\" && mode != Invocation::Admin {"
+    }
+  }
+]

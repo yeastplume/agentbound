@@ -1,5 +1,7 @@
 # Architecture specifications
 
+For implemented capabilities and unresolved defects, read [Status and assessment](../STATUS.md). This directory defines contracts; a frozen specification is not evidence that the current code conforms. Version and completion notes below describe the specification set, not a release certification.
+
 This directory contains WP0 implementation specifications and architecture decision records (ADRs) that refine the normative [technical report](../papers/technical-report.md) and the [Phase 1 plan](../plans/phase-1-reference-implementation.md).
 
 ## WP0 specification set and status
@@ -11,10 +13,10 @@ Decision status (is the architecture settled?) and specification completeness (a
 | Artefact | Version | Decision status | Specification completeness |
 |---|---|---|---|
 | [Phase 1 normative requirements](phase-1-requirements.md) | 0.11 | frozen (WP0); WP1 findings applied | complete; all questions answered |
-| [Authorization manifest and launch binding schema](manifest-schema.md) | 0.8 | frozen (WP0) | complete, with gateway-free 1A form and worked examples; all questions answered |
+| [Authorization manifest and launch binding schema](manifest-schema.md) | 0.9 | frozen (WP0) | complete, with gateway-free 1A form and worked examples; all questions answered |
 | [Session lifecycle and failure states](session-lifecycle.md) | 0.7 | frozen (WP0); WP1 findings applied | complete; LC-2 answered by WP1 |
 | [Execution-identity lifecycle](execution-identity-lifecycle.md) | 0.7 | frozen (WP0); WP1 findings applied | complete; ID-1 answered by WP1 |
-| [Component interfaces (skeleton)](component-interfaces.md) | 0.5 | frozen (WP0); security-relevant decisions | wire formats and versioning negotiation deferred to WP1 by design |
+| [Component interfaces (skeleton)](component-interfaces.md) | 0.6 | frozen (WP0); security-relevant decisions | wire formats and versioning negotiation deferred to WP1 by design |
 | [Component wire formats](component-wire-formats.md) | 0.2 | draft (WP2, extended WP3.1) | defines the message schemas, error payload, event schema, and versioning deferred by component interfaces §10 |
 | [Test catalogue](test-catalogue.md) | 0.8 | frozen (WP0); pre-registration; WP1 findings applied | load profiles, deadlines, seeds fixed; fixtures and commands are WP1 outputs by design |
 | [Invariant-to-test traceability matrix](traceability-matrix.md) | 0.7 | frozen (WP0); WP1 finding applied | complete; requirement-coverage check performed (§8) |

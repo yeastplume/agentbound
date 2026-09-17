@@ -1,6 +1,6 @@
 # Agentbound Manifest Schema
 
-**Version:** 0.8
+**Version:** 0.9
 **Status:** Frozen (WP0)
 **Date:** 28 August 2026
 **Applies to:** the Unix-governed reference implementation and its microVM control arm
@@ -18,6 +18,7 @@
 | 0.7 | 28 August 2026 | WP2 correction (no normative change): the §6 illustrative pair omitted the `connection_count` class required by §3.5; added as `absent` in both objects; §3.7 `constructor` member list and the example gain `invocation_profile_digest`, which §3.3 (0.4) already required the constructor to record. The example pair now validates under the reference validator. |
 | 0.8 | 5 September 2026 | WP3 implementation finding (unfrozen narrowly, no binding element renamed): under `local-socket` the `gateway_socket` allowlist entry is realised by the reference constructor as the **bind-mounted socket node** named by `gateway_projection.socket_mount_id` (a file mountpoint at the catalogue target, e.g. `/run/gateway.sock`), not as an inherited descriptor — the constructor's inherited-descriptor set stays stdin/stdout/stderr and the session connects to the node itself, which is what lets the gateway authenticate each *connection* by `SO_PEERCRED`/pidfd (ADR-0002 D2). The 0.7 wording "MUST be the descriptor described by `gateway_projection`" is read as "MUST be the socket described by `gateway_projection`"; `descriptor_id` for the entry is the mount id (`mount:gateway_socket`). Evidence: [WP3 register](../evidence/wp3/README.md) §6. |
 
+| 0.9 | 17 September 2026 | Repair-pass security change: signatures authenticate the object plus envelope metadata using the domain-separated v0.2 transcript in §4. This binds issuance time and prevents timestamp refresh without resigning. Object-only signatures are rejected; deployment requires coordinated policy/launcher/lifecycle upgrade and reauthorization of unconsumed handoffs. Existing stored evidence is retained, not rewritten. Regression: `envelope::tests::changing_unsigned_issuance_cannot_refresh_a_stale_signature`. |
 
 ---
 
@@ -486,8 +487,11 @@ The policy signature envelope MUST contain exactly `authorization_manifest_diges
 The constructor signature envelope MUST contain exactly `allocation_id`,
 `authorization_manifest_digest`, `boot_id`, `host_id`, `issued_at`, `key_id`,
 `launch_binding_digest`, `authorization_id`, and `signature`. Both use detached
-Ed25519 signatures. Policy signs only the authorization object; the constructor
-signs only the launch binding after reservation and correspondence checks.
+Ed25519 signatures. Each signer authenticates its own object and its envelope metadata after the applicable reservation and correspondence checks.
+
+The signature input MUST be RFC 8785 canonical JSON of `{"domain": D, "envelope": E, "object": O}`. `O` is the authorization manifest for policy, or the launch binding for the constructor. `E` is the complete corresponding envelope with only `signature` removed. `D` is `agentbound.signature.policy.v0.2` or `agentbound.signature.launch.v0.2`, respectively. Thus `issued_at`, the key ID, and all correspondence fields are authenticated along with the object.
+
+Verifiers MUST reject legacy signatures over the object alone. Policy, launcher and lifecycle must be upgraded together; unconsumed old handoffs require reauthorization. Stored historical records remain evidence of their original format and must not be resigned or silently upgraded. Object digests and launch-record digest computation do not change.
 
 `agentbound-launch` MUST reject non-canonical bytes when transport claims to
 carry canonical JSON. It MAY parse and canonicalize an authenticated transport

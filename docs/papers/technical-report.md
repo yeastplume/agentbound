@@ -1,5 +1,7 @@
 # Agents as Unix Principals
 
+> **Scope:** this report defines the proposed architecture and security contracts. It is not a description of completed implementation or validation. Read [Status and assessment](../STATUS.md) for the current prototype and its limits.
+
 ## Security Architecture and Evaluation Programme
 
 **Version:** 0.5-TR12

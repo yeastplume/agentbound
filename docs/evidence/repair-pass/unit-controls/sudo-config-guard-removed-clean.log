@@ -1,0 +1,9 @@
+
+running 1 test
+test entry::tests::sudo_allows_only_authorization_and_uses_fixed_defaults ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+   Compiling agentbound-launch v0.1.0 (/tmp/agentbound-unit-mutations-wi5iu4yc/crates/agentbound-launch)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.44s
+     Running unittests src/main.rs (target/debug/deps/agentbound_launch-23db4d8df773ed7f)

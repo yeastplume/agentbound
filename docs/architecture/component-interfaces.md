@@ -1,5 +1,5 @@
 # Agentbound Component Interfaces
-**Version:** 0.5  
+**Version:** 0.6  
 **Status:** Frozen (WP0) — skeleton; wire formats are WP1 outputs  
 **Date:** 28 August 2026  
 **Applies to:** Phase 1 Unix-governed reference implementation  
@@ -13,6 +13,7 @@
 - **0.5** — §3.8 gains the three properties WP3.1 established by measurement rather than by reasoning, after two successive "fixed" verdicts on the gateway ↔ lifecycle deadlock were both wrong. (a) A bound MUST cover connection establishment, not only transfer: `SO_RCVTIMEO`/`SO_SNDTIMEO` leave `connect` unbounded, and both daemons were observed blocked there simultaneously. (b) A component waiting on a peer MUST keep serving that peer's re-entrancy-safe inbound calls; a sleep-based retry loop reproduced the deadlock on the session hot path with every bound correct. (c) "No answer within the bound" is not a refusal — conflating them closed admission on healthy sessions. No obligation is weakened; three that were assumed are now stated.
 - **0.4** — Adds §3.8, mutual-call bounds between components. This closes an omission the WP3.1 D-12 measurement exposed as two real deadlocks in the reference implementation: 0.3 required each component to serialize its own decisions and to bound its waits, but never said that two components which can call *each other* must bound those calls asymmetrically. With equal bounds a cycle is merely truncated to the bound, and a 60 s truncation exceeds the §4.1 launch-binding freshness window, so unrelated concurrent launches fail `constructor_envelope:Stale`. No existing obligation is weakened.
 
+- **0.6** — Repair pass, 17 September 2026: §4.1 references manifest-schema 0.9's signature transcript binding issuance and envelope metadata to the object. Rejecting old object-only signatures is a coordinated wire-compatibility break, not an optional fallback; existing stored evidence remains unchanged.
 
 ---
 ## 1. Purpose and normative language
@@ -184,8 +185,7 @@ untrusted identity. Backup, restoration, and replacement of the key MUST be a
 recorded administrator procedure.
 Each signature envelope MUST use detached Ed25519 over RFC 8785 JCS canonical
 JSON and contain algorithm, `key_id`, issuance time, named timestamp source,
-and signed-object digest. Policy signs only the authorization manifest. The
-constructor signs only the launch binding after successful atomic reservation.
+and signed-object digest, with concrete envelope members defined by [manifest schema §4](manifest-schema.md). The signature authenticates the corresponding object and all envelope metadata using that section's v0.2 domain-separated transcript. The constructor signs after successful atomic reservation. Object-only legacy signatures are not accepted.
 The pair-derived `launch_record_digest` MUST use the digest concatenation and
 the identifier-use table in [the manifest schema](manifest-schema.md) §4; the
 policy-issued `authorization_id` is the pre-binding key and the digest is the

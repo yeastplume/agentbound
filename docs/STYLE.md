@@ -2,6 +2,12 @@
 
 Applies to every document under `docs/` and the repository READMEs. Adopted after the WP0 freeze; editorial changes made under this policy do not alter requirements.
 
+## Reader-facing summaries
+
+Start with what the software does, its current limitation, and the reader's next decision. Use plain capability names before work-package and requirement IDs. Keep current status in `docs/STATUS.md`; other documents link to it rather than copying milestone verdicts. Distinguish implemented code, recorded results, independently reproduced results, and proposals. A result names its build and evidence; “frozen,” “reviewed,” and “PASS” are not substitutes for that scope.
+
+Historical evidence retains its original claims, with a visible correction or supersession note. Do not rewrite raw test output to match a later conclusion.
+
 ## Normative text
 
 1. One rule per normative sentence. A sentence contains one MUST, SHOULD, or MAY obligation.

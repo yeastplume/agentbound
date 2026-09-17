@@ -1,0 +1,64 @@
+
+running 1 test
+test session::regression_tests::no_gateway_does_not_require_a_gateway_reply ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling cfg-if v1.0.4
+   Compiling quote v1.0.47
+   Compiling typenum v1.20.1
+   Compiling libc v0.2.189
+   Compiling generic-array v0.14.7
+   Compiling zerocopy v0.8.56
+   Compiling semver v1.0.28
+   Compiling ahash v0.8.12
+   Compiling rustc_version v0.4.1
+   Compiling find-msvc-tools v0.1.12
+   Compiling serde_core v1.0.229
+   Compiling shlex v2.0.1
+   Compiling curve25519-dalek v4.1.3
+   Compiling cc v1.4.5
+   Compiling syn v2.0.119
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling once_cell v1.21.4
+   Compiling pkg-config v0.3.34
+   Compiling vcpkg v0.2.15
+   Compiling cpufeatures v0.2.17
+   Compiling zmij v1.0.23
+   Compiling getrandom v0.2.17
+   Compiling libsqlite3-sys v0.30.1
+   Compiling syn v3.0.4
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling zeroize v1.9.0
+   Compiling serde v1.0.229
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.17.1
+   Compiling signature v2.2.0
+   Compiling subtle v2.6.1
+   Compiling serde_json v1.0.151
+   Compiling serde_derive v1.0.229
+   Compiling ed25519 v2.2.3
+   Compiling indexmap v2.14.1
+   Compiling hashbrown v0.14.5
+   Compiling rand_core v0.6.4
+   Compiling sha2 v0.10.9
+   Compiling memchr v2.8.3
+   Compiling ab-common v0.1.0 (/tmp/agentbound-unit-mutations-wi5iu4yc/crates/ab-common)
+   Compiling itoa v1.0.18
+   Compiling ed25519-dalek v2.2.0
+   Compiling hashlink v0.9.1
+   Compiling bitflags v2.13.1
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling base64 v0.22.1
+   Compiling fallible-iterator v0.3.0
+   Compiling hex v0.4.3
+   Compiling smallvec v1.16.0
+   Compiling rusqlite v0.32.1
+   Compiling agentbound-lifecycle v0.1.0 (/tmp/agentbound-unit-mutations-wi5iu4yc/crates/agentbound-lifecycle)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.40s
+     Running unittests src/main.rs (target/debug/deps/agentbound_lifecycle-12b01eafec83ea72)

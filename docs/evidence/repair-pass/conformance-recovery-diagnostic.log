@@ -1,0 +1,24 @@
+Warning: Permanently added '10.20.44.12' (ED25519) to the list of known hosts.
+● agentbound-lifecycle.service - Agentbound lifecycle daemon (privileged)
+     Loaded: loaded (/etc/systemd/system/agentbound-lifecycle.service; enabled; preset: enabled)
+     Active: active (running) since Thu 2026-09-17 10:33:23 UTC; 1min 3s ago
+ Invocation: 9b7c783d279a4f009bdaecb3d9745a50
+   Main PID: 967736 (agentbound-life)
+      Tasks: 1 (limit: 9372)
+     Memory: 20.7M (peak: 540.1M)
+        CPU: 1min 1.997s
+     CGroup: /system.slice/agentbound-lifecycle.service
+             └─967736 /usr/local/bin/agentbound-lifecycle --cli-uids 1001,1002,1003,1004 --gateway-uid 994
+
+Sep 17 10:33:23 agentbound-dev systemd[1]: Started agentbound-lifecycle.service - Agentbound lifecycle daemon (privileged).
+    PID STAT     ELAPSED %CPU WCHAN
+ 967736 Ss         01:03 97.8 do_sys_poll
+    PID    PPID   UID STAT COMMAND
+Sep 17 10:33:23 agentbound-dev systemd[1]: agentbound-lifecycle.service: Sent signal SIGKILL to main process 901347 (agentbound-life) on client request.
+Sep 17 10:33:23 agentbound-dev systemd[1]: agentbound-lifecycle.service: Killed unit cgroup with SIGKILL on client request.
+Sep 17 10:33:23 agentbound-dev systemd[1]: agentbound-lifecycle.service: Main process exited, code=killed, status=9/KILL
+Sep 17 10:33:23 agentbound-dev systemd[1]: agentbound-lifecycle.service: Failed with result 'signal'.
+Sep 17 10:33:23 agentbound-dev systemd[1]: agentbound-lifecycle.service: Consumed 1min 27.517s CPU time, 565.4M memory peak.
+Sep 17 10:33:23 agentbound-dev systemd[1]: Stopped agentbound-lifecycle.service - Agentbound lifecycle daemon (privileged).
+Sep 17 10:33:23 agentbound-dev systemd[1]: agentbound-lifecycle.service: Consumed 1min 27.517s CPU time, 565.4M memory peak.
+Sep 17 10:33:23 agentbound-dev systemd[1]: Started agentbound-lifecycle.service - Agentbound lifecycle daemon (privileged).

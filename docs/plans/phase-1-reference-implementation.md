@@ -1,6 +1,8 @@
 # Phase 1 Reference Implementation Plan
 
-**Status:** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record); WP1 complete ([evidence register](../evidence/wp1/README.md)); WP2 complete, milestone 1A recorded ([evidence register](../evidence/wp2/README.md)); WP3 implementation complete; WP3 conformance exit condition **not met** and Gate 3 **not evaluated** after independent review ([evidence register](../evidence/wp3/README.md)); **WP3.1 correction gate active before WP4**  
+> **Status reading note:** the implementation sequence and gate definitions are retained below, but its status passages are not synchronized with all later changes. [Requirements 0.11](../architecture/phase-1-requirements.md) moved full attribution to 1C; [ten retained D-12 results](../evidence/wp3.1/raw/d12/README.md) report 4.35% overall and 100% gateway attribution, superseding the older 3.5% summary. Ten D-12 repetitions are not ten whole-suite repetitions. See [the current assessment](../STATUS.md) for evidence and blockers. This note does not declare a gate passed; the milestone/gate consequences need a reviewed plan revision.
+
+**Status (historical summary from plan 0.17):** Active Phase 1 plan; WP0 specification set frozen (architecture README freeze record); WP1 complete ([evidence register](../evidence/wp1/README.md)); WP2 complete, milestone 1A recorded ([evidence register](../evidence/wp2/README.md)); WP3 implementation complete; WP3 conformance exit condition **not met** and Gate 3 **not evaluated** after independent review ([evidence register](../evidence/wp3/README.md)); **WP3.1 correction gate active before WP4**  
 **Plan version:** 0.17  
 **Date:** 5 September 2026  
 **Related position paper:** [`../papers/position-paper.md`](../papers/position-paper.md)  

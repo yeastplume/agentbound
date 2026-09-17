@@ -1,4 +1,6 @@
-# WP3.1 evidence register — conformance correction and independent test (in progress)
+# WP3.1 development and evidence history
+
+> **Reading note:** this is a chronological record, not a current status summary. Some later sections supersede earlier diagnoses; some verdict prose predates the latest requirements and results. Read [the current assessment](../../STATUS.md) first. Ten [D-12 audit-test repetitions](raw/d12/README.md) are committed (4.35% overall, 100% gateway reported); ten whole-suite repetitions and independent fresh-host validation are separate, unestablished obligations. Requirements 0.11 moved full attribution to 1C. The latest retained full-suite report predates source commit `3b038cb`; old PASS counts do not validate that source.
 
 Hard gate before WP4 (plan 0.16 §WP3.1). This register is written incrementally; each round adds a raw run under `raw/` and updates the tables. Nothing here is a pass claim until the go/no-go section at the end is filled in.
 

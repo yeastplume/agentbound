@@ -151,7 +151,14 @@ impl Service {
         let payload = Value::obj(vec![("event", Value::s("session.construction_failed")), ("failed_step", b.get("failed_step").unwrap().clone()), ("ledger", b.get("ledger").unwrap().clone()), ("rule", Value::s(gs(b, "rule")?))]);
         if let Some(lrd) = lrd { self.store.append_record("event", aid, lrd, &a.authorization_id, &payload).map_err(store_err)?; self.sessions.set_state(lrd, "construction-failed", Some(gs(b, "rule")?)); }
         let c = Correlation { authorization_id: Some(a.authorization_id.clone()), launch_record_digest: lrd.map(str::to_string), allocation_id: Some(aid.into()), session_id: Some(a.session_id.clone()), trace_id: Some(a.trace_id.clone()), execution_uid: Some(a.uid) };
-        self.emit("session.construction_failed", "construction-failed", &c, payload);
+        // The store payload includes its kind; the audit detail has the same closed shape as launch's report.
+        // The constructor's wire report does not carry diagnostic detail or completed rollback evidence.
+        // Null means unreported, not an empty/successful rollback (which may still be in progress).
+        let mut detail = payload;
+        detail.as_obj_mut().unwrap().retain(|k, _| k.0 != "event");
+        detail.set("detail", Value::Null);
+        detail.set("rollback", Value::Null);
+        self.emit("session.construction_failed", "construction-failed", &c, detail);
         // the identity is reclaimed by the ordinary condition check (session.rs), never freed here
         self.sessions.reclaim_later(aid, lrd);
         Ok(Value::obj(vec![("identity_state", Value::s(&a.state)), ("state", Value::s("construction-failed"))]))
@@ -214,4 +221,85 @@ impl Service {
         Ok(Value::obj(vec![("sessions", Value::Arr(self.sessions.all().into_iter().map(|s| Value::obj(vec![("authorization_id", Value::s(&s.authorization_id)), ("launch_record_digest", Value::s(&s.lrd)), ("state", Value::s(&s.state))])).collect()))]))
     }
     pub fn _canon(v: &Value) -> Vec<u8> { canonical(v) }
+}
+
+#[cfg(test)]
+#[path = "../../agentbound-audit/src/events.rs"]
+mod audit_schema;
+
+#[cfg(test)]
+mod audit_contract_tests {
+    use super::*;
+
+    struct TempDir(std::path::PathBuf);
+    impl Drop for TempDir { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+
+    #[test]
+    fn actual_construction_failure_reports_match_receiver_and_preserve_store() {
+        for committed in [false, true] {
+            let dir = TempDir(std::env::temp_dir().join(format!("ab-failure-audit-{}-{}", std::process::id(), ab_common::sig::monotonic_ns())));
+            std::fs::create_dir(&dir.0).unwrap();
+            let spool = dir.0.join("audit.jsonl");
+            let mut sink = audit::Sink::open(spool.to_str().unwrap());
+            sink.forward = None; // No daemon/socket or privileged lifecycle work in this test.
+            let mut svc = Service {
+                store: Store::open(":memory:", crate::store::Range::default(), "host:test", "boot:test").unwrap(),
+                cfg: Config { cli_uids: vec![], keyring: Keyring { entries: vec![] }, host_id: "host:test".into(), boot_id: "boot:test".into(),
+                    launch_version_digest: String::new(), managed_paths: vec![], workspace_roots: vec![], gateway_uid: None,
+                    gateway_sock: String::new(), storage_principals: vec![] },
+                sessions: Sessions::default(), audit: sink, term_fault: None,
+            };
+            let a = svc.store.reserve("az:test", &format!("sha256:{}", "a".repeat(64)), "agent:test", "session:test", "trace:test", "domain:test", "agentbound-launch").unwrap();
+            let lrd = format!("sha256:{}", "b".repeat(64));
+            if committed {
+                svc.sessions.bind(&a.allocation_id, &lrd, &a.authorization_id, "test.scope", &a.session_id, &a.trace_id, a.uid, a.gid, "domain:test", "none", "storage:test");
+            }
+            let ledger = Value::Arr(vec![Value::obj(vec![("step", Value::Int(8)), ("status", Value::s("failed"))])]);
+            // The same closed request shape sent by construct::rollback, before its final rollback evidence exists.
+            let body = Value::obj(vec![("allocation_id", Value::s(&a.allocation_id)), ("failed_step", Value::Int(8)),
+                ("launch_record_digest", if committed { Value::s(&lrd) } else { Value::Null }),
+                ("ledger", ledger.clone()), ("rule", Value::s("post_commit_failure"))]);
+            svc.report_failed(&body).unwrap();
+            let text = std::fs::read_to_string(&spool).unwrap();
+            let rows: Vec<Value> = text.lines().map(|line| ab_common::json::parse(line.as_bytes(), &ab_common::json::MANIFEST_LIMITS).unwrap())
+                .filter(|row| row.get("event").is_some()).collect();
+            assert_eq!(rows.len(), 1);
+            let ev = &rows[0];
+            assert_eq!(audit_schema::check(ev), Ok(()));
+            assert_eq!(ev.get("event").and_then(Value::as_str), Some("session.construction_failed"));
+            let mut unhashed = ev.clone();
+            unhashed.as_obj_mut().unwrap().retain(|k, _| k.0 != "event_id");
+            assert_eq!(ev.get("event_id"), Some(&Value::s(&object_digest(&unhashed))));
+            let detail = ev.get("detail").unwrap();
+            assert_eq!(detail.get("detail"), Some(&Value::Null));
+            assert_eq!(detail.get("rollback"), Some(&Value::Null));
+            assert_eq!(detail.get("ledger"), Some(&ledger));
+            assert_eq!(detail.get("failed_step"), body.get("failed_step"));
+            assert_eq!(detail.get("rule"), body.get("rule"));
+            assert!(detail.get("event").is_none());
+            for key in detail.as_obj().unwrap().keys() {
+                let mut missing = detail.clone();
+                missing.as_obj_mut().unwrap().retain(|k, _| k != key);
+                let mut malformed = ev.clone();
+                malformed.set("detail", missing);
+                assert_eq!(audit_schema::check(&malformed), Err("missing_detail_member"), "{}", key.0);
+            }
+            let mut extra = detail.clone();
+            extra.set("event", Value::s("session.construction_failed"));
+            let mut malformed = ev.clone();
+            malformed.set("detail", extra);
+            assert_eq!(audit_schema::check(&malformed), Err("unknown_detail_member"));
+            assert_eq!(ev.get("launch_record_digest"), body.get("launch_record_digest"));
+            assert_eq!(svc.store.latest(&a.allocation_id).unwrap().unwrap().state, "reclaiming");
+            if committed {
+                let records = svc.store.records(&lrd).unwrap();
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].0, "event");
+                let stored = &records[0].1;
+                assert_eq!(stored.as_obj().unwrap().len(), 4);
+                assert_eq!(stored.get("event"), ev.get("event"));
+                for k in ["failed_step", "ledger", "rule"] { assert_eq!(stored.get(k), body.get(k)); }
+            }
+        }
+    }
 }

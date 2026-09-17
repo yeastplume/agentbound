@@ -28,7 +28,10 @@ install -d -m 0755 /var/lib/agentbound/workspaces; install -d -m 0770 -o root -g
 touch /var/lib/agentbound/audit-lifecycle.jsonl /var/lib/agentbound/audit-launch.jsonl /var/lib/agentbound/audit-policy.jsonl /var/lib/agentbound/policy.jsonl
 chown agentbound-policy:agentbound /var/lib/agentbound/audit-policy.jsonl /var/lib/agentbound/policy.jsonl
 chmod 0750 /var/lib/agentbound; chgrp agentbound /var/lib/agentbound
-install -m 0755 target/release/agentbound-lifecycle target/release/agentbound-policy target/release/agentbound-audit target/release/agentbound-launch target/release/agentbound target/release/agentbound-gateway /usr/local/bin/
+install -m 0755 target/release/agentbound-lifecycle target/release/agentbound-policy target/release/agentbound-audit target/release/agentbound target/release/agentbound-gateway /usr/local/bin/
+# This is deliberately NOT setuid and must remain root-owned, without file
+# capabilities. Privilege elevation is exclusively via the narrow sudo rule below.
+install -o root -g root -m 0755 target/release/agentbound-launch /usr/local/bin/agentbound-launch
 install -m 0644 deploy/catalogue.json /etc/agentbound/catalogue.json
 # keys and keyring (once)
 if [ ! -f /etc/agentbound/keyring.json ]; then
@@ -59,8 +62,21 @@ rm -f $img/.libs-done; if [ ! -f $img/.libs-done ]; then
   touch $img/.libs-done
 fi
 install -m 0755 crates/ab-conformance/probe/git-worker.sh $img/git-worker.sh
-# CLI users may invoke the constructor as root, nothing else
-printf '%%agentbound ALL=(root) NOPASSWD: /usr/local/bin/agentbound-launch\n' > /etc/sudoers.d/agentbound; chmod 0440 /etc/sudoers.d/agentbound
+# CLI users may invoke ONLY the fixed-config constructor. Do not use a glob:
+# sudo argument globs match whitespace and would admit additional options.
+# Debian 13 sudo supports anchored POSIX argument regexes (sudo >= 1.9.10).
+# This allowlist is essential: SUDO_UID alone is not an authentication token.
+# Never grant env/shell/wrapper execution or SETENV access to this command.
+sudoers_tmp=$(mktemp /etc/sudoers.d/.agentbound.XXXXXX)
+trap 'rm -f "$sudoers_tmp"' EXIT HUP INT TERM
+printf '%s\n' \
+  'Defaults!/usr/local/bin/agentbound-launch env_reset, !setenv, secure_path="/usr/sbin:/usr/bin:/sbin:/bin"' \
+  '%agentbound ALL=(root) NOPASSWD: NOSETENV: /usr/local/bin/agentbound-launch ^--authorization [A-Za-z][A-Za-z0-9._:-]{0,160}$' \
+  '%agentbound ALL=(root) NOPASSWD: NOSETENV: /usr/local/bin/agentbound-launch ^--provenance$' > "$sudoers_tmp"
+chown root:root "$sudoers_tmp"; chmod 0440 "$sudoers_tmp"
+visudo -cf "$sudoers_tmp"
+mv -f "$sudoers_tmp" /etc/sudoers.d/agentbound
+trap - EXIT HUP INT TERM
 puid=$(id -u agentbound-policy)
 guid=$(id -u agentbound-gateway)
 for u in lifecycle policy audit gateway; do sed "s/POLICY_UID/$puid/; s/GATEWAY_UID/$guid/" deploy/units/agentbound-$u.service > /etc/systemd/system/agentbound-$u.service; done

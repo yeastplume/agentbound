@@ -1,0 +1,20 @@
+/etc/sudoers.d/.agentbound.bGLIzD: parsed OK
+b2a3ec9399a86b67510297fc96e01be9254584468c3225eaffed0387e331929d  /usr/local/bin/agentbound
+commit=3b038cb dirty=true tree=repair-candidate-uncommitted
+55dd37fb9f001bae0b636095c13ae4f3e43be93badab7ebd1097a9c242cd22ed  /usr/local/bin/agentbound-launch
+commit=3b038cb dirty=true tree=repair-candidate-uncommitted
+35c6ff26c96b28d2b3c5e309834fc2880b8a3ad86d49a334b1cbcf60ccc71c4d  /usr/local/bin/agentbound-lifecycle
+commit=3b038cb dirty=true tree=repair-candidate-uncommitted
+760f770a408758236b976a9a999663490c12f3f4c7dbeab12ca0c34ea6afe727  /usr/local/bin/agentbound-policy
+commit=3b038cb dirty=true tree=repair-candidate-uncommitted
+4d54af94ce57a149c86b7fc807a4f8c018a7e6e3352d851322d5fd50d7b94305  /usr/local/bin/agentbound-audit
+commit=3b038cb dirty=true tree=repair-candidate-uncommitted
+badf00d9049cf2045bbe9150e6c5cff060d935f11e5bbd38cf319bdda8e83408  /usr/local/bin/agentbound-gateway
+commit=3b038cb dirty=true tree=repair-candidate-uncommitted
+a5024eafaa7ff709e8616ecdc2399358f4bdc2458cba52f6675b2e9d6adbb068  /usr/local/bin/ab-conformance
+commit=3b038cb dirty=true tree=repair-candidate-uncommitted
+1c72f94aa4d6ec94bd535d9256d47ac3432aa952c004ca486d80cb4cb4c9a637  /usr/local/bin/ab-gwclient
+active
+active
+active
+active

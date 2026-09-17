@@ -1,0 +1,22 @@
+   Compiling ab-common v0.1.0 (/root/agentbound-repair-baseline/crates/ab-common)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running unittests src/lib.rs (target/debug/deps/ab_common-419ece09ad345127)
+
+running 1 test
+test envelope::tests::changing_unsigned_issuance_cannot_refresh_a_stale_signature ... FAILED
+
+failures:
+
+---- envelope::tests::changing_unsigned_issuance_cannot_refresh_a_stale_signature stdout ----
+
+thread 'envelope::tests::changing_unsigned_issuance_cannot_refresh_a_stale_signature' (897699) panicked at crates/ab-common/src/envelope.rs:65:9:
+changing the timestamp must invalidate the signature
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    envelope::tests::changing_unsigned_issuance_cannot_refresh_a_stale_signature
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ab-common --lib`

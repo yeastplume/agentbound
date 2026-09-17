@@ -1,0 +1,22 @@
+
+running 1 test
+test entry::tests::sudo_allows_only_authorization_and_uses_fixed_defaults ... FAILED
+
+failures:
+
+---- entry::tests::sudo_allows_only_authorization_and_uses_fixed_defaults stdout ----
+
+thread 'entry::tests::sudo_allows_only_authorization_and_uses_fixed_defaults' (969900) panicked at crates/agentbound-launch/src/entry.rs:189:13:
+--keyring
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    entry::tests::sudo_allows_only_authorization_and_uses_fixed_defaults
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+   Compiling agentbound-launch v0.1.0 (/tmp/agentbound-unit-mutations-wi5iu4yc/crates/agentbound-launch)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/main.rs (target/debug/deps/agentbound_launch-23db4d8df773ed7f)
+error: test failed, to rerun pass `-p agentbound-launch --bin agentbound-launch`

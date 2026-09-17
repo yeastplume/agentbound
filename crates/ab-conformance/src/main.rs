@@ -85,7 +85,21 @@ impl Rig {
     fn recorded(&mut self, id: &str, pass: bool, ev: impl Into<String>) { self.put(id, if pass { "RECORDED" } else { "FAIL" }, ev) }
     fn fixture(&mut self, id: &str, ok: bool, ev: impl Into<String>) { self.put(id, if ok { "FIXTURE" } else { "FAIL" }, ev) }
     fn cli(&self, args: &str) -> (i32, Value, String) { let (rc, out) = sh(&format!("su -s /bin/sh {} -c 'agentbound {}' </dev/null 2>&1", self.as_user, args)); (rc, parse(&out), out) }
-    fn request(&self, file: &str, extra: &str) -> (i32, Value, String) { self.cli(&format!("request {file} {extra}")) }
+    fn request(&self, file: &str, extra: &str) -> (i32, Value, String) {
+        if let Some(fault) = extra.strip_prefix("--fault ") {
+            // Authorization still runs as the named initiator. Fault injection
+            // belongs to the root test driver, never the operator sudo surface.
+            let (rc, reply, first) = self.cli(&format!("request {file} --no-launch"));
+            if rc != 0 { return (rc, reply, first); }
+            let az = js(&reply, "body.authorization_id");
+            if az.is_empty() { return (1, Value::Null, format!("{first}\nmissing authorization_id")); }
+            let output = Command::new("/usr/local/bin/agentbound-launch")
+                .args(["--authorization", &az, "--fault", fault]).output().unwrap();
+            let rest = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            let text = format!("{first}\n{rest}");
+            (output.status.code().unwrap_or(-1), parse(&text), text)
+        } else { self.cli(&format!("request {file} {extra}")) }
+    }
     fn write_req(&self, name: &str, body: &str) -> String { let p = format!("/tmp/conf-{name}.json"); std::fs::write(&p, body).unwrap(); sh(&format!("chmod 644 {p}")); p }
     fn terminate(&self, lrd: &str) -> Value { lc("terminate", Value::obj(vec![("launch_record_digest", Value::s(lrd)), ("reason", Value::s("conformance"))])) }
     /// Terminate with an injected step fault (F-T rows). The fault makes one protocol step fail; nothing is relaxed.

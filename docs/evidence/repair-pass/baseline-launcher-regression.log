@@ -1,0 +1,4 @@
+Warning: Permanently added '10.20.44.12' (ED25519) to the list of known hosts.
+{"construction_failed":{"detail":"No such file or directory (os error 2)","failed_step":0,"ledger":[],"rollback":[],"rule":"handoff_missing"}}
+launcher_exit=1
+created_path=/root/agentbound-repair-backup-20260917/untrusted-launch-marker.jsonl owner_uid=0 mode=600 bytes=797

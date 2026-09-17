@@ -1,0 +1,24 @@
+
+running 1 test
+test session::regression_tests::actual_cleanup_payload_matches_receiver_schema ... FAILED
+
+failures:
+
+---- session::regression_tests::actual_cleanup_payload_matches_receiver_schema stdout ----
+
+thread 'session::regression_tests::actual_cleanup_payload_matches_receiver_schema' (969695) panicked at crates/agentbound-lifecycle/src/session.rs:415:13:
+assertion `left == right` failed
+  left: Err("unknown_detail_member")
+ right: Ok(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::regression_tests::actual_cleanup_payload_matches_receiver_schema
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+   Compiling agentbound-lifecycle v0.1.0 (/tmp/agentbound-unit-mutations-wi5iu4yc/crates/agentbound-lifecycle)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running unittests src/main.rs (target/debug/deps/agentbound_lifecycle-12b01eafec83ea72)
+error: test failed, to rerun pass `-p agentbound-lifecycle --bin agentbound-lifecycle`

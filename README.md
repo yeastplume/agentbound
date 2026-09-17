@@ -1,60 +1,45 @@
 # Agentbound
 
-**A policy-driven security and execution substrate for organizational AI agents.**
+**An experimental Linux sandbox and restricted Git gateway for agent tasks.**
 
-Agentbound treats an organizational AI agent as a durable security principal. Each task runs in a separately governed Unix session and process tree. The foundational papers retain the title *Agents as Unix Principals*.
+Agentbound gives each task a separate Unix user ID, filesystem view, process tree, and resource limits. Task processes have no direct network access. A gateway checks the calling process and allows only named operations; the useful operation implemented today submits Git changes to a staging ref rather than a protected branch.
 
-WP0 is frozen; WP1 mechanism verification, WP2 (milestone 1A: constructor, identity allocator, lifecycle daemon, policy stub, audit receiver, conformance suite) are complete. WP3 (milestone 1B: unprivileged gateway with per-connection process authentication, Git staging-ref adapter, end-to-end audit correlation) is implemented, but independent review found its conformance evidence incomplete — the [WP3 register](docs/evidence/wp3/README.md) records the correction and Gate 3 is **not yet evaluated**. WP3.1 (conformance correction and independent test) is the active work package and a hard gate before WP4. Its items 1–6 are complete and the recorded outcome is **no-go to WP4 with milestone 1B narrowed**: the conformance corrections hold, but **R-AUD-2 is not satisfied at 1B** — measured attribution completeness is 3.5 % against a required ≥ 99 %, because two of the three effect classes the frozen catalogue names are never collected. See the [WP3.1 register](docs/evidence/wp3.1/README.md) for the verdict and evidence.
+The aim is to enforce a task's permissions outside the agent framework, even when the agent runs arbitrary shell commands. This is a security prototype, not an agent framework or a production sandbox.
 
-## Documents and their authority
+## Where it stands
 
-- [Position paper](docs/papers/position-paper.md) — motivation, thesis, adoption argument, and conclusions.
-- [Technical report](docs/papers/technical-report.md) — mechanisms, invariants, threat model, deployment profiles, and evaluation criteria.
-- [Phase 1 reference implementation plan](docs/plans/phase-1-reference-implementation.md) — implementation scope, milestones, gates, work packages, and required evidence.
-- [WP0 architecture specifications](docs/architecture/README.md) — concrete requirements, schemas, lifecycle rules, component interfaces, test catalogue, traceability, and architecture decision records.
-- [Writing policy](docs/STYLE.md) — editorial rules for every document in this repository.
+**Repair-pass update:** the development VM is now available. The prioritized launcher, no-gateway termination, audit-schema and signature-freshness changes build and pass focused tests. A live smoke test passes, but the full suite still exposes failures. Read the [repair-pass evidence](docs/evidence/repair-pass/README.md) before treating the earlier static findings as the current code status.
 
-Each document is authoritative for the subjects listed against it; where two documents overlap, the more specific one links to the owner.
+- **Built:** a Rust launcher, identity allocator and lifecycle service, file-backed policy service, audit receiver, operator CLI, Git gateway, and adversarial test tools.
+- **Recorded demonstrations:** isolated shell workloads and Git staging on one Debian 13 development VM. No real coding-agent/model integration or comparative microVM evaluation yet.
+- **Audit result:** ten retained repetitions report all **800 gateway operations** attributed. They attribute only **800 of 18,400 effects overall (4.35%)**: local file effects and individual process events are not collected. The raw audit records needed to independently recheck the successful matches are not retained with those results.
+- **Validation gap:** the latest committed full-suite report predates the current code. Fresh-host reproduction and independently owned adversarial tests are not established.
+- **Safety:** this review found a privileged-launcher configuration exposure, a no-gateway cleanup regression, and audit schema mismatches. These are static findings, not exploit demonstrations. Do not deploy for untrusted users or sensitive workloads.
 
-## Repository layout
+**Recommendation: retain the prototype, pause feature expansion, and do a bounded repair-and-validation pass before deciding whether to continue.** See [the assessment and next decision](docs/STATUS.md) for evidence, priorities, and stop conditions.
 
-```text
-docs/
-  papers/         Position paper and technical report
-  plans/          Implementation and evaluation plans
-  architecture/   Frozen Phase 1 specifications and architecture decisions
-crates/           Reference implementation (Rust workspace; see crates/DESIGN.md, crates/DESIGN-1B.md)
-deploy/           Catalogue, systemd units, provisioning for the pinned host
-crates/ab-conformance/  Conformance driver and in-session probes (runner; catalogue completeness check is WP3.1 item 1)
+## Start here
+
+| Question | Read |
+|---|---|
+| What works, what is missing, and is it worth continuing? | [Status and assessment](docs/STATUS.md) |
+| Where are the useful documents? | [Documentation guide](docs/README.md) |
+| How are the components arranged? | [Launcher/lifecycle design](crates/DESIGN.md), [gateway design](crates/DESIGN-1B.md) — implementation notes, not proof of correctness |
+| What is the intended security contract? | [Architecture specifications](docs/architecture/README.md) |
+| What was actually measured? | [Audit-test results](docs/evidence/wp3.1/raw/d12/README.md), [historical full-suite output](docs/evidence/wp3.1/raw/run-07-negative-controls.md) |
+
+The papers titled *Agents as Unix Principals* describe the broader proposal. They are not a list of shipped capabilities.
+
+## Code and deployment
+
+`crates/` contains the nine-crate Rust workspace and test tools. `deploy/` contains the sample catalogue, systemd units, and development-host provisioning. `spikes/` contains earlier mechanism experiments. `docs/evidence/` preserves development results, including failures and superseded claims.
+
+For source-level tests on a Linux machine with a Rust toolchain:
+
+```sh
+cargo test --workspace --locked
 ```
 
-## Current status
+This does **not** run the privileged conformance suite or prove isolation. The initial documentation review had no local Rust toolchain. The subsequent repair pass ran workspace tests and a release build on the development VM; those passed, but full conformance has not.
 
-| Artefact | Version | State |
-|---|---|---|
-| Position paper | 0.10 | working draft for external review |
-| Technical report | 0.5-TR11 | working draft for external review |
-| Phase 1 plan | 0.17 | active; WP0–WP2 complete (1A recorded); WP3 implemented, conformance exit not met after review; WP3.1 items 1–6 complete — **no-go to WP4, 1B narrowed** (R-AUD-2 not satisfied); items 5 (ten repetitions) and 7 (fresh-host, independent ownership) open |
-| WP0 architecture set | see [index](docs/architecture/README.md) | **frozen (WP0)** after three independent review rounds |
-| `crates/`, `deploy/` | commit-pinned | 1A + 1B reference implementation; [WP2 register](docs/evidence/wp2/README.md) 84/84; [WP3 register](docs/evidence/wp3/README.md) — runner 139/139 but catalogue coverage incomplete and ≥ 8 false-positive rows found in review; Gate 3 not evaluated |
-
-A failed spike or conformance row reopens the ADR or specification that depends on its result; WP1 exercised this twice (ADR-0002, ADR-0003 amendments).
-
-The claim is narrow. The Unix-governed baseline provides isolation, bounded authority, credential confinement, descendant control, and attribution; it does not claim general information-flow control. Integrity provenance is the first intended application; confidentiality compartments and multilevel release are later profiles.
-
-Demonstrated so far, on one pinned Debian 13 host at topology `none`: the 1A session boundary (Gates 1 and 2 of the plan) — see the [WP2 evidence register](docs/evidence/wp2/README.md) for what each row observed and what remains partial. A mediated remote effect through the gateway is demonstrated once (WP3 D-13: staging ref with the session's trace, `main` untouched) but Gate 3 is not yet evaluated against the frozen criteria (WP3.1).
-
-**What end-to-end attribution does and does not cover.** Gateway operations are attributed completely: 100 % of the finite operation corpus, matched to the workload's own idempotency keys within a 30 s correlation deadline, denied operations included. Local file effects and process lifecycle events are **not** attributed at all — no telemetry path collects them — so the frozen catalogue's attribution-completeness metric measures 3.5 %, not the ≥ 99 % it requires. Any reading of "end-to-end audit" in this repository should be taken to mean gateway-mediated effects only.
-
-## Reviewing the design
-
-The most useful review comments identify:
-
-- a contradiction or unstated assumption;
-- an invariant without an enforcement mechanism;
-- a test that could falsify a claim;
-- an unnecessary expansion of privilege or the trusted computing base;
-- an operational dependency that changes feasibility;
-- a simpler mechanism or narrower defensible claim.
-
-Until contribution and security-disclosure policies are added, treat this repository as a design-stage project rather than a production security tool.
+**Do not run the deployment helpers casually.** `crates/build.sh` syncs to a hard-coded remote VM as root. `deploy/provision.sh` creates users, installs sudo rules, copies binaries, and starts services. The negative-control harness mutates code and redeploys it. These are development-lab tools, not a portable installation procedure.

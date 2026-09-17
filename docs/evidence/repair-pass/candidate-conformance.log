@@ -1,0 +1,172 @@
+Warning: Permanently added '10.20.44.12' (ED25519) to the list of known hosts.
+PASS D-01 rc=0 lrd=sha256:01ec38da42b0812476df180d36d9c2665a376a0f58431c10d45d3aabe7470255 {"allocation_id":"allocation:45ed3a21-00002973","console":"/var/lib/agentbound/
+PASS T-6.1-001 pids_visible=5
+PASS T-6.1-001.foreign all visible pids ours
+PASS T-6.2-006.pidns pid=2
+PASS T-6.1-001.init-environ denied rc=1 (init environ)
+PASS T-6.1-002 denied rc=1 kill -0 host-range pid
+PASS T-6.1-002.pid300 denied rc=1 kill -0 300 (exists on host)
+PASS T-6.1-004 denied rc=1 ls /run/agentbound
+PASS T-6.1-005 no /dev/shm; ipc ns private
+PASS T-6.1-007 denied rc=1 ls /var/lib/agentbound
+PASS T-6.1-007.etc denied rc=1 ls /etc/agentbound
+PASS T-6.1-009 fds=0 1 2 3 
+PASS T-6.2-001 denied rc=1 write cgroup.procs
+PASS T-6.2-001.sysfs no cgroupfs
+PASS T-6.2-002.mount denied rc=255 mount tmpfs
+PASS T-6.2-006.proc denied rc=1 mount proc
+PASS T-6.2-003 denied rc=1 setuid copy (nosuid tmpfs)
+PASS T-6.2-004 CapEff=0
+PASS T-6.2-004.nnp nnp=1
+PASS T-6.2-007.image denied rc=1 write image (ro)
+PASS T-6.2-007.root denied rc=1 write root tmpfs
+PASS T-6.2-007.workspace workspace writable as 200002
+PASS T-6.1-010 pidfd_open=901347 rc=-1 errno=3
+FIXTURE T-6.1-010.own-ns pidfd against our own init: pidfd_open=1 rc=3 send_signal_rc=0 send_signal_errno=0
+PASS T-6.1-011 process_vm_readv pid=901347 rc=-1 errno=3
+PASS T-6.1-012 host abstract name unreachable (abstract connect name=agentbound-conf-abs rc=-1 errno=111) and the same name binds freely here (abstract bind name=agentbound-co
+PASS T-6.1-006 symlinks to host catalogue, lifecycle store and / are all unusable from the session temp dir (writes refused; the targets do not exist in this mount namespace)
+PASS T-6.1-008 no sibling startup file could be written (cannot write a shared /workspace/.profile); this session's environment is private to it
+PASS T-6.2-009 denied rc=1 ls /sys/class/net
+PASS T-6.2-002.netdev denied rc=1 interfaces other than lo
+PASS T-6.2-005 double-forked orphan pid=62 reparented to in-namespace ppid=1 and still visible in this pid namespace (contained); reaping asserted by D-07 at termination
+PASS T-6.9-002 opened=1021 stopped at RLIMIT_NOFILE=1024 with EMFILE(24)
+PASS T-6.9-004.bytes /tmp tmpfs capacity=262144KiB; write stopped at 264105984 bytes: SIGKILL by memory cgroup (tmpfs pages charged to memory.max; disk bound not reached first)
+PASS T-6.9-004.inodes nr_inodes=65536; creation refused after 65523 files, IFree=0
+PASS T-6.9-003.memory 512 MiB request against memory.max=not-visible-in-session (read back by the driver): refused (rc=137 )
+PASS T-6.9-001 procs=63 (TasksMax bound)
+FIXTURE PROBE-COMPLETE probe lines=42
+FIXTURE T-6.1-012.host-name host abstract name agentbound-conf-abs bound in the host netns while the probe ran (ss listeners for the name = 1)
+PASS D-01.status {"identity_state":"in-use","observation_seq":3,"reason":null,"record_ref":"sha256:01ec38da42b0812476df180d36d9c2665a376a0f58431c10d45d3aabe7470255","state":"act
+PASS D-06 scope procs=64 (init + workload + orphan/fan-out survivors)
+PASS T-6.9-004.readback binding installed_value vs kernel (binding/kernel): pids=64/64 memory_bytes=268435456/268435456 cpu=1000/1000 io_bandwidth=52428800/52428800 disk_bytes=26843545
+PASS T-6.9-003.owners audit_capacity installed_value=Some(10000) (reserved with the receiver, which is reachable), delegation_fanout installed_value=Some(0)
+PASS T-6.9-003.cpu cpu.max quota=Some(1000) milli-cpu (read back); cpu.stat nr_throttled=97 (quota installed and accounted; throttling occurs only under contention, which this pro
+PASS D-04.host-view uid 200002 processes outside scope=0
+FAIL D-08 {"cgroup_kill_written":true,"cgroup_procs_remaining":[],"credential_scan_inside_scope":[901489],"credential_scan_outside_scope":[],"d_state":[],"elapsed_ms":2038,"freeze_written":true,"frozen_observed":false,"gateway_admission_denied":null,"init_pid":901489,"init_pidfd_exited":true,"sigterm_sent":true}
+PASS F-T-03 {"cgroup_kill_written":true,"cgroup_procs_remaining":[],"credential_scan_inside_scope":[901489],"credential_scan_outside_scope":[],"d_state":[],"elapsed_ms":203
+PASS F-T-04 kill written without waiting for frozen 1; procs empty; pidfd exited
+PASS D-07 orphan/double-fork survivors killed with the scope; host credential scan clean
+FAIL F-T-10 {"identity_state":"in-use","observation_seq":7,"reason":"retry","record_ref":"sha256:01ec38da42b0812476df180d36d9c2665a376a0f58431c10d45d3aabe7470255","state":"termination-incomplete"}
+FAIL F-T-11 audit kinds=["session.launch_record_committed", "session.activated", "session.termination_started", "session.termination_incomplete", "session.termination_started", "session.termination_incomplete"]
+FAIL F-T-08 session dir removed=false; workspace root retained by durable owner
+PASS T-6.2-007.host workspace root after cleanup: root:root 2770
+PASS T-6.5-001.unknown class=reject rule=request_schema detail=unknown-member at request: uid
+PASS T-6.5-001.dup class=reject rule=duplicate-member detail=DuplicateMember("approval_references")
+PASS T-6.5-007 class=reject rule=request_schema detail=unknown-member at request: mount
+PASS T-6.5-006 class=reject rule=request_schema detail=version at request.schema_version: unsupported
+PASS T-6.5-002.deep class=reject rule=depth-limit detail=TooDeep(5)
+PASS T-6.5-002.big class=reject rule=size-limit detail=TooLarge(20021)
+PASS T-6.6-001.principal class=reject rule=unknown_principal detail=agent:nobody
+PASS T-6.6-001.authority class=reject rule=authority_exceeded detail=resource resource:workspace-eng
+PASS T-6.6-003 class=reject rule=approval_missing detail=1 required
+PASS T-6.6-002.expired class=reject rule=approval_expired detail=approval:eng-1234-expired
+PASS T-6.6-002.stale class=reject rule=approval_replayed detail=key:dave seq 1
+PASS T-6.6-005 class=reject rule=budget_exceeds_policy detail=pids
+PASS T-6.6-006 class=reject rule=unknown_runtime detail=runtime:evil
+PASS T-6.6-008 class=reject rule=request_schema detail=grammar at request.agent_principal_id: catalogue identifier
+PASS T-6.8-013 class=reject rule=continue_degraded_not_permitted detail=continue-degraded-not-permitted at manifest.revocation.task_cancelled: only policy_service_unavailable 
+PASS T-6.5-010.wrong-caller class=reject rule=initiator_unauthenticated detail=credential reference not bound to caller
+PASS T-6.8-001.disabled class=reject rule=initiator_disabled detail=
+PASS T-6.6-002.replayed first rc=1 rule=approval_replayed second rule=approval_replayed (durable consumption across runs)
+PASS T-6.6-004 scheduled_without_owner
+PASS T-6.6-004.owned {"approvers":[],"initiators":[{"credential_reference":"authn:cron-owned","id":"svc:cron","relationship":"scheduled"}],"owner":"human:alice","scheduler":"svc:cro
+PASS T-6.5-010.lifecycle {"body":{"detail":"uid 1001 may not call reserve_identity","rule":"peer_not_permitted"},"class":"unauthenticated","ok":false,"v":"agentbound.wire.v0.1"}
+PASS T-6.6-001.audit session.rejected events with failed_input=1619
+PASS F-C-01 barrier never released: child pid=967475 reaped by rollback=true, still alive=false; identity=quarantined; scopes_left=0; rollback=["child killed and reaped","c
+PASS F-C-02 step=2 rule=child_step_failed identity=quarantined scopes_left=0 rollback=["child killed and reaped","cgroup.kill","scope stopped","identity → reclaiming"]
+PASS F-C-03 step=3 rule=mount_source_escape identity=quarantined scopes_left=0 rollback=["cgroup.kill","scope stopped","identity → reclaiming"]
+PASS F-C-04 step=4 rule=child_step_failed identity=quarantined scopes_left=0 rollback=["child killed and reaped","cgroup.kill","scope stopped","identity → reclaiming"]
+PASS F-C-05 step=5 rule=child_step_failed identity=quarantined scopes_left=0 rollback=["child killed and reaped","cgroup.kill","scope stopped","identity → reclaiming"]
+PASS F-C-05.no-host-proc host mount table shows 0 session-tree mounts after the aborted construction (the child's proc/sysfs died with its namespace)
+PASS F-C-06 step=6 rule=child_step_failed identity=quarantined scopes_left=0 rollback=["child killed and reaped","cgroup.kill","scope stopped","identity → reclaiming"]
+PASS F-C-06.own-check a descriptor surviving the closure pass was caught by step 6's own verification through the fresh /proc: leaked 3:/image; the session never activated (audit kin
+PASS F-C-07 step=7 rule=fault_injected identity=quarantined scopes_left=0 rollback=["child killed and reaped","cgroup.kill","scope stopped","identity → reclaiming"]
+PASS F-C-09 step=8 rule=fault_injected identity=quarantined scopes_left=0 rollback=["child killed and reaped","cgroup.kill","scope stopped","identity → reclaiming"]
+PASS F-C-09.record lrd=sha256:d280843bd38acc0d44730fc7852a860654c8066b6bc1170b0d48427d45a535bb kinds=["session.launch_record_committed", "session.construction_failed", "session.co
+PASS D-11 all 11 constructor fault rows (F-C-01..09, one per failing step): no runnable session, identity held, scope gone
+PASS T-6.5-004 activations=1 refusals=1
+PASS T-6.5-009 allocator latest states: [('free', 2950), ('quarantined', 32)]; free-before-floor violations=0
+FIXTURE T-6.8-setup sha256:97f4bb8cf9d591032717f1589d070036fdd46b8a80b9f25d4a8bfd62605b804a
+PASS T-6.8-006 {"behaviour":"continue-degraded","state":"active"}
+PASS T-6.8-011 {"behaviour":"continue-degraded","state":"active"}
+PASS T-6.8-007 {"behaviour":"quiesce","state":"quiescing"}
+PASS F-T-02 populated 1 frozen 1
+PASS T-6.8-003 {"behaviour":"terminate","state":"cleaned/sealed"}
+PASS T-6.8-006.audit ["session.launch_record_committed", "session.activated", "session.revocation_received", "session.degraded", "session.revocation_received", "session.degraded", "
+PASS T-6.8-001 trigger=initiator_disabled behaviour=terminate state=cleaned/sealed
+PASS T-6.8-002 trigger=approval_expired behaviour=quiesce state=quiescing
+PASS T-6.8-004 trigger=catalogue_withdrawn behaviour=quiesce state=quiescing
+PASS T-6.8-004.policy trigger=policy_withdrawn behaviour=terminate state=cleaned/sealed
+PASS T-6.8-005 trigger=task_cancelled behaviour=terminate state=cleaned/sealed
+FAIL T-6.8-012 procs_while_down=3 (containment held, no authority available: daemon_reachable=false) cli_reply={"class":"unavailable","detail":"Connection refused (os erro after_restart= kinds=["session.launch_record_committed", "session.activated"]
+FAIL T-6.8-012.contained state= identity= procs=3
+PASS T-6.9-007 audit chain head=sha256:6f47ffbc2c51c35f1a24769cd7e4457eb37d5d900f3bb5a3980e349397e5ebd9 seq=228 lost=0
+FAIL T-6.7-001 axes measured against the committed manifest: 0 declared mount intents vs 0 mounts observed in the session, 0 declared grants (1A: none), 0 descriptors held by the workload; a child of the workload gained nothing (mounts/fds = nsenter: failed to parse pid: '-m' ). Every recovery path was refused: remount a mount read-write → nsenter: failed to parse pid: ; mount a fresh tmpfs (new mount authority) → nsenter: failed to parse pid: ; raise its own pid limit → nsenter: failed to parse pid: ; raise its own memory limit → nsenter: failed to parse pid: ; raise RLIMIT_NOFILE above the installed hard bound → nsenter: failed to parse pid: ; re-exec with elevated privilege → nsenter: failed to parse pid: ; acquire a new grant by writing a catalogue → nsenter: failed to parse pid: . No axis increases, and authority cannot be restored from inside.
+FAIL T-6.5-005 the catalogue's pids limit was rewritten every 150 ms while eight requests raced it: 0 admitted, 8 rejected. Every admitted session's installed pids.max equals the value in its OWN committed manifest, never a mixture and never a value that only existed between decisions: ["rc=1  installed=", "rc=1  installed=", "rc=1  installed=", "rc=1  installed=", "rc=1  installed=", "rc=1  installed=", "rc=1  installed=", "rc=1  installed="]. A request either serializes on one coherent catalogue state or is rejected.
+FAIL D-05 three runtimes (runtime:sh, runtime:scripted-loop, runtime:probe) on the same task and resource: each got its own uid from the allocator range ([0, 0, 0], all distinct=false) and its own scope cgroup (distinct=false); the committed namespace set is identical across all three (true: ) with every namespace the record commits as private in fact distinct from PID 1's (false); and each session recorded the same boundary-establishing audit events (true: [0, 0, 0] of 3 present in every case). Substituting the runtime changes the workload, not the boundary.
+FAIL D-03 setup failed: first principal's session rc=1, second principal's session rc=1 rule= (uid_a= uid_b=, approval sequence 33) — the row cannot be evaluated without two live sessions of different principals
+FAIL T-6.5-008 four confusions of a genuine committed record, each replayed to commit_binding: (1) constructor envelope presented as the policy envelope, (2) manifest mutated after signing, (3) valid policy signature over the wrong object, (4) signature bytes corrupted. All refused, each naming the check that caught it: ["/", "/", "/", "/"]
+FAIL T-6.6-007 replaying a correctly signed binding for an allocation that has already advanced is refused: class= rule= detail=; and with the catalogue's policy_version rolled back from  to policy:v0 a fresh request returns rc=0 rule= — no session is derived from a rolled-back policy
+FAIL T-6.5-003 rule=lifecycle_unavailable detail=Connection refused (os error 111)
+FAIL D-10.launch rc=1 lrd= topology=local-socket
+FAIL GW-COMPLETE worker lines=0
+FAIL D-13 staging ref for session : false; main d5552a130bbe2bcd1eb2874644bb26717bd265b8→d5552a130bbe2bcd1eb2874644bb26717bd265b8
+PASS D-13.trace host hook log carries trace 
+PASS T-6.4-012.host-hook direct push to main as gateway user refused by host hook: remote: protected: refs/heads/main
+FAIL T-6.4-002 session netns interfaces: nsenter: failed to parse pid: '-m'
+FAIL T-6.4-003 host socket dir from session: nsenter: failed to parse pid: '-m'
+FAIL T-6.4-003.only exactly one socket node in /run: nsenter: failed to parse pid: '-m' 
+FAIL T-6.4-004 positive control: host abstract socket bound=true reachable from host=connected; from session netns=nsenter: failed to parse pid: '-n' (ECONNREFUSED=111: abstract namespace is per-netns)
+FAIL T-6.4-005 outside-scope peer with session uid: nsenter: failed to parse pid: '-m' 190 
+FAIL T-6.4-008 malformed SCM_CREDENTIALS from a peer the gateway does authenticate (session uid , session scope and namespaces), so the per-packet rule is the only thing left that can refuse: none → sh: 1: cannot create /sys/fs/cgroup/system.slice/agentbound-45ed3a21-00002989.scope/cgroup | two → sh: 1: cannot create /sys/fs/cgroup/system.slice/agentbound-45ed3a21-00002989.scope/cgroup | short → sh: 1: cannot create /sys/fs/cgroup/system.slice/agentbound-45ed3a21-00002989.scope/cgroup | forged → sh: 1: cannot create /sys/fs/cgroup/system.slice/agentbound-45ed3a21-00002989.scope/cgroup; rules recorded: Usage: grep [OPTION]... PATTERNS [FILE]... Try 'grep --help' for more information.
+FAIL T-6.4-014 quiesce state= gateway admission= new-conn-while-quiesced= (control: the identical peer got  while the session was admitting, so the refusal is by admission state, not peer identity) behaviour=; held connection's post-denial packet: cat: /var/lib/agentbound/workspaces/eng/held-.out: No such file or directory ; revocation reply: {"body":{"detail":"","rule":"unknown_record"},"class":"invalid","ok":false,"v":"agentbound.wire.v0.1"}; status after seal: unknown_record
+FAIL D-12.chain-shape one launch record carries 8/15 expected event kinds; missing=["gateway.grants_loaded", "gateway.connection_established", "gateway.operation_admitted", "gateway.operation_completed", "gateway.operation_denied", "gateway.admission_denied", "gateway.released"] (fixture — NOT the §5 attribution metric, which is D-12 below)
+FAIL D-16 9/11 triggers in the frozen vocabulary exercised with a declared action and a session.revocation_received record in the hash-chained log: ["approval_expired", "audit_pipeline_degraded_below_stop_threshold", "authority_revoked", "catalogue_withdrawn", "initiator_disabled", "policy_service_unavailable", "policy_withdrawn", "reclassification", "task_cancelled"]; NOT exercised: ["gateway_grant_withdrawn", "gateway_unavailable"]. Invariant 21 stays incomplete until 1C (inference grant/binding revoked), per R-LC-3.
+FAIL D-12 §5 NOMINAL metric computed from /var/lib/agentbound/evidence/d12: 10 result files, 10 unreadable ["rep-1: NonIntegerNumber", "rep-2: NonIntegerNumber", "rep-3: NonIntegerNumber", "rep-4: NonIntegerNumber", "rep-5: NonIntegerNumber", "rep-6: NonIntegerNumber", "rep-7: NonIntegerNumber", "rep-8: NonIntegerNumber", "rep-9: NonIntegerNumber", "rep-10: NonIntegerNumber"], 0 valid repetitions (10 required); 1B bar = 100% over the finite gateway-operation corpus: 0/0 = 0.0% (NOT 100% in every valid run); whole-ontology aggregate |C|/|G| = 0/0 = 0.0% — REPORTED, owed by D-12.full at 1C (>= 99% there), NOT whole-ontology attribution at 1B; invalid/aborted repetitions retained: []; per-rep: []; per-class (rep 1): 
+FAIL T-6.3-007 post-termination: projection released, record sealed, socket node removed with the mount namespace
+FAIL T-6.3-007.socket host-side socket nodes left for this allocation: Usage: grep [OPTION]... PATTERNS [FILE]... Try 'grep --help' for more information.
+PASS F-C-08 step=8: record committed (lrd=sha256:9e1a5b0b7de4e8ed33458d26349487204e169af0bfbf00a4bb7d76b464045af6, audit kinds=["session.launch_record_committed", "session.
+FAIL F-T-01 1B: step 1 admission closure failed (evidence gateway_admission_denied=false). The other guarantee still holds: releasing the projection at step 6 removed the socket node (present before=true, after=true) and a connect to it is connected, no reply: TimeoutError, so no new operation can be admitted; identity=quarantined (not free)
+PASS F-T-01.resumable with the fault removed the protocol completed: repeated terminate returned state= (rule=terminal_state: already terminal) and the session's final state is clean
+FAIL F-T-05 could not launch a session for the no-live-process confirmation fault: rc=1
+FAIL F-T-06 gateway grant/connection closure failed: session.cleanup_completed recorded outcome=ok with grants={"broker_closed":true,"connections_closed":1,"released":true,"remaining":0}; the record was not sealed (sealed=true) and no identity release preceded the failure; state=termination-incomplete, status=cleaned/sealed, identity=quarantined
+PASS F-T-06.resumable with the fault removed the protocol completed: repeated terminate returned state= (rule=terminal_state: already terminal) and the session's final state is clean
+FAIL F-T-07 could not launch a session for the broker/credential closure fault: rc=1
+PASS F-T-09 step 9 failed: the node was present before (true) and after (true) termination, but the projection is released, so a connect+send is connected, no reply: Timeou
+PASS F-T-09.resumable with the fault removed the protocol completed: repeated terminate returned state= (rule=terminal_state: already terminal) and the session's final state is clean
+FAIL T-6.8-008 declared behaviour= (manifest, for trigger gateway_grant_withdrawn); a gateway ping succeeded before the signal (false) and after it the same in-scope peer gets: nsenter: failed to parse pid: '-m'; session state=; revocation recorded in the chain=false
+FAIL T-6.8-009 the gateway was stopped for this row (control socket reachable while down=false); the declared behaviour for gateway_unavailable is quiesce and it was reached without the gateway: state=quiescing, and session.quiesce_started records admission=closure-unconfirmed — the availability of the gateway at that moment, not an assumption
+PASS T-6.3-008 session B (allocation:45ed3a21-00003000, uid 200029) connected to session A's socket node /run/agentbound/gw/45ed3a21-00002999.sock (A's projection admitted and
+PASS T-6.3-005 the socket node is a broker capability, not a transferable object: copying it out of the session produced no usable object (cp: cannot open '/run/agentbound/gw/
+PASS T-6.4-013 caller-supplied session/trace refused (closed argument set); no ref under the other session's namespace: {"body":{"authorization_id":"launchrec:fix-issue-1235-0
+PASS D4.7-reconstruct socket before restart=1; chained reconstruction events 4→5 (exactly one for this restart); event: "projections":1 "stale_descriptors_dropped":0; ping from an in
+FAIL T-6.9-005.no-deadlock a session issued gateway operations in a loop (each persisting its budget through lifecycle) while the driver terminated it from the other side — the exact crossing that deadlocked both daemons before cross-daemon calls were bounded: terminate returned in 4075 ms, both daemons answered afterwards in 2092 ms (lifecycle=true, gateway=false), final state=cleaned/sealed
+T-6.9-008: exhaustion session did not launch: rc=1 rule= detail=
+FAIL T-6.9-008 gateway budget classes present in the catalogue: ["bytes", "bytes_per_operation", "connection_count", "objects", "operations"]; each is enforced, with denials recorded in the hash-chained log by THIS run: operations → budget_operations=0, bytes_per_operation / bytes → budget_bytes=3, objects → budget_objects=3, connection_count → connection_limit=0; exhaustion session rc=1 ((not run)); classes absent at 1B and deferred to 1C under R-GW-9: ["rate", "spend", "tokens"] (this row does not claim them)
+PASS T-6.9-005.budget-persist 5 pings admitted (session op_count 30->35); lifecycle budget record then held op:gateway-ping operations=25 [{"op:gateway-ping":{"bytes":0,"operations":25},"op:
+FAIL D4.7-idempotency-persist first: seq=28 ops=28; same key+input: seq=28 ops=28 (no consumption); different input: conflict/idempotency_conflict; lifecycle store holds outcome for key: true; gateway restarted: ops restored=28; same key after restart from new connection: seq=28 ops=28; operation_completed for key=0 (exactly once) replayed=14
+PASS T-6.4-009 PID reuse construction succeeded: establishing pid 545 was recycled inside the session pidns [stat: cannot statx '/proc/545/ns/pid': No such file or directory r
+WEAK T-6.4-012 caller-supplied url ignored; bundle path enforced: rule":"args_schema"} 
+FAIL D7-9.diagnostics requirement=R-GW-4 authorization=launchrec:fix-issue-1235-003156 lrd-matches=true trace=trace:78f770f5200abaf4256eb84012b435ca foreign-ids-absent=false
+FAIL D7-8.audit-loss gateway with no audit path (receiver down, spool unwritable): first op's event lost → admission closed + revocation_signal; lifecycle "trigger":"audit_pipeline_degraded_below_stop_threshold" → state=termination-incomplete; second attempt: nsenter: cannot open /proc/970608/ns/net: No such file or directory
+PASS D-06.storage-principal work dir owner after seal: storage-engineering agentbound; files still owned by ephemeral uid: 0; "detail":{"bytes":9782,"failed":0,"files":106,"storage_princip
+FAIL D-02.1B descriptor allowlist entries=0 0 (stdin, stdout, stderr, gateway_socket mount); no attach/PTY path exists to deny — partial stays recorded
+FAIL T-6.1-003.1B no PTY projected under local-socket either; N/A stays recorded
+FAIL T-6.1-013 sealed session's socket: nodes left=err 2 connect=Try 'grep --help' for more information.
+RECORDED T-6.2-008.1B loaders/interpreters beyond sh+git in image: 0
+RECORDED D-15.1B delegation operations in catalogue: [] — residual stays recorded (no delegation path to narrow)
+NOT-EXECUTED D-09
+NOT-EXECUTED T-6.3-001
+NOT-EXECUTED T-6.3-002
+NOT-EXECUTED T-6.3-003
+NOT-EXECUTED T-6.3-004
+NOT-EXECUTED T-6.3-006
+NOT-EXECUTED T-6.4-001
+NOT-EXECUTED T-6.4-006
+NOT-EXECUTED T-6.4-007
+NOT-EXECUTED T-6.4-010
+NOT-EXECUTED T-6.4-011
+NOT-EXECUTED T-6.9-006
+
+assertions: 107 PASS 1 WEAK 2 RECORDED 42 FAIL; catalogue: 70/121 PASS, 12 not executed; dups=0 extra=1; suite FAIL; coverage FAIL; requirements FAIL — unmet: D-02=FAIL(required RECORDED), D-03=FAIL(required PASS), D-05=FAIL(required PASS), D-08=FAIL(required PASS), D-09=NOT-EXECUTED(required PASS), D-10=FAIL(required PASS), D-12=FAIL(required PASS), D-13=FAIL(required PASS), D-16=FAIL(required PASS), D4=FAIL(required PASS), D7-8=FAIL(required PASS), D7-9=FAIL(required PASS), F-T-01=FAIL(required PASS), F-T-05=FAIL(required PASS), F-T-06=FAIL(required PASS), F-T-07=FAIL(required PASS), F-T-08=FAIL(required PASS), F-T-10=FAIL(required PASS), F-T-11=FAIL(required PASS), T-6.1-003=FAIL(required RECORDED), T-6.1-013=FAIL(required PASS), T-6.3-001=NOT-EXECUTED(required PASS), T-6.3-002=NOT-EXECUTED(required PASS), T-6.3-003=NOT-EXECUTED(required PASS), T-6.3-004=NOT-EXECUTED(required PASS), T-6.3-006=NOT-EXECUTED(required PASS), T-6.3-007=FAIL(required PASS), T-6.4-001=NOT-EXECUTED(required PASS), T-6.4-002=FAIL(required PASS), T-6.4-003=FAIL(required PASS), T-6.4-004=FAIL(required PASS), T-6.4-005=FAIL(required PASS), T-6.4-006=NOT-EXECUTED(required PASS), T-6.4-007=NOT-EXECUTED(required PASS), T-6.4-008=FAIL(required PASS), T-6.4-010=NOT-EXECUTED(required PASS), T-6.4-011=NOT-EXECUTED(required PASS), T-6.4-014=FAIL(required PASS), T-6.5-003=FAIL(required PASS), T-6.5-005=FAIL(required PASS), T-6.5-008=FAIL(required PASS), T-6.6-007=FAIL(required PASS), T-6.7-001=FAIL(required PASS), T-6.8-008=FAIL(required PASS), T-6.8-009=FAIL(required PASS), T-6.8-012=FAIL(required PASS), T-6.9-005=FAIL(required PASS), T-6.9-006=NOT-EXECUTED(required PASS), T-6.9-008=FAIL(required PASS); run verdict FAIL; register at /root/wp2/conformance-run.md

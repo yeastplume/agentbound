@@ -298,7 +298,7 @@ impl Gateway {
                 }
             }
         }
-        if attempts > 1 { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.budget_persist_retried", if ok { "ok" } else { "deny" }, &cr, Value::obj(vec![("attempts", Value::Int(attempts as i64)), ("deadline_ms", Value::Int(ab_common::wire::BUDGET_PERSIST_DEADLINE_MS))])); }
+        if attempts > 1 { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.budget_persist_retried", if ok { "ok" } else { "deny" }, &cr, budget_persist_retried_detail(attempts)); }
         if !ok { let cr = Self::corr(&self.by_alloc[aid]); self.emit("gateway.admission_denied", "ok", &cr, Value::obj(vec![("reason", Value::s("budget_persist_failed"))])); self.by_alloc.get_mut(aid).unwrap().admission = false; }
         ok
     }
@@ -337,7 +337,7 @@ impl Gateway {
         let aid = if let Some(a) = key.strip_prefix("alloc:") { a.to_string() } else { match self.by_lrd_mut(key) { Some(p) => p.allocation_id.clone(), None => return wire::reply_ok(Value::obj(vec![("connections_closed", Value::Int(0)), ("remaining", Value::Int(0)), ("released", Value::Bool(false))])) } };
         let mut closed = 0; let mut i = 0;
         while i < self.conns.len() { if self.conns[i].allocation_id == aid { self.close_conn(i, "released"); self.conns.remove(i); closed += 1; } else { i += 1; } }
-        if let Some(p) = self.by_alloc.remove(&aid) { if !keep_node { let _ = std::fs::remove_file(&p.path); } else { self.emit("gateway.socket_removal_failed", "hold", &Self::corr(&p), Value::obj(vec![("path_digest", Value::s(&ab_common::sig::sha256_hex(p.path.as_bytes())[..16]))])); } wire::fdstore_remove(aid.rsplit(':').next().unwrap_or(&aid)); let cr = Self::corr(&p); self.emit("gateway.released", "ok", &cr, Value::obj(vec![("connections_closed", Value::Int(closed))])); }
+        if let Some(p) = self.by_alloc.remove(&aid) { if !keep_node { let _ = std::fs::remove_file(&p.path); } else { self.emit("gateway.socket_removal_failed", "hold", &Self::corr(&p), socket_removal_failed_detail(&p.path)); } wire::fdstore_remove(aid.rsplit(':').next().unwrap_or(&aid)); let cr = Self::corr(&p); self.emit("gateway.released", "ok", &cr, Value::obj(vec![("connections_closed", Value::Int(closed))])); }
         let remaining = self.conns.iter().filter(|c| c.allocation_id == aid).count();
         wire::reply_ok(Value::obj(vec![("connections_closed", Value::Int(closed)), ("remaining", Value::Int(remaining as i64)), ("released", Value::Bool(true))]))
     }
@@ -376,8 +376,51 @@ impl Gateway {
     }
 }
 
+// Pure payload builders shared by the live failure paths and the receiver contract tests.
+fn budget_persist_retried_detail(attempts: u32) -> Value {
+    Value::obj(vec![("attempts", Value::Int(attempts as i64)), ("deadline_ms", Value::Int(ab_common::wire::BUDGET_PERSIST_DEADLINE_MS))])
+}
+fn socket_removal_failed_detail(path: &str) -> Value {
+    Value::obj(vec![("path_digest", Value::s(&ab_common::sig::sha256_hex(path.as_bytes())[..16]))])
+}
+
+#[cfg(test)]
+#[path = "../../agentbound-audit/src/events.rs"]
+mod audit_schema;
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn gateway_failure_payloads_match_receiver() {
+        let retry = budget_persist_retried_detail(3);
+        assert_eq!(retry.get("attempts"), Some(&Value::Int(3)));
+        assert_eq!(retry.get("deadline_ms"), Some(&Value::Int(ab_common::wire::BUDGET_PERSIST_DEADLINE_MS)));
+        let socket = socket_removal_failed_detail("/run/agentbound/private.sock");
+        assert_eq!(socket.get("path_digest").and_then(Value::as_str), Some(&ab_common::sig::sha256_hex(b"/run/agentbound/private.sock")[..16]));
+        for (kind, outcome, detail) in [("gateway.budget_persist_retried", "ok", retry.clone()),
+                                      ("gateway.budget_persist_retried", "deny", retry),
+                                      ("gateway.socket_removal_failed", "hold", socket)] {
+            let mut ev = ab_common::audit::event(kind, "agentbound-gateway", outcome, &Default::default(), detail);
+            // Match Sink's wire form even if the common builder has not finalized the id yet.
+            ev.as_obj_mut().unwrap().retain(|k, _| k.0 != "event_id");
+            ev.set("event_id", Value::s(&ab_common::sig::object_digest(&ev)));
+            assert_eq!(audit_schema::check(&ev), Ok(()), "{kind}");
+            let original = ev.get("detail").unwrap().clone();
+            for key in original.as_obj().unwrap().keys() {
+                let mut missing = original.clone();
+                missing.as_obj_mut().unwrap().retain(|k, _| k != key);
+                ev.set("detail", missing);
+                assert_eq!(audit_schema::check(&ev), Err("missing_detail_member"), "{kind}: {}", key.0);
+            }
+            let mut extra = original;
+            extra.set("unexpected", Value::Null);
+            ev.set("detail", extra);
+            assert_eq!(audit_schema::check(&ev), Err("unknown_detail_member"), "{kind}");
+        }
+    }
+
     /// Every rule string the gateway can emit MUST map to a requirement; `R-GW-0-unmapped` is a defect marker.
     /// The list is maintained by hand and cross-checked by `grep -o 'CLASS_[A-Z]*, "[a-z_]*"' src/*.rs` when a rule is added.
     #[test]

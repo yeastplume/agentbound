@@ -1,0 +1,22 @@
+   Compiling agentbound-lifecycle v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-lifecycle)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running unittests src/main.rs (target/debug/deps/agentbound_lifecycle-12b01eafec83ea72)
+
+running 12 tests
+test service::audit_schema::tests::rejects_non_string_event_id_without_receiver_panic ... ok
+test service::audit_schema::tests::envelope_and_details_remain_closed ... ok
+test session::audit_contract::tests::envelope_and_details_remain_closed ... ok
+test session::regression_tests::gateway_requires_explicit_closed_acknowledgement ... ok
+test session::regression_tests::no_gateway_does_not_require_a_gateway_reply ... ok
+test session::audit_contract::tests::rejects_non_string_event_id_without_receiver_panic ... ok
+test session::regression_tests::actual_cleanup_payload_matches_receiver_schema ... ok
+test store::tests::idempotency ... ok
+test store::tests::binding_once_only_and_seal ... ok
+test service::audit_contract_tests::actual_construction_failure_reports_match_receiver_and_preserve_store ... ok
+test store::tests::tamper_detected ... ok
+test store::tests::reserve_transition_cas_and_reuse_rules ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling agentbound-lifecycle v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-lifecycle)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1.38s

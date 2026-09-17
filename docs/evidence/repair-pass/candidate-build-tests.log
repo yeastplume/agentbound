@@ -1,0 +1,319 @@
+Warning: Permanently added '10.20.44.12' (ED25519) to the list of known hosts.
+   Compiling version_check v0.9.5
+   Compiling cfg-if v1.0.4
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling typenum v1.20.1
+   Compiling libc v0.2.189
+   Compiling generic-array v0.14.7
+   Compiling semver v1.0.28
+   Compiling rustc_version v0.4.1
+   Compiling serde_core v1.0.229
+   Compiling cpufeatures v0.2.17
+   Compiling syn v2.0.119
+   Compiling curve25519-dalek v4.1.3
+   Compiling zmij v1.0.23
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling getrandom v0.2.17
+   Compiling digest v0.10.7
+   Compiling syn v3.0.4
+   Compiling sha2 v0.10.9
+   Compiling serde v1.0.229
+   Compiling subtle v2.6.1
+   Compiling serde_json v1.0.151
+   Compiling equivalent v1.0.2
+   Compiling zeroize v1.9.0
+   Compiling signature v2.2.0
+   Compiling hashbrown v0.17.1
+   Compiling indexmap v2.14.1
+   Compiling ed25519 v2.2.3
+   Compiling serde_derive v1.0.229
+   Compiling rand_core v0.6.4
+   Compiling hex v0.4.3
+   Compiling itoa v1.0.18
+   Compiling ab-common v0.1.0 (/root/agentbound-repair-candidate/crates/ab-common)
+   Compiling memchr v2.8.3
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling base64 v0.22.1
+   Compiling zerocopy v0.8.56
+   Compiling ahash v0.8.12
+   Compiling find-msvc-tools v0.1.12
+   Compiling shlex v2.0.1
+   Compiling ed25519-dalek v2.2.0
+   Compiling cc v1.4.5
+   Compiling pkg-config v0.3.34
+   Compiling vcpkg v0.2.15
+   Compiling once_cell v1.21.4
+   Compiling libsqlite3-sys v0.30.1
+   Compiling bitflags v2.13.1
+   Compiling fallible-iterator v0.3.0
+   Compiling smallvec v1.16.0
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling ab-conformance v0.1.0 (/root/agentbound-repair-candidate/crates/ab-conformance)
+   Compiling hashbrown v0.14.5
+warning: unused variable: `t`
+   --> crates/ab-conformance/src/main.rs:957:13
+    |
+957 |         let t = g.terminate(&lrdd);                 // crosses the in-flight record_budget calls
+    |             ^ help: if this is intentional, prefix it with an underscore: `_t`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `ops_final`
+    --> crates/ab-conformance/src/main.rs:1057:9
+     |
+1057 |     let ops_final: i64 = js(&gwst(&lrd2), "body.operations").parse().unwrap_or(-1);
+     |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_ops_final`
+
+   Compiling hashlink v0.9.1
+warning: `ab-conformance` (bin "ab-conformance" test) generated 2 warnings (run `cargo fix --bin "ab-conformance" -p ab-conformance --tests` to apply 2 suggestions)
+   Compiling agentbound-gateway v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-gateway)
+   Compiling agentbound v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound)
+   Compiling agentbound-policy v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-policy)
+   Compiling agentbound-launch v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-launch)
+warning: variable does not need to be mutable
+   --> crates/agentbound-gateway/src/main.rs:112:16
+    |
+112 |         let Ok(mut c) = wire::connect_bounded(&self.cfg.lifecycle_sock, ms) else { return LcOutcome::NoReply };
+    |                ----^
+    |                |
+    |                help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `release` is never used
+   --> crates/agentbound-gateway/src/main.rs:333:8
+    |
+101 | impl Gateway {
+    | ------------ method in this implementation
+...
+333 |     fn release(&mut self, key: &str) -> Value { self.release_with(key, false) }
+    |        ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling agentbound-audit v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-audit)
+warning: `agentbound-gateway` (bin "agentbound-gateway" test) generated 2 warnings (run `cargo fix --bin "agentbound-gateway" -p agentbound-gateway --tests` to apply 1 suggestion)
+   Compiling ab-gwclient v0.1.0 (/root/agentbound-repair-candidate/crates/ab-gwclient)
+   Compiling rusqlite v0.32.1
+   Compiling agentbound-lifecycle v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-lifecycle)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.70s
+     Running unittests src/lib.rs (target/debug/deps/ab_common-419ece09ad345127)
+
+running 15 tests
+test acl::tests::two_named_groups_coexist_and_revoke_independently ... ok
+test envelope::tests::changing_unsigned_issuance_cannot_refresh_a_stale_signature ... ok
+test json::tests::canonical_order_utf16 ... ok
+test json::tests::depth_and_trailing ... ok
+test json::tests::duplicate_rejected ... ok
+test json::tests::floats_and_big_ints_rejected ... ok
+test json::tests::rfc8785_escapes ... ok
+test schema::tests::grammars ... ok
+test schema::tests::request_closed ... ok
+test sig::tests::lrd_concat ... ok
+test sig::tests::rfc3339_roundtrip ... ok
+test envelope::tests::policy_metadata_is_authenticated ... ok
+test envelope::tests::policy_roundtrip_and_failures ... ok
+test sig::tests::sign_verify ... ok
+test envelope::tests::constructor_metadata_and_legacy_signatures_are_not_accepted ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/spec_examples.rs (target/debug/deps/spec_examples-5a50ebb053e32622)
+
+running 4 tests
+test topology_none_forbids_gateway_content ... ok
+test continue_degraded_only_where_permitted ... ok
+test smuggled_and_unknown_members_rejected ... ok
+test spec_pair_validates ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/ab_conformance-332e95c51869d3e6)
+
+running 1 test
+test tests::ids ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/ab_gwclient-63709532f143e0bf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/agentbound-a527eefc1efe73d2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/agentbound_audit-ebb2262c969fc560)
+
+running 2 tests
+test events::tests::rejects_non_string_event_id_without_receiver_panic ... ok
+test events::tests::envelope_and_details_remain_closed ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/agentbound_gateway-68ffd909c6a1e1a9)
+
+running 8 tests
+test session::tests::recycled_pid_rejected ... ok
+test session::tests::pidns_change_rejected ... ok
+test session::tests::same_instance_accepted ... ok
+test session::tests::start_time_change_rejected ... ok
+test audit_schema::tests::rejects_non_string_event_id_without_receiver_panic ... ok
+test tests::every_rule_maps ... ok
+test audit_schema::tests::envelope_and_details_remain_closed ... ok
+test tests::gateway_failure_payloads_match_receiver ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/agentbound_launch-23db4d8df773ed7f)
+
+running 8 tests
+test entry::tests::audit_override_is_rejected_and_other_inherited_environment_is_scrubbed ... ok
+test entry::tests::authorization_cannot_escape_spool_or_lease_directory ... ok
+test entry::tests::kernel_credentials_reject_setuid_and_saved_uid_edges ... ok
+test entry::tests::missing_or_invalid_policy_account_never_falls_back_to_root ... ok
+test entry::tests::parser_rejects_unknown_duplicate_missing_and_malformed_arguments ... ok
+test entry::tests::sudo_allows_only_authorization_and_uses_fixed_defaults ... ok
+test entry::tests::sudo_markers_never_grant_admin ... ok
+test entry::tests::root_can_explicitly_use_test_configuration_and_known_faults ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/agentbound_lifecycle-12b01eafec83ea72)
+
+running 12 tests
+test service::audit_schema::tests::rejects_non_string_event_id_without_receiver_panic ... ok
+test service::audit_schema::tests::envelope_and_details_remain_closed ... ok
+test session::audit_contract::tests::envelope_and_details_remain_closed ... ok
+test session::regression_tests::gateway_requires_explicit_closed_acknowledgement ... ok
+test session::audit_contract::tests::rejects_non_string_event_id_without_receiver_panic ... ok
+test session::regression_tests::no_gateway_does_not_require_a_gateway_reply ... ok
+test session::regression_tests::actual_cleanup_payload_matches_receiver_schema ... ok
+test store::tests::idempotency ... ok
+test store::tests::binding_once_only_and_seal ... ok
+test service::audit_contract_tests::actual_construction_failure_reports_match_receiver_and_preserve_store ... ok
+test store::tests::tamper_detected ... ok
+test store::tests::reserve_transition_cas_and_reuse_rules ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/agentbound_policy-5fdfbb38ae2b5b6d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ab_common
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.107
+   Compiling cfg-if v1.0.4
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling typenum v1.20.1
+   Compiling libc v0.2.189
+   Compiling generic-array v0.14.7
+   Compiling semver v1.0.28
+   Compiling rustc_version v0.4.1
+   Compiling cpufeatures v0.2.17
+   Compiling serde_core v1.0.229
+   Compiling syn v2.0.119
+   Compiling curve25519-dalek v4.1.3
+   Compiling zmij v1.0.23
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling getrandom v0.2.17
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling syn v3.0.4
+   Compiling zeroize v1.9.0
+   Compiling serde v1.0.229
+   Compiling equivalent v1.0.2
+   Compiling serde_json v1.0.151
+   Compiling signature v2.2.0
+   Compiling subtle v2.6.1
+   Compiling hashbrown v0.17.1
+   Compiling serde_derive v1.0.229
+   Compiling ed25519 v2.2.3
+   Compiling rand_core v0.6.4
+   Compiling indexmap v2.14.1
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling itoa v1.0.18
+   Compiling ab-common v0.1.0 (/root/agentbound-repair-candidate/crates/ab-common)
+   Compiling hex v0.4.3
+   Compiling memchr v2.8.3
+   Compiling base64 v0.22.1
+   Compiling ed25519-dalek v2.2.0
+   Compiling zerocopy v0.8.56
+   Compiling ahash v0.8.12
+   Compiling find-msvc-tools v0.1.12
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.5
+   Compiling vcpkg v0.2.15
+   Compiling pkg-config v0.3.34
+   Compiling once_cell v1.21.4
+   Compiling bitflags v2.13.1
+   Compiling libsqlite3-sys v0.30.1
+   Compiling smallvec v1.16.0
+   Compiling fallible-iterator v0.3.0
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling ab-gwclient v0.1.0 (/root/agentbound-repair-candidate/crates/ab-gwclient)
+   Compiling agentbound-gateway v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-gateway)
+   Compiling ab-conformance v0.1.0 (/root/agentbound-repair-candidate/crates/ab-conformance)
+   Compiling hashbrown v0.14.5
+warning: variable does not need to be mutable
+   --> crates/agentbound-gateway/src/main.rs:112:16
+    |
+112 |         let Ok(mut c) = wire::connect_bounded(&self.cfg.lifecycle_sock, ms) else { return LcOutcome::NoReply };
+    |                ----^
+    |                |
+    |                help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `release` is never used
+   --> crates/agentbound-gateway/src/main.rs:333:8
+    |
+101 | impl Gateway {
+    | ------------ method in this implementation
+...
+333 |     fn release(&mut self, key: &str) -> Value { self.release_with(key, false) }
+    |        ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `t`
+   --> crates/ab-conformance/src/main.rs:957:13
+    |
+957 |         let t = g.terminate(&lrdd);                 // crosses the in-flight record_budget calls
+    |             ^ help: if this is intentional, prefix it with an underscore: `_t`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `ops_final`
+    --> crates/ab-conformance/src/main.rs:1057:9
+     |
+1057 |     let ops_final: i64 = js(&gwst(&lrd2), "body.operations").parse().unwrap_or(-1);
+     |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_ops_final`
+
+   Compiling hashlink v0.9.1
+   Compiling agentbound-policy v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-policy)
+   Compiling agentbound-launch v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-launch)
+warning: `agentbound-gateway` (bin "agentbound-gateway") generated 2 warnings (run `cargo fix --bin "agentbound-gateway" -p agentbound-gateway` to apply 1 suggestion)
+   Compiling agentbound-audit v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-audit)
+   Compiling agentbound v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound)
+warning: `ab-conformance` (bin "ab-conformance") generated 2 warnings (run `cargo fix --bin "ab-conformance" -p ab-conformance` to apply 2 suggestions)
+   Compiling rusqlite v0.32.1
+   Compiling agentbound-lifecycle v0.1.0 (/root/agentbound-repair-candidate/crates/agentbound-lifecycle)
+    Finished `release` profile [optimized + debuginfo] target(s) in 40.01s

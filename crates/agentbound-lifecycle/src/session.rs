@@ -26,6 +26,16 @@ fn gateway_call(sock: &str, op: &str, lrd: &str, idem: &str) -> Option<Value> {
     if r.get("ok").and_then(|x| x.as_bool()) == Some(true) { r.get("body").cloned() } else { None }
 }
 
+/// Only the explicit no-gateway topology waives admission closure. Unknown
+/// topologies fail closed, and a transport success is not an acknowledgement.
+fn admission_closed(topology: &str, reply: Option<&Value>) -> bool {
+    topology == "none" || (topology == "local-socket" && reply.and_then(|v| v.get("admission")).and_then(|v| v.as_bool()) == Some(false))
+}
+
+fn cleanup_detail(acl_removed: i64, acl_residual: &[String], grants: Value, removed: Vec<Value>, unmounts: Vec<Value>) -> Value {
+    Value::obj(vec![("acl_entries_removed", Value::Int(acl_removed)), ("acl_removal_failures", Value::Arr(acl_residual.iter().map(|r| Value::s(r)).collect())), ("grants", grants), ("ipc_namespace", Value::s("destroyed with last process")), ("residue", Value::Arr(removed)), ("unmounts", Value::Arr(unmounts))])
+}
+
 pub const DEFAULT_TERM_BOUND_S: i64 = 10;
 
 /// Minimum spacing between retries of a `termination-incomplete` session. Each retry re-issues `deny_admission` to the gateway, so
@@ -124,11 +134,12 @@ impl Service {
         let s = self.sessions.get_mut(lrd).ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;
         if s.state == "quiescing" { return Ok(Value::obj(vec![("state", Value::s("quiescing"))])); }
         let cg = s.cgroup_dir.as_ref().ok_or((wire::CLASS_CONFLICT, "session_not_registered", String::new()))?.as_raw_fd();
-        let gw_deny = gateway_call(&self.cfg.gateway_sock, "deny_admission", lrd, &format!("{lrd}/deny-q/{}", monotonic_ns()));
+        let topology = s.topology.clone();
+        let gw_deny = if topology == "none" { None } else { gateway_call(&self.cfg.gateway_sock, "deny_admission", lrd, &format!("{lrd}/deny-q/{}", monotonic_ns())) };
         let frozen = cg_write(cg, "cgroup.freeze", "1");
         s.deadline_mono_ns = Some(monotonic_ns() + bound_s * 1_000_000_000);
         self.sessions.set_state(lrd, "quiescing", Some(reason));
-        self.append_event(lrd, "session.quiesce_started", if frozen { "ok" } else { "freeze-failed" }, Value::obj(vec![("admission", Value::s(if gw_deny.is_some() { "denied" } else { "denied-no-gateway" })), ("bound_s", Value::Int(bound_s)), ("freeze_requested", Value::Bool(frozen)), ("trigger", Value::s(reason))]));
+        self.append_event(lrd, "session.quiesce_started", if frozen { "ok" } else { "freeze-failed" }, Value::obj(vec![("admission", Value::s(if topology == "none" { "not-applicable-no-gateway" } else if admission_closed(&topology, gw_deny.as_ref()) { "denied" } else { "closure-unconfirmed" })), ("bound_s", Value::Int(bound_s)), ("freeze_requested", Value::Bool(frozen)), ("trigger", Value::s(reason))]));
         if !frozen { return self.terminate(lrd, &format!("{reason}:freeze-failed"), bound_s); }
         Ok(Value::obj(vec![("state", Value::s("quiescing"))]))
     }
@@ -141,15 +152,15 @@ impl Service {
 
     /// §5 steps 1–5, then 8/10/11 through `cleanup_and_seal`. Returns `terminated` only with recorded proof.
     pub fn terminate(&mut self, lrd: &str, reason: &str, bound_s: i64) -> Reply {
-        let (cg, pidfd, init_pid, uid, gid, scope) = { let s = self.sessions.get(lrd).ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;
-            (s.cgroup_dir.as_ref().ok_or((wire::CLASS_CONFLICT, "session_not_registered", String::new()))?.as_raw_fd(), s.init_pidfd.as_ref().map(|f| f.as_raw_fd()).unwrap_or(-1), s.init_pid, s.uid, s.gid, s.scope_id.clone()) };
+        let (cg, pidfd, init_pid, uid, gid, scope, topology) = { let s = self.sessions.get(lrd).ok_or((wire::CLASS_INVALID, "unknown_record", String::new()))?;
+            (s.cgroup_dir.as_ref().ok_or((wire::CLASS_CONFLICT, "session_not_registered", String::new()))?.as_raw_fd(), s.init_pidfd.as_ref().map(|f| f.as_raw_fd()).unwrap_or(-1), s.init_pid, s.uid, s.gid, s.scope_id.clone(), s.topology.clone()) };
         self.sessions.set_state(lrd, "quiescing", Some(reason));
         self.append_event(lrd, "session.termination_started", "ok", Value::obj(vec![("bound_s", Value::Int(bound_s)), ("ordering_deviation", Value::Null), ("reason", Value::s(reason)), ("scope_id", Value::s(&scope))]));
         let t0 = Instant::now();
         // 1 deny admission at the gateway (mandatory on entry, distinct from releasing grant records — §5). 2 freeze.
         // F-T-01: step 1 admission closure fails (gateway unreachable / refuses). 1A has no gateway state, so the step is not
         // applicable there; 1B must leave admission closed by another means or refuse to proceed to grant release.
-        let gw_deny = if self.term_fault.as_deref() == Some("admission-closure") { None } else { gateway_call(&self.cfg.gateway_sock, "deny_admission", lrd, &format!("{lrd}/deny/{}", monotonic_ns())) };
+        let gw_deny = if topology == "none" || self.term_fault.as_deref() == Some("admission-closure") { None } else { gateway_call(&self.cfg.gateway_sock, "deny_admission", lrd, &format!("{lrd}/deny/{}", monotonic_ns())) };
         let step2 = cg_write(cg, "cgroup.freeze", "1");
         // 3 thaw and SIGTERM init via pidfd, bounded (F-4: a PID-ns init without a handler ignores it)
         cg_write(cg, "cgroup.freeze", "0");
@@ -173,9 +184,9 @@ impl Service {
         // A `deny_admission` that timed out (the gateway was busy, possibly calling back into this daemon) leaves the session
         // `termination-incomplete`; the identity stays held and `poll_sessions` retries. That is what makes a SHORT bound on this call
         // safe: the call may give up early, the state machine may not.
-        let complete = procs.is_empty() && init_exited && inside.is_empty() && outside.is_empty() && no_live_confirmed && gw_deny.is_some();
+        let complete = procs.is_empty() && init_exited && inside.is_empty() && outside.is_empty() && no_live_confirmed && admission_closed(&topology, gw_deny.as_ref());
         let evidence = Value::obj(vec![("cgroup_kill_written", Value::Bool(step4)), ("cgroup_procs_remaining", pids(&procs)), ("credential_scan_inside_scope", pids(&inside)), ("credential_scan_outside_scope", pids(&outside)), ("d_state", pids(&dstate)),
-            ("elapsed_ms", Value::Int(t0.elapsed().as_millis() as i64)), ("freeze_written", Value::Bool(step2)), ("gateway_admission_denied", Value::Bool(gw_deny.is_some())), ("frozen_observed", Value::Bool(cg_frozen(cg))), ("init_pid", Value::Int(init_pid as i64)), ("init_pidfd_exited", Value::Bool(init_exited)), ("sigterm_sent", Value::Bool(step3))]);
+            ("elapsed_ms", Value::Int(t0.elapsed().as_millis() as i64)), ("freeze_written", Value::Bool(step2)), ("gateway_admission_denied", if topology == "none" { Value::Null } else { Value::Bool(admission_closed(&topology, gw_deny.as_ref())) }), ("frozen_observed", Value::Bool(cg_frozen(cg))), ("init_pid", Value::Int(init_pid as i64)), ("init_pidfd_exited", Value::Bool(init_exited)), ("sigterm_sent", Value::Bool(step3))]);
         if !outside.is_empty() { self.append_event(lrd, "identity.scope_escape_suspected", "hold", Value::obj(vec![("pids", pids(&outside)), ("uid", Value::Int(uid as i64))])); }
         if !complete {
             self.sessions.set_state(lrd, "termination-incomplete", Some(reason));
@@ -191,7 +202,7 @@ impl Service {
     /// §5 steps 8, 10, 11 and identity lifecycle §4.1: unmount, scan the managed domain for UID/GID residue,
     /// `reclaiming` → `quarantined` only when the condition holds, then seal. Uncertainty holds the identity.
     pub fn cleanup_and_seal(&mut self, lrd: &str) {
-        let (aid, uid, gid, scope, session_dir, pidfd) = match self.sessions.get(lrd) { Some(s) => (s.allocation_id.clone(), s.uid, s.gid, s.scope_id.clone(), s.session_dir.clone(), s.init_pidfd.as_ref().map(|f| f.as_raw_fd()).unwrap_or(-1)), None => return };
+        let (aid, uid, gid, scope, session_dir, pidfd, topology) = match self.sessions.get(lrd) { Some(s) => (s.allocation_id.clone(), s.uid, s.gid, s.scope_id.clone(), s.session_dir.clone(), s.init_pidfd.as_ref().map(|f| f.as_raw_fd()).unwrap_or(-1), s.topology.clone()), None => return };
         let mut unmounts = Vec::new();
         if let Some(dir) = &session_dir {
             for sub in ["rootfs", ""] {
@@ -245,7 +256,7 @@ impl Service {
         // §5 step 6: release gateway grant records and indexed connections; the gateway MUST acknowledge zero connections
         // before identity release. A projection that was never made (topology none) releases as `released:false, remaining:0`.
         // F-T-06: step 6 gateway grant/connection closure fails — safe state is retained (no identity release) and the failure is audited
-        let gw = if self.term_fault.as_deref() == Some("gateway-release") { None } else {
+        let gw = if topology == "none" || self.term_fault.as_deref() == Some("gateway-release") { None } else {
             let f = if self.term_fault.as_deref() == Some("socket-unmount") { Some("socket-unmount") } else { None };
             gateway_call_f(&self.cfg.gateway_sock, "release", lrd, &format!("{lrd}/release/{}", monotonic_ns()), f) };
 
@@ -260,12 +271,12 @@ impl Service {
         // F-T-07 makes this confirmation fail: safe state must be retained and no identity released.
         let broker_closed = self.term_fault.as_deref() != Some("credential-closure");
         let gw_remaining = gw.as_ref().and_then(|b| b.get("remaining")).and_then(|x| x.as_int());
-        let gw_ok = broker_closed && (gw_remaining == Some(0) || (gw.is_none() && self.sessions.get(lrd).map(|s| s.topology != "local-socket").unwrap_or(true)));
+        let gw_ok = broker_closed && (topology == "none" || (topology == "local-socket" && gw_remaining == Some(0)));
         // §5 steps 6 and 7 report inside `grants`: `released`/`remaining` for the gateway records, `broker_closed` for the broker and
         // session credential capability. Either being false holds cleanup — nothing is released and the record is not sealed.
-        let grants = match &gw { Some(b) => Value::obj(vec![("broker_closed", Value::Bool(broker_closed)), ("connections_closed", b.get("connections_closed").cloned().unwrap_or(Value::Int(0))), ("released", b.get("released").cloned().unwrap_or(Value::Bool(false))), ("remaining", b.get("remaining").cloned().unwrap_or(Value::Null))]), None => Value::obj(vec![("broker_closed", Value::Bool(broker_closed)), ("connections_closed", Value::Int(0)), ("released", Value::Bool(false)), ("remaining", Value::s("gateway unreachable"))]) };
+        let grants = match &gw { Some(b) => Value::obj(vec![("broker_closed", Value::Bool(broker_closed)), ("connections_closed", b.get("connections_closed").cloned().unwrap_or(Value::Int(0))), ("released", b.get("released").cloned().unwrap_or(Value::Bool(false))), ("remaining", b.get("remaining").cloned().unwrap_or(Value::Null))]), None => Value::obj(vec![("broker_closed", Value::Bool(broker_closed)), ("connections_closed", Value::Int(0)), ("released", Value::Bool(false)), ("remaining", if topology == "none" { Value::Int(0) } else { Value::s("gateway unreachable") })]) };
         let cond = inside.is_empty() && outside.is_empty() && (pidfd < 0 || pidfd_exited(pidfd)) && removed.iter().all(|r| r.get("removed").and_then(|x| x.as_str()).is_none() && r.get("removed").and_then(|x| x.as_bool()) == Some(true)) && gw_ok && projection_ok && acl_ok;
-        self.append_event(lrd, "session.cleanup_completed", if cond { "ok" } else { "hold" }, Value::obj(vec![("acl_entries_removed", Value::Int(acl_removed)), ("acl_removal_failures", Value::Arr(acl_residual.iter().map(|r| Value::s(r)).collect())), ("grants", grants), ("ipc_namespace", Value::s("destroyed with last process")), ("residue", Value::Arr(removed)), ("unmounts", Value::Arr(unmounts))]));
+        self.append_event(lrd, "session.cleanup_completed", if cond { "ok" } else { "hold" }, cleanup_detail(acl_removed, &acl_residual, grants, removed, unmounts));
         if let Ok(Some(a)) = self.store.latest(&aid) {
             let a = if a.state == "in-use" || a.state == "allocated" { self.store.transition(&aid, a.state_seq, "reclaiming", "termination complete", None, None, "agentbound-lifecycle").ok() } else { Some(a) };
             if let Some(a) = a { if a.state == "reclaiming" && cond {
@@ -367,6 +378,42 @@ fn scan_owned_deep(root: &str, uid: u32, gid: u32, out: &mut Vec<String>) {
         let p = e.path(); let Ok(m) = std::fs::symlink_metadata(&p) else { continue };
         if m.uid() == uid || m.gid() == gid { out.push(p.to_string_lossy().into_owned()); }
         if m.is_dir() && !m.file_type().is_symlink() { scan_owned_deep(&p.to_string_lossy(), uid, gid, out); }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../agentbound-audit/src/events.rs"]
+mod audit_contract;
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    #[test]
+    fn no_gateway_does_not_require_a_gateway_reply() {
+        assert!(admission_closed("none", None));
+    }
+
+    #[test]
+    fn gateway_requires_explicit_closed_acknowledgement() {
+        let closed = Value::obj(vec![("admission", Value::Bool(false))]);
+        let open = Value::obj(vec![("admission", Value::Bool(true))]);
+        assert!(admission_closed("local-socket", Some(&closed)));
+        assert!(!admission_closed("local-socket", None));
+        assert!(!admission_closed("local-socket", Some(&open)));
+        assert!(!admission_closed("local-socket", Some(&Value::Null)));
+        assert!(!admission_closed("unknown", Some(&closed)));
+        assert!(!admission_closed("", None));
+    }
+
+    #[test]
+    fn actual_cleanup_payload_matches_receiver_schema() {
+        for residual in [vec![], vec!["workspace: removal failed".to_string()]] {
+            let detail = cleanup_detail(0, &residual, Value::obj(vec![]), vec![], vec![]);
+            let mut event = ab_common::audit::event("session.cleanup_completed", "agentbound-lifecycle", "hold", &Default::default(), detail);
+            event.set("event_id", Value::s(&ab_common::sig::object_digest(&event)));
+            assert_eq!(audit_contract::check(&event), Ok(()));
+        }
     }
 }
 
